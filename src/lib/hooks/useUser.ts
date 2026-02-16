@@ -46,6 +46,7 @@ export function useUser() {
           }
 
           console.log('[useUser] Profile loaded:', data ? 'success' : 'no data');
+          console.log('[useUser] Profile data:', JSON.stringify(data, null, 2));
           setProfile(data as Profile | null);
         }
       } catch (error) {
