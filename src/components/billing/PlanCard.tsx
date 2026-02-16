@@ -19,19 +19,18 @@ export function PlanCard({
   const isFree = tier.tier === 'free';
 
   // Determine price to display
-  const price = isFree
-    ? 0
-    : tier.tier === 'free'
-    ? 0
-    : tier.price[interval];
+  let price = 0;
+  if (!isFree) {
+    price = tier.price[interval];
+  }
 
   // Calculate annual savings
-  const monthlySavings =
-    !isFree && tier.tier !== 'free' && interval === 'annual'
-      ? Math.round(
-          ((tier.price.monthly * 12 - tier.price.annual) / tier.price.monthly / 12) * 100
-        )
-      : 0;
+  let monthlySavings = 0;
+  if (!isFree && interval === 'annual') {
+    monthlySavings = Math.round(
+      ((tier.price.monthly * 12 - tier.price.annual) / tier.price.monthly / 12) * 100
+    );
+  }
 
   // Determine button text
   let buttonText = 'Get Started';
