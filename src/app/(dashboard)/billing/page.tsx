@@ -6,12 +6,19 @@ import { ToolPageShell } from '@/components/ui/ToolPageShell';
 import { CurrentPlanCard } from '@/components/billing/CurrentPlanCard';
 import { UsageCard } from '@/components/billing/UsageCard';
 import { PaymentMethodCard } from '@/components/billing/PaymentMethodCard';
+import { BillingToggle } from '@/components/billing/BillingToggle';
+import { PlanCard } from '@/components/billing/PlanCard';
+import { SUBSCRIPTION_TIERS, type BillingInterval } from '@/lib/stripe/config';
+import type { CheckoutResponse } from '@/types';
 import { useState, useEffect } from 'react';
 
 export default function BillingPage() {
   const { profile, loading: userLoading } = useUser();
   const { tier, loading: subLoading } = useSubscription();
   const [showSuccess, setShowSuccess] = useState(false);
+  const [interval, setInterval] = useState<BillingInterval>('monthly');
+  const [loading, setLoading] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Check for success redirect from Stripe
   useEffect(() => {
@@ -27,9 +34,53 @@ export default function BillingPage() {
     }
   }, []);
 
-  const loading = userLoading || subLoading;
+  const handleSelectPlan = async (planTier: string, planInterval: BillingInterval) => {
+    // Handle free tier separately (future implementation)
+    if (planTier === 'free') {
+      setError('Downgrading to free tier is not yet supported. Please contact support.');
+      return;
+    }
 
-  if (loading) {
+    // Prevent selecting current plan
+    if (planTier === tier) {
+      return;
+    }
+
+    setLoading(planTier);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/stripe/checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ tier: planTier, interval: planInterval }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to create checkout session');
+      }
+
+      const { url }: CheckoutResponse = await response.json();
+
+      // Redirect to Stripe checkout
+      window.location.href = url;
+    } catch (err) {
+      console.error('Checkout error:', err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Failed to initiate checkout. Please try again.'
+      );
+      setLoading(null);
+    }
+  };
+
+  const isLoading = userLoading || subLoading;
+
+  if (isLoading) {
     return (
       <ToolPageShell
         icon="💳"
@@ -50,6 +101,7 @@ export default function BillingPage() {
       name="Billing"
       description="Manage your subscription and billing"
     >
+      {/* Success Message */}
       {showSuccess && (
         <div className="mb-6 p-4 bg-success/10 border border-success rounded-btn flex items-center gap-3">
           <span className="text-success text-xl">✓</span>
@@ -62,30 +114,78 @@ export default function BillingPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left Column */}
-        <div className="space-y-6">
-          <CurrentPlanCard profile={profile} tier={tier} />
-          <UsageCard profile={profile} />
+      {/* Current Plan & Usage */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-12">
+        <CurrentPlanCard profile={profile} tier={tier} />
+        <UsageCard profile={profile} />
+      </div>
+
+      {/* Upgrade Plans Section */}
+      <div className="mb-8">
+        <h2 className="font-display text-2xl mb-2">Upgrade Your Plan</h2>
+        <p className="text-ash-400 mb-6">
+          Choose the plan that fits your business needs
+        </p>
+
+        {/* Billing Toggle */}
+        <div className="flex justify-center mb-8">
+          <BillingToggle interval={interval} onChange={setInterval} />
         </div>
 
-        {/* Right Column */}
-        <div className="space-y-6">
-          <PaymentMethodCard />
-
-          {/* Billing History Placeholder */}
-          <div className="card">
-            <div className="p-6">
-              <h3 className="font-display text-lg mb-4">Billing History</h3>
-              <p className="text-sm text-ash-400 mb-4">
-                Your payment history and invoices will appear here.
-              </p>
-              <div className="p-4 bg-char-700 rounded-btn text-center">
-                <p className="text-ash-500 text-sm">Coming soon</p>
-              </div>
+        {/* Error Message */}
+        {error && (
+          <div className="mb-6 p-4 bg-danger/10 border border-danger rounded-btn flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-danger text-xl">⚠️</span>
+              <p className="text-sm text-danger">{error}</p>
             </div>
+            <button
+              onClick={() => setError(null)}
+              className="text-danger hover:text-danger/80"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Plan Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+          {Object.values(SUBSCRIPTION_TIERS).map((tierConfig) => (
+            <PlanCard
+              key={tierConfig.tier}
+              tier={tierConfig}
+              interval={interval}
+              currentTier={tier}
+              onSelectPlan={handleSelectPlan}
+              loading={loading === tierConfig.tier}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Additional Services */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-12">
+        {/* Consulting Card */}
+        <div className="card">
+          <div className="p-6">
+            <h3 className="font-display text-lg mb-2 flex items-center gap-2">
+              <span>📞</span>
+              <span>Need Marketing Strategy Help?</span>
+            </h3>
+            <p className="text-sm text-ash-400 mb-4">
+              Want personalized marketing strategy and consulting? Give us a call!
+            </p>
+            <a
+              href="tel:425-232-6029"
+              className="btn-primary w-full block text-center"
+            >
+              Call 425-232-6029
+            </a>
           </div>
         </div>
+
+        {/* Payment Method */}
+        <PaymentMethodCard />
       </div>
     </ToolPageShell>
   );

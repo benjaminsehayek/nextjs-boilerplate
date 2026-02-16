@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import type { Profile, SubscriptionTier } from '@/types';
 import { SUBSCRIPTION_TIERS } from '@/lib/stripe/config';
 
@@ -79,9 +78,11 @@ export function CurrentPlanCard({ profile, tier }: CurrentPlanCardProps) {
           </div>
         )}
 
-        <Link href="/plans" className="btn-primary w-full block text-center">
-          View All Plans
-        </Link>
+        <div className="pt-4 border-t border-char-700">
+          <p className="text-sm text-ash-400 text-center">
+            Scroll down to view and upgrade plans
+          </p>
+        </div>
       </div>
     </div>
   );
