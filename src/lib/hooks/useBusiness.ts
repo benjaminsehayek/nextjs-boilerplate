@@ -14,17 +14,19 @@ export function useBusiness() {
     async function loadBusinesses() {
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
+        if (!user) {
+          setLoading(false);
+          return;
+        }
 
         const { data } = await supabase
           .from('businesses')
           .select('*')
-          .eq('user_id', user.id)
-          .order('is_primary', { ascending: false });
+          .eq('user_id', user.id);
 
         const biz = (data as Business[]) || [];
         setBusinesses(biz);
-        setBusiness(biz.find((b) => b.is_primary) || biz[0] || null);
+        setBusiness(biz[0] || null);
       } catch (error) {
         console.error('Error loading businesses:', error);
       } finally {
@@ -33,7 +35,7 @@ export function useBusiness() {
     }
 
     loadBusinesses();
-  }, []);
+  }, []); // Empty dependency - supabase client is stable
 
   const switchBusiness = (id: string) => {
     const found = businesses.find((b) => b.id === id);
