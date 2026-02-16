@@ -4,12 +4,12 @@ import { useUser } from './useUser';
 import type { SubscriptionTier } from '@/types';
 
 const TOOL_ACCESS: Record<string, SubscriptionTier[]> = {
-  'site-audit':        ['analysis', 'marketing', 'growth'],
-  'content-strategy':  ['analysis', 'marketing', 'growth'],
-  'local-grid':        ['analysis', 'marketing', 'growth'],
-  'off-page-audit':    ['analysis', 'marketing', 'growth'],
-  'lead-intelligence': ['growth'],
-  'lead-database':     ['marketing', 'growth'],
+  'site-audit':        ['free', 'analysis', 'marketing', 'growth'],
+  'content-strategy':  ['free', 'analysis', 'marketing', 'growth'],
+  'local-grid':        ['free', 'analysis', 'marketing', 'growth'],
+  'off-page-audit':    ['free', 'analysis', 'marketing', 'growth'],
+  'lead-intelligence': ['free', 'analysis', 'marketing', 'growth'],
+  'lead-database':     ['free', 'analysis', 'marketing', 'growth'],
 };
 
 const FEATURE_ACCESS: Record<string, SubscriptionTier[]> = {
@@ -31,10 +31,18 @@ export function useSubscription() {
     tier,
     isActive,
     loading,
-    canAccessTool: (tool: string) =>
-      isActive && (TOOL_ACCESS[tool]?.includes(tier) ?? false),
-    canAccessFeature: (feat: string) =>
-      isActive && (FEATURE_ACCESS[feat]?.includes(tier) ?? false),
+    canAccessTool: (tool: string) => {
+      // Free tier can access tools even without active subscription
+      if (tier === 'free') return TOOL_ACCESS[tool]?.includes('free') ?? false;
+      // Paid tiers require active subscription
+      return isActive && (TOOL_ACCESS[tool]?.includes(tier) ?? false);
+    },
+    canAccessFeature: (feat: string) => {
+      // Free tier can access features if they're in the list
+      if (tier === 'free') return FEATURE_ACCESS[feat]?.includes('free') ?? false;
+      // Paid tiers require active subscription
+      return isActive && (FEATURE_ACCESS[feat]?.includes(tier) ?? false);
+    },
     tokensRemaining:
       (profile?.content_tokens_limit || 0) -
       (profile?.content_tokens_used || 0),
