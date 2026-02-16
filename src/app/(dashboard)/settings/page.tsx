@@ -6,9 +6,12 @@ import { useUser } from '@/lib/hooks/useUser';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import { createClient } from '@/lib/supabase/client';
+import { AvatarUpload } from '@/components/profile/AvatarUpload';
+import { profileUpdateSchema } from '@/lib/validations/profile';
+import { z } from 'zod';
 
 export default function SettingsPage() {
-  const { user, profile } = useUser();
+  const { user, profile, refreshProfile } = useUser();
   const { tier, scansRemaining, tokensRemaining } = useSubscription();
   const { business } = useBusiness();
   const supabase = createClient();
@@ -26,6 +29,13 @@ export default function SettingsPage() {
     zip: '',
   });
 
+  const [profileData, setProfileData] = useState({
+    full_name: '',
+    avatar_url: null as string | null,
+  });
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+
   // Initialize business data when business loads
   useEffect(() => {
     if (business) {
@@ -41,6 +51,16 @@ export default function SettingsPage() {
       });
     }
   }, [business]);
+
+  // Initialize profile data when profile loads
+  useEffect(() => {
+    if (profile) {
+      setProfileData({
+        full_name: profile.full_name || '',
+        avatar_url: profile.avatar_url,
+      });
+    }
+  }, [profile]);
 
   const handleBusinessUpdate = async () => {
     if (!business) return;
@@ -73,19 +93,140 @@ export default function SettingsPage() {
     }
   };
 
+  const handleProfileUpdate = async () => {
+    if (!profile || !user) return;
+
+    setSavingProfile(true);
+    try {
+      // Validate data
+      profileUpdateSchema.parse(profileData);
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          full_name: profileData.full_name,
+          avatar_url: profileData.avatar_url || null,
+        })
+        .eq('id', user.id);
+
+      if (error) throw error;
+
+      // Refresh profile data instead of page reload
+      if (refreshProfile) {
+        await refreshProfile();
+      }
+      setEditingProfile(false);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        alert(error.errors[0].message);
+      } else {
+        console.error('Error updating profile:', error);
+        alert('Failed to update profile');
+      }
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleAvatarUpload = async (url: string) => {
+    setProfileData({ ...profileData, avatar_url: url });
+
+    // Auto-save avatar to database
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ avatar_url: url || null })
+        .eq('id', user!.id);
+
+      if (error) throw error;
+
+      if (refreshProfile) {
+        await refreshProfile();
+      }
+    } catch (error) {
+      console.error('Error saving avatar:', error);
+      alert('Failed to save avatar');
+    }
+  };
+
   return (
     <div>
       <h1 className="text-3xl font-display mb-8">
         <span className="text-flame-500">Settings</span>
       </h1>
 
+      {/* Profile Information Card */}
+      {user && (
+        <div className="card p-6 mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-display text-xl">Profile</h2>
+            {!editingProfile ? (
+              <button
+                onClick={() => setEditingProfile(true)}
+                className="btn-secondary text-sm"
+              >
+                Edit
+              </button>
+            ) : (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setEditingProfile(false);
+                    setProfileData({
+                      full_name: profile?.full_name || '',
+                      avatar_url: profile?.avatar_url || null,
+                    });
+                  }}
+                  className="btn-ghost text-sm"
+                  disabled={savingProfile}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleProfileUpdate}
+                  className="btn-primary text-sm"
+                  disabled={savingProfile}
+                >
+                  {savingProfile ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-6">
+            {/* Avatar Upload */}
+            <div>
+              <div className="input-label mb-3">Profile Picture</div>
+              <AvatarUpload
+                userId={user.id}
+                currentAvatarUrl={profileData.avatar_url}
+                onUploadComplete={handleAvatarUpload}
+              />
+            </div>
+
+            {/* Full Name Field */}
+            <div>
+              <label className="input-label">Full Name</label>
+              {!editingProfile ? (
+                <div className="text-ash-100">{profile?.full_name || 'Not set'}</div>
+              ) : (
+                <input
+                  type="text"
+                  value={profileData.full_name}
+                  onChange={(e) => setProfileData({ ...profileData, full_name: e.target.value })}
+                  className="input"
+                  placeholder="Enter your full name"
+                  required
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="card p-6 mb-8">
         <h2 className="font-display text-xl mb-4">Account Information</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <div className="input-label">Name</div>
-            <div className="text-ash-100">{profile?.full_name || 'Not set'}</div>
-          </div>
           <div>
             <div className="input-label">Email</div>
             <div className="text-ash-100">{user?.email}</div>
@@ -97,6 +238,10 @@ export default function SettingsPage() {
           <div>
             <div className="input-label">Scans Remaining</div>
             <div className="text-ash-100">{scansRemaining} this month</div>
+          </div>
+          <div>
+            <div className="input-label">Content Articles Remaining</div>
+            <div className="text-ash-100">{tokensRemaining}</div>
           </div>
         </div>
       </div>

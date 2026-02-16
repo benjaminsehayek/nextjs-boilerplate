@@ -69,5 +69,20 @@ export function useUser() {
     }
   };
 
-  return { user, profile, loading, signOut };
+  const refreshProfile = async () => {
+    if (!user) return;
+
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+      setProfile(data as Profile | null);
+    } catch (error) {
+      console.error('Error refreshing profile:', error);
+    }
+  };
+
+  return { user, profile, loading, signOut, refreshProfile };
 }

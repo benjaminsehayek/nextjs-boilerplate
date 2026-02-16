@@ -28,7 +28,7 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
-  const { user, signOut } = useUser();
+  const { user, profile, signOut } = useUser();
   const { tier } = useSubscription();
 
   const initials = user?.user_metadata?.full_name
@@ -122,8 +122,16 @@ export function Sidebar() {
         {/* User section */}
         <div className="p-4 border-t border-char-700">
           <div className={`flex items-center gap-3 ${collapsed ? 'justify-center' : ''}`}>
-            <div className="w-10 h-10 rounded-full bg-flame-gradient flex items-center justify-center text-white font-display text-sm">
-              {initials}
+            <div className="w-10 h-10 rounded-full bg-flame-gradient flex items-center justify-center text-white font-display text-sm overflow-hidden">
+              {profile?.avatar_url ? (
+                <img
+                  src={profile.avatar_url}
+                  alt="Profile"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <span>{initials}</span>
+              )}
             </div>
             {!collapsed && (
               <div className="flex-1 min-w-0">
