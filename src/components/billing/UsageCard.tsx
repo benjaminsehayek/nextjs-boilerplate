@@ -13,11 +13,10 @@ export function UsageCard({ profile }: UsageCardProps) {
   const scansPercentage = Math.round((scansUsed / scansLimit) * 100);
   const tokensPercentage = tokensLimit > 0 ? Math.round((tokensUsed / tokensLimit) * 100) : 0;
 
-  // Calculate reset date (billing_period_start + 1 month)
-  const resetDate = profile?.billing_period_start
-    ? new Date(profile.billing_period_start)
-    : new Date();
-  resetDate.setMonth(resetDate.getMonth() + 1);
+  // Calculate reset date from subscription_period_end
+  const resetDate = profile?.subscription_period_end
+    ? new Date(profile.subscription_period_end)
+    : new Date(new Date().setMonth(new Date().getMonth() + 1));
   const resetDateString = resetDate.toLocaleDateString('en-US', {
     month: 'long',
     day: 'numeric',
