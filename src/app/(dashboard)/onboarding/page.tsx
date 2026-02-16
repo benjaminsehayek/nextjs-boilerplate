@@ -337,6 +337,26 @@ export default function OnboardingPage() {
         <span className="text-flame-500">Welcome to ScorchLocal!</span>
       </h1>
 
+      {/* Auth Status Debug */}
+      {!user && !userLoading && (
+        <div className="mb-6 p-4 bg-ember-500/10 border border-ember-500/20 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium text-ember-500">⚠️ Session Not Detected</p>
+              <p className="text-sm text-ash-400 mt-1">
+                Your session may have expired. Please refresh the page.
+              </p>
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              className="btn-secondary text-sm"
+            >
+              🔄 Refresh
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Progress Steps */}
       <div className="mb-8">
         <div className="flex items-center justify-between">
@@ -374,7 +394,22 @@ export default function OnboardingPage() {
 
       {error && (
         <div className="mb-6 p-4 bg-danger/10 border border-danger/20 rounded-lg text-danger">
-          {error}
+          <div className="flex items-start gap-3">
+            <div className="flex-1">
+              <p className="font-medium mb-2">{error}</p>
+              {error.includes('Authentication') && (
+                <button
+                  onClick={() => {
+                    setError(null);
+                    window.location.reload();
+                  }}
+                  className="btn-secondary text-sm"
+                >
+                  🔄 Refresh Page
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
