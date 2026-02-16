@@ -1,6 +1,14 @@
-import { createBrowserClient } from '@supabase/ssr';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+
+let client: ReturnType<typeof createSupabaseClient> | null = null;
 
 export function createClient() {
+  // Return existing client if already created (singleton pattern)
+  if (client) {
+    console.log('[Supabase Client] Returning existing client');
+    return client;
+  }
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -11,7 +19,17 @@ export function createClient() {
     throw new Error('Supabase environment variables are not defined');
   }
 
-  console.log('[Supabase Client] Creating client with URL:', url.substring(0, 20) + '...');
+  console.log('[Supabase Client] Creating NEW client with URL:', url.substring(0, 20) + '...');
 
-  return createBrowserClient(url, key);
+  // Use standard createClient instead of createBrowserClient from @supabase/ssr
+  client = createSupabaseClient(url, key, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+
+  console.log('[Supabase Client] Client created successfully');
+  return client;
 }
