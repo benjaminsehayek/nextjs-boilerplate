@@ -53,6 +53,9 @@ export default function LeadIntelligencePage() {
       loadConnections();
       loadDashboardData();
       loadLeads();
+    } else {
+      // If no business, set loading to false so UI doesn't hang
+      setLoading(false);
     }
   }, [business?.id, timeRange]);
 
