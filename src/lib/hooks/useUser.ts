@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Profile } from '@/types';
 import type { User } from '@supabase/supabase-js';
+import { signOut as serverSignOut } from '@/app/actions/auth';
 
 export function useUser() {
   const [user, setUser] = useState<User | null>(null);
@@ -56,30 +57,12 @@ export function useUser() {
   }, []); // Empty dependency array - supabase client is stable
 
   const signOut = async () => {
-    console.log('Sign out initiated...');
     try {
-      console.log('Calling supabase.auth.signOut()');
-      const { error } = await supabase.auth.signOut();
-
-      if (error) {
-        console.error('Supabase signOut error:', error);
-        throw error;
-      }
-
-      console.log('Sign out successful, clearing state');
-      setUser(null);
-      setProfile(null);
-
-      // Clear all local storage
-      localStorage.clear();
-      sessionStorage.clear();
-
-      console.log('Redirecting to home page');
-      // Force a hard reload to clear all state
-      window.location.href = '/login';
+      // Call server action to properly clear server-side cookies
+      await serverSignOut();
     } catch (error) {
       console.error('Error signing out:', error);
-      // Force reload anyway to clear state
+      // If server action fails, try to clean up client-side and redirect
       localStorage.clear();
       sessionStorage.clear();
       window.location.href = '/login';
