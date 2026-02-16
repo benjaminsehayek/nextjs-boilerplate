@@ -5,15 +5,20 @@ import Link from 'next/link';
 import { useUser } from '@/lib/hooks/useUser';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useBusiness } from '@/lib/hooks/useBusiness';
+import { useLocations } from '@/lib/hooks/useLocations';
 import { createClient } from '@/lib/supabase/client';
 import { AvatarUpload } from '@/components/profile/AvatarUpload';
+import { LocationModal } from '@/components/settings/LocationModal';
+import { LocationsList } from '@/components/settings/LocationsList';
 import { profileUpdateSchema } from '@/lib/validations/profile';
 import { z } from 'zod';
+import type { BusinessLocation } from '@/types';
 
 export default function SettingsPage() {
   const { user, profile, refreshProfile } = useUser();
   const { tier, scansRemaining, tokensRemaining } = useSubscription();
   const { business } = useBusiness();
+  const { locations, loading: locationsLoading } = useLocations(business?.id);
   const supabase = createClient();
 
   const [editing, setEditing] = useState(false);
@@ -35,6 +40,9 @@ export default function SettingsPage() {
   });
   const [editingProfile, setEditingProfile] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [editingLocation, setEditingLocation] = useState<BusinessLocation | null>(null);
 
   // Initialize business data when business loads
   useEffect(() => {
@@ -146,6 +154,46 @@ export default function SettingsPage() {
     } catch (error) {
       console.error('Error saving avatar:', error);
       alert('Failed to save avatar');
+    }
+  };
+
+  const openAddLocationModal = () => {
+    setEditingLocation(null);
+    setShowLocationModal(true);
+  };
+
+  const openEditLocationModal = (location: BusinessLocation) => {
+    setEditingLocation(location);
+    setShowLocationModal(true);
+  };
+
+  const handleDeleteLocation = async (id: string) => {
+    // Validation
+    if (locations.length === 1) {
+      alert('Cannot delete the only location. Add another location first.');
+      return;
+    }
+
+    const locationToDelete = locations.find((l) => l.id === id);
+    if (locationToDelete?.is_primary) {
+      alert('Cannot delete primary location. Mark another location as primary first.');
+      return;
+    }
+
+    if (!confirm('Are you sure you want to delete this location?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('business_locations')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      window.location.reload();
+    } catch (error) {
+      console.error('Error deleting location:', error);
+      alert('Failed to delete location');
     }
   };
 
@@ -412,6 +460,48 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Business Locations */}
+      {business && (
+        <div className="card p-6 mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-display text-xl">Business Locations</h2>
+              <p className="text-sm text-ash-400">Manage your business locations</p>
+            </div>
+            <button
+              onClick={openAddLocationModal}
+              className="btn-primary text-sm"
+            >
+              + Add Location
+            </button>
+          </div>
+
+          {locationsLoading ? (
+            <div className="h-32 bg-char-700 animate-pulse rounded-btn" />
+          ) : (
+            <LocationsList
+              locations={locations}
+              onEdit={openEditLocationModal}
+              onDelete={handleDeleteLocation}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Location Modal */}
+      {showLocationModal && business && (
+        <LocationModal
+          isOpen={showLocationModal}
+          onClose={() => setShowLocationModal(false)}
+          location={editingLocation}
+          businessId={business.id}
+          onSave={() => {
+            setShowLocationModal(false);
+            window.location.reload();
+          }}
+        />
       )}
 
       <h2 className="font-display text-2xl mb-6">Subscription</h2>
