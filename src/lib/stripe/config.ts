@@ -1,7 +1,41 @@
-export const SUBSCRIPTION_TIERS = {
+interface TierPricing {
+  monthly: number;
+  annual: number;
+}
+
+interface BaseTierConfig {
+  name: string;
+  tier: string;
+  features: string[];
+  scans: number;
+  tokens: number;
+  popular: boolean;
+}
+
+interface FreeTierConfig extends BaseTierConfig {
+  tier: 'free';
+  price: 0;
+  priceIds: {
+    monthly: null;
+    annual: null;
+  };
+}
+
+interface PaidTierConfig extends BaseTierConfig {
+  tier: 'analysis' | 'marketing' | 'growth';
+  price: TierPricing;
+  priceIds: {
+    monthly: string;
+    annual: string;
+  };
+}
+
+export type TierConfig = FreeTierConfig | PaidTierConfig;
+
+export const SUBSCRIPTION_TIERS: Record<string, TierConfig> = {
   free: {
     name: 'Free',
-    tier: 'free' as const,
+    tier: 'free',
     price: 0,
     priceIds: {
       monthly: null,
@@ -18,7 +52,7 @@ export const SUBSCRIPTION_TIERS = {
   },
   analysis: {
     name: 'Analysis',
-    tier: 'analysis' as const,
+    tier: 'analysis',
     price: {
       monthly: 120,
       annual: 1200,
@@ -41,7 +75,7 @@ export const SUBSCRIPTION_TIERS = {
   },
   marketing: {
     name: 'Marketing',
-    tier: 'marketing' as const,
+    tier: 'marketing',
     price: {
       monthly: 250,
       annual: 2500,
@@ -64,7 +98,7 @@ export const SUBSCRIPTION_TIERS = {
   },
   growth: {
     name: 'Growth',
-    tier: 'growth' as const,
+    tier: 'growth',
     price: {
       monthly: 450,
       annual: 4500,
@@ -86,9 +120,7 @@ export const SUBSCRIPTION_TIERS = {
     tokens: 30,
     popular: false,
   },
-} as const;
+};
 
 export type TierKey = keyof typeof SUBSCRIPTION_TIERS;
 export type BillingInterval = 'monthly' | 'annual';
-
-export type TierConfig = typeof SUBSCRIPTION_TIERS[TierKey];
