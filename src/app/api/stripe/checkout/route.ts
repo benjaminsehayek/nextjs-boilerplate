@@ -4,9 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { SUBSCRIPTION_TIERS } from '@/lib/stripe/config';
 import type { CheckoutRequest, CheckoutResponse } from '@/types';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder', {
-  apiVersion: '2024-12-18.acacia',
-});
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
 
 export async function POST(request: Request) {
   try {
