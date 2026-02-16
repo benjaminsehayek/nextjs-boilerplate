@@ -3,6 +3,9 @@
 import { useState, useEffect } from 'react';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
+import { LocationSelector } from '@/components/ui/LocationSelector';
+import { useLocations } from '@/lib/hooks/useLocations';
+import { useBusiness } from '@/lib/hooks/useBusiness';
 import ContactTable from '@/components/tools/LeadDatabase/ContactTable';
 import ContactDetail from '@/components/tools/LeadDatabase/ContactDetail';
 import AddContact from '@/components/tools/LeadDatabase/AddContact';
@@ -20,6 +23,8 @@ import { DEFAULT_SEGMENTS } from '@/components/tools/LeadDatabase/types';
 import { filterContacts, exportToCSV, daysSinceActivity, isReachable } from '@/components/tools/LeadDatabase/utils';
 
 export default function LeadDatabasePage() {
+  const { business } = useBusiness();
+  const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);
   const [filters, setFilters] = useState<ContactFilters>({});
@@ -87,6 +92,7 @@ export default function LeadDatabasePage() {
       urgency: contactData.urgency,
       marketId: contactData.marketId,
       marketName: contactData.marketName,
+      location_id: selectedLocation?.id || null,
       elv: contactData.elv || 0,
       elvFactors: contactData.elvFactors,
       emailOptIn: contactData.emailOptIn || false,
@@ -139,6 +145,7 @@ export default function LeadDatabasePage() {
       urgency: c.urgency,
       marketId: c.marketId,
       marketName: c.marketName,
+      location_id: selectedLocation?.id || null,
       elv: c.elv || 0,
       elvFactors: c.elvFactors,
       emailOptIn: c.emailOptIn || false,
@@ -321,6 +328,13 @@ export default function LeadDatabasePage() {
         name="Lead Database"
         description="CRM with Estimated Lead Value scoring"
       >
+        <LocationSelector
+          locations={locations}
+          selectedLocation={selectedLocation}
+          onSelectLocation={selectLocation}
+          showAllOption={true}
+        />
+
         <div className="flex gap-6 h-[calc(100vh-200px)]">
           {/* Sidebar */}
           <Sidebar

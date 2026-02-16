@@ -3,9 +3,11 @@
 import { useState, useEffect } from 'react';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
+import { LocationSelector } from '@/components/ui/LocationSelector';
 import { useUser } from '@/lib/hooks/useUser';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useBusiness } from '@/lib/hooks/useBusiness';
+import { useLocations } from '@/lib/hooks/useLocations';
 import { createClient } from '@/lib/supabase/client';
 import { cleanDomain, dfsCall } from '@/lib/dataforseo';
 import type {
@@ -35,6 +37,7 @@ export default function ContentStrategyPage() {
   const { user } = useUser();
   const { scansRemaining } = useSubscription();
   const { business } = useBusiness();
+  const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
 
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('idle');
   const [strategyId, setStrategyId] = useState<string | null>(null);
@@ -173,6 +176,7 @@ export default function ContentStrategyPage() {
         .from('content_strategies')
         .insert({
           business_id: business.id,
+          location_id: selectedLocation?.id || null,
           domain: cleanedDomain,
           industry: inputConfig.industry,
           economics: inputConfig.economics,
@@ -508,11 +512,19 @@ export default function ContentStrategyPage() {
         )}
 
         {analysisStatus === 'idle' && (
-          <ConfigForm
-            onStartAnalysis={startAnalysis}
-            isLoading={false}
-            scansRemaining={scansRemaining}
-          />
+          <>
+            <LocationSelector
+              locations={locations}
+              selectedLocation={selectedLocation}
+              onSelectLocation={selectLocation}
+              showAllOption={true}
+            />
+            <ConfigForm
+              onStartAnalysis={startAnalysis}
+              isLoading={false}
+              scansRemaining={scansRemaining}
+            />
+          </>
         )}
 
         {analysisStatus === 'analyzing' && config && (

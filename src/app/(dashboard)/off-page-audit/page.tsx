@@ -3,9 +3,11 @@
 import { useState, useEffect } from 'react';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
+import { LocationSelector } from '@/components/ui/LocationSelector';
 import { useUser } from '@/lib/hooks/useUser';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useBusiness } from '@/lib/hooks/useBusiness';
+import { useLocations } from '@/lib/hooks/useLocations';
 import { createClient } from '@/lib/supabase/client';
 import { cleanDomain, dfsCall } from '@/lib/dataforseo';
 import type { AuditStatus, OffPageAuditResults, TabId, ScanProgress } from '@/components/tools/OffPageAudit/types';
@@ -21,6 +23,7 @@ export default function OffPageAuditPage() {
   const { user } = useUser();
   const { scansRemaining } = useSubscription();
   const { business } = useBusiness();
+  const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
 
   const [auditStatus, setAuditStatus] = useState<AuditStatus>('idle');
   const [auditId, setAuditId] = useState<string | null>(null);
@@ -156,6 +159,7 @@ export default function OffPageAuditPage() {
         .from('off_page_audits')
         .insert({
           business_id: business.id,
+          location_id: selectedLocation?.id || null,
           target_domain: cleanedDomain,
           competitor_domains: competitors || [],
           status: 'pending',
@@ -389,11 +393,19 @@ export default function OffPageAuditPage() {
         )}
 
         {auditStatus === 'idle' && (
-          <DomainInput
-            onStartScan={startAudit}
-            isLoading={false}
-            scansRemaining={scansRemaining}
-          />
+          <>
+            <LocationSelector
+              locations={locations}
+              selectedLocation={selectedLocation}
+              onSelectLocation={selectLocation}
+              showAllOption={true}
+            />
+            <DomainInput
+              onStartScan={startAudit}
+              isLoading={false}
+              scansRemaining={scansRemaining}
+            />
+          </>
         )}
 
         {auditStatus === 'scanning' && (

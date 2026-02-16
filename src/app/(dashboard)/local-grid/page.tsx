@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
+import { LocationSelector } from '@/components/ui/LocationSelector';
 import { BusinessLookup } from '@/components/tools/LocalGrid/BusinessLookup';
 import { GridConfigurator } from '@/components/tools/LocalGrid/GridConfigurator';
 import { ScanProgress } from '@/components/tools/LocalGrid/ScanProgress';
@@ -10,6 +11,7 @@ import { ResultsDashboard } from '@/components/tools/LocalGrid/ResultsDashboard'
 import { generateGridPoints, findBusinessRank, calculateCost } from '@/components/tools/LocalGrid/utils';
 import { createClient } from '@/lib/supabase/client';
 import { useBusiness } from '@/lib/hooks/useBusiness';
+import { useLocations } from '@/lib/hooks/useLocations';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import type { BusinessInfo, GridConfig, GridScanResult, HeatmapData, RankData } from '@/components/tools/LocalGrid/types';
 
@@ -17,6 +19,7 @@ type ScanState = 'setup' | 'configure' | 'scanning' | 'complete' | 'error';
 
 export default function LocalGridPage() {
   const { business } = useBusiness();
+  const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
   const { scansRemaining, profile } = useSubscription();
   const supabase = createClient();
 
@@ -116,6 +119,7 @@ export default function LocalGridPage() {
         .from('grid_scans')
         .insert({
           business_id: business.id,
+          location_id: selectedLocation?.id || null,
           business_info: businessInfo,
           config,
           points: gridPoints,
@@ -342,10 +346,18 @@ export default function LocalGridPage() {
         )}
 
         {scanState === 'setup' && (
-          <BusinessLookup
-            onBusinessFound={handleBusinessFound}
-            initialBusiness={businessInfo || undefined}
-          />
+          <>
+            <LocationSelector
+              locations={locations}
+              selectedLocation={selectedLocation}
+              onSelectLocation={selectLocation}
+              showAllOption={true}
+            />
+            <BusinessLookup
+              onBusinessFound={handleBusinessFound}
+              initialBusiness={businessInfo || undefined}
+            />
+          </>
         )}
 
         {scanState === 'configure' && businessInfo && (

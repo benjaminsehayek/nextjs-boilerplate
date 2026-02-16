@@ -3,8 +3,10 @@
 import { useState, useEffect } from 'react';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
+import { LocationSelector } from '@/components/ui/LocationSelector';
 import { useUser } from '@/lib/hooks/useUser';
 import { useBusiness } from '@/lib/hooks/useBusiness';
+import { useLocations } from '@/lib/hooks/useLocations';
 import { createClient } from '@/lib/supabase/client';
 import dynamic from 'next/dynamic';
 
@@ -27,6 +29,7 @@ const LeadAttribution = dynamic(() => import('@/components/tools/LeadIntelligenc
 export default function LeadIntelligencePage() {
   const { user } = useUser();
   const { business } = useBusiness();
+  const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
   const supabase = createClient();
 
   const [timeRange, setTimeRange] = useState<TimeRange>('30');
@@ -220,6 +223,13 @@ export default function LeadIntelligencePage() {
           </div>
         ) : (
           <div className="space-y-6">
+            <LocationSelector
+              locations={locations}
+              selectedLocation={selectedLocation}
+              onSelectLocation={selectLocation}
+              showAllOption={true}
+            />
+
             {/* Quick Actions */}
             <div className="flex gap-3">
               <button

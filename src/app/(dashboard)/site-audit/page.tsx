@@ -3,9 +3,11 @@
 import { useState, useEffect } from 'react';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
+import { LocationSelector } from '@/components/ui/LocationSelector';
 import { useUser } from '@/lib/hooks/useUser';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useBusiness } from '@/lib/hooks/useBusiness';
+import { useLocations } from '@/lib/hooks/useLocations';
 import { createClient } from '@/lib/supabase/client';
 import { cleanDomain, dfsCall } from '@/lib/dataforseo';
 import type { ScanState, ScanProgress, SiteAuditResults, TabId } from '@/components/tools/SiteAudit/types';
@@ -21,6 +23,7 @@ export default function SiteAuditPage() {
   const { user } = useUser();
   const { scansRemaining } = useSubscription();
   const { business } = useBusiness();
+  const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
 
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [auditId, setAuditId] = useState<string | null>(null);
@@ -153,6 +156,7 @@ export default function SiteAuditPage() {
         .from('site_audits')
         .insert({
           business_id: business.id,
+          location_id: selectedLocation?.id || null,
           status: 'pending',
           started_at: new Date().toISOString(),
           completed_tasks: [],
@@ -285,11 +289,19 @@ export default function SiteAuditPage() {
         )}
 
         {scanState === 'idle' && (
-          <ScanInput
-            onStartScan={startAudit}
-            isLoading={false}
-            scansRemaining={scansRemaining}
-          />
+          <>
+            <LocationSelector
+              locations={locations}
+              selectedLocation={selectedLocation}
+              onSelectLocation={selectLocation}
+              showAllOption={true}
+            />
+            <ScanInput
+              onStartScan={startAudit}
+              isLoading={false}
+              scansRemaining={scansRemaining}
+            />
+          </>
         )}
 
         {scanState === 'scanning' && (

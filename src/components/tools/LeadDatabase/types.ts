@@ -59,6 +59,7 @@ export interface Contact {
   urgency?: Urgency;
   marketId?: string;
   marketName?: MarketName;
+  location_id?: string | null;
 
   // ELV Scoring
   elv: number;

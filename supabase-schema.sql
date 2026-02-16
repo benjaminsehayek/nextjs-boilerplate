@@ -84,6 +84,76 @@ CREATE POLICY "Users can delete own business"
   USING (auth.uid() = user_id);
 
 -- ============================================================================
+-- BUSINESS_LOCATIONS TABLE
+-- ============================================================================
+-- Stores multiple locations for multi-location businesses
+
+CREATE TABLE IF NOT EXISTS public.business_locations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+
+  location_name TEXT NOT NULL,
+  address TEXT,
+  city TEXT NOT NULL,
+  state TEXT NOT NULL,
+  zip TEXT,
+  latitude DECIMAL(10, 8),
+  longitude DECIMAL(11, 8),
+  phone TEXT,
+
+  -- Google Business Profile data
+  place_id TEXT UNIQUE,
+  cid TEXT,
+  gbp_listing JSONB,
+
+  -- Primary location flag
+  is_primary BOOLEAN DEFAULT false,
+
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create indexes
+CREATE INDEX IF NOT EXISTS idx_business_locations_business_id ON public.business_locations(business_id);
+CREATE INDEX IF NOT EXISTS idx_business_locations_place_id ON public.business_locations(place_id);
+
+-- Enable Row Level Security
+ALTER TABLE public.business_locations ENABLE ROW LEVEL SECURITY;
+
+-- Policies: Users can only manage locations for their own business
+CREATE POLICY "Users can view own business locations"
+  ON public.business_locations FOR SELECT
+  USING (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can insert own business locations"
+  ON public.business_locations FOR INSERT
+  WITH CHECK (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can update own business locations"
+  ON public.business_locations FOR UPDATE
+  USING (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can delete own business locations"
+  ON public.business_locations FOR DELETE
+  USING (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+-- ============================================================================
 -- SITE_AUDITS TABLE
 -- ============================================================================
 -- Stores site audit scan results
@@ -91,6 +161,7 @@ CREATE POLICY "Users can delete own business"
 CREATE TABLE IF NOT EXISTS public.site_audits (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+  location_id UUID REFERENCES public.business_locations(id) ON DELETE CASCADE,
 
   -- Scan status
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'crawling', 'analyzing', 'complete', 'failed')),
@@ -166,6 +237,7 @@ CREATE POLICY "Users can update own business audits"
 CREATE TABLE IF NOT EXISTS public.grid_scans (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+  location_id UUID REFERENCES public.business_locations(id) ON DELETE CASCADE,
 
   -- Scan status
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'scanning', 'complete', 'failed')),
@@ -410,6 +482,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE TABLE IF NOT EXISTS public.content_strategies (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+  location_id UUID REFERENCES public.business_locations(id) ON DELETE CASCADE,
 
   -- Analysis status
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'analyzing', 'complete', 'failed')),
@@ -483,6 +556,7 @@ CREATE POLICY "Users can update own business content strategies"
 CREATE TABLE IF NOT EXISTS public.off_page_audits (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+  location_id UUID REFERENCES public.business_locations(id) ON DELETE CASCADE,
 
   -- Scan status
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'analyzing', 'complete', 'failed')),
@@ -583,6 +657,7 @@ CREATE POLICY "Users can manage own platform connections"
 CREATE TABLE IF NOT EXISTS public.contacts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+  location_id UUID REFERENCES public.business_locations(id) ON DELETE SET NULL,
 
   first_name TEXT,
   last_name TEXT,
