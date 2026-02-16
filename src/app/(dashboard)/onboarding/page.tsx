@@ -30,7 +30,7 @@ interface MarketForm {
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { user } = useUser();
+  const { user, loading: userLoading } = useUser();
   const supabase = createClient();
 
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('business');
@@ -76,7 +76,9 @@ export default function OnboardingPage() {
     setError(null);
 
     try {
-      if (!user) throw new Error('You must be logged in');
+      if (!user) {
+        throw new Error('Authentication session not found. Please refresh the page and try again.');
+      }
 
       // Create business
       const { data: business, error: businessError } = await supabase
@@ -286,6 +288,36 @@ export default function OnboardingPage() {
   ];
 
   const currentStepIndex = steps.findIndex(s => s.id === currentStep);
+
+  // Show loading while user session is loading
+  if (userLoading) {
+    return (
+      <div className="max-w-2xl mx-auto text-center">
+        <div className="card p-12">
+          <div className="text-6xl mb-6">🔄</div>
+          <h2 className="text-2xl font-display mb-4">Loading...</h2>
+          <p className="text-ash-400 mb-6">Verifying your session</p>
+          <div className="flex justify-center">
+            <div className="animate-spin h-8 w-8 border-4 border-flame-500 border-t-transparent rounded-full"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Redirect to login if not authenticated
+  if (!user) {
+    router.push('/login?redirect=/onboarding');
+    return (
+      <div className="max-w-2xl mx-auto text-center">
+        <div className="card p-12">
+          <div className="text-6xl mb-6">🔒</div>
+          <h2 className="text-2xl font-display mb-4">Authentication Required</h2>
+          <p className="text-ash-400">Redirecting to login...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (currentStep === 'complete') {
     return (
