@@ -403,6 +403,233 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================================
+-- CONTENT_STRATEGIES TABLE
+-- ============================================================================
+-- Stores content strategy analysis results
+
+CREATE TABLE IF NOT EXISTS public.content_strategies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+
+  -- Analysis status
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'analyzing', 'complete', 'failed')),
+
+  -- Configuration
+  domain TEXT NOT NULL,
+  industry TEXT,
+  economics JSONB DEFAULT '{}', -- { conversionRate, averageOrderValue, leadValue, monthlyBudget }
+
+  -- Results data
+  clusters_data JSONB DEFAULT '[]', -- [{ id, name, intent, keywords: [...], totalVolume, avgDifficulty, opportunityScore }]
+  opportunities_data JSONB DEFAULT '[]', -- [{ cluster, priority, estimatedTraffic, estimatedValue, competitorGaps, recommendedType }]
+  calendar_data JSONB DEFAULT '[]', -- [{ id, title, cluster, targetKeywords, contentType, priority, estimatedTraffic, estimatedValue, publishDate, status }]
+  cannibalization_data JSONB DEFAULT '[]', -- [{ id, keyword, searchVolume, competingPages, severity, recommendation }]
+
+  -- Summary metrics
+  total_keywords INTEGER DEFAULT 0,
+  total_search_volume INTEGER DEFAULT 0,
+  estimated_monthly_traffic INTEGER DEFAULT 0,
+  estimated_monthly_value DECIMAL(10, 2) DEFAULT 0,
+
+  -- Progress tracking
+  completed_tasks TEXT[] DEFAULT '{}',
+  current_task TEXT,
+
+  -- Billing
+  api_cost DECIMAL(10, 4) DEFAULT 0,
+
+  -- Timestamps
+  started_at TIMESTAMP WITH TIME ZONE,
+  completed_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_strategies_business_id ON public.content_strategies(business_id);
+CREATE INDEX IF NOT EXISTS idx_content_strategies_status ON public.content_strategies(status);
+CREATE INDEX IF NOT EXISTS idx_content_strategies_created_at ON public.content_strategies(created_at DESC);
+
+ALTER TABLE public.content_strategies ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own business content strategies"
+  ON public.content_strategies FOR SELECT
+  USING (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can insert own business content strategies"
+  ON public.content_strategies FOR INSERT
+  WITH CHECK (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can update own business content strategies"
+  ON public.content_strategies FOR UPDATE
+  USING (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+-- ============================================================================
+-- OFF_PAGE_AUDITS TABLE
+-- ============================================================================
+-- Stores off-page SEO audit results (backlinks, referring domains, anchor text)
+
+CREATE TABLE IF NOT EXISTS public.off_page_audits (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+
+  -- Scan status
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'analyzing', 'complete', 'failed')),
+
+  -- Target and competitors
+  target_domain TEXT NOT NULL,
+  competitor_domains TEXT[] DEFAULT '{}',
+
+  -- Aggregated metrics (for quick display)
+  metrics JSONB, -- { totalBacklinks, referringDomains, domainRating, toxicScore, followLinks, nofollowLinks, newBacklinks, lostBacklinks, qualityScore }
+
+  -- Detailed data
+  backlink_data JSONB DEFAULT '[]', -- [{ url, anchorText, type, firstSeen, lastSeen, domainRank, pageRank, isSpam }]
+  referring_domains JSONB DEFAULT '[]', -- [{ domain, backlinks, domainRank, pageRank, firstSeen, lastSeen, toxicityScore, toxicityLevel, follow, nofollow }]
+  anchor_data JSONB DEFAULT '[]', -- [{ text, count, percentage, type, follow, nofollow }]
+  competitor_data JSONB DEFAULT '[]', -- [{ domain, backlinks, referringDomains, domainRating, toxicScore }]
+
+  -- Progress tracking
+  completed_tasks TEXT[] DEFAULT '{}',
+
+  -- Billing
+  api_cost DECIMAL(10, 4) DEFAULT 0,
+
+  -- Timestamps
+  started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  completed_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_off_page_audits_business_id ON public.off_page_audits(business_id);
+CREATE INDEX IF NOT EXISTS idx_off_page_audits_status ON public.off_page_audits(status);
+CREATE INDEX IF NOT EXISTS idx_off_page_audits_created_at ON public.off_page_audits(created_at DESC);
+
+ALTER TABLE public.off_page_audits ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own business off-page audits"
+  ON public.off_page_audits FOR SELECT
+  USING (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can insert own business off-page audits"
+  ON public.off_page_audits FOR INSERT
+  WITH CHECK (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can update own business off-page audits"
+  ON public.off_page_audits FOR UPDATE
+  USING (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+-- ============================================================================
+-- PLATFORM_CONNECTIONS TABLE
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.platform_connections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+
+  platform TEXT NOT NULL CHECK (platform IN ('google_ads', 'google_lsa', 'meta', 'search_console', 'gbp')),
+  connected BOOLEAN DEFAULT false,
+  last_sync TIMESTAMP WITH TIME ZONE,
+
+  access_token TEXT,
+  refresh_token TEXT,
+  expires_at TIMESTAMP WITH TIME ZONE,
+
+  account_id TEXT,
+  account_name TEXT,
+
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+  UNIQUE(business_id, platform)
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_connections_business_id ON public.platform_connections(business_id);
+
+ALTER TABLE public.platform_connections ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage own platform connections"
+  ON public.platform_connections FOR ALL
+  USING (business_id IN (SELECT id FROM public.businesses WHERE user_id = auth.uid()));
+
+-- ============================================================================
+-- CONTACTS TABLE (for Lead Database)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.contacts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+
+  first_name TEXT,
+  last_name TEXT,
+  email TEXT,
+  phone TEXT,
+  city TEXT,
+
+  source TEXT NOT NULL CHECK (source IN ('ppc', 'lsa', 'meta', 'website', 'referral', 'crm', 'manual')),
+  campaign TEXT,
+  lead_type TEXT CHECK (lead_type IN ('phone_call', 'booking', 'form_fill', 'chat', 'unknown')),
+
+  service TEXT,
+  keyword_intent TEXT CHECK (keyword_intent IN ('emergency', 'buy_now', 'high', 'medium', 'low', 'unknown')),
+
+  market_id TEXT,
+  market_confidence TEXT,
+  geo_target TEXT,
+
+  value DECIMAL(10, 2),
+  elv_score INTEGER,
+
+  opted_email BOOLEAN DEFAULT false,
+  opted_sms BOOLEAN DEFAULT false,
+  unsub_email BOOLEAN DEFAULT false,
+  unsub_sms BOOLEAN DEFAULT false,
+
+  tags TEXT[] DEFAULT '{}',
+  notes TEXT,
+
+  last_contacted TIMESTAMP WITH TIME ZONE,
+  jobs JSONB DEFAULT '[]',
+
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_contacts_business_id ON public.contacts(business_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_source ON public.contacts(source);
+CREATE INDEX IF NOT EXISTS idx_contacts_market_id ON public.contacts(market_id);
+
+ALTER TABLE public.contacts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage own contacts"
+  ON public.contacts FOR ALL
+  USING (business_id IN (SELECT id FROM public.businesses WHERE user_id = auth.uid()));
+
+-- ============================================================================
 -- INITIAL DATA (Optional)
 -- ============================================================================
 -- You can manually create a test business and upgrade your account here

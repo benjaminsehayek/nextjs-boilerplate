@@ -1,99 +1,116 @@
-// Site Audit Tool - Type Definitions
+// Site Audit Tool Types
 
+export type SeverityLevel = 'critical' | 'warning' | 'notice';
+export type Severity = SeverityLevel; // Alias for compatibility
+export type Category = 'meta' | 'content' | 'links' | 'images' | 'performance' | 'schema' | 'security' | 'mobile';
+export type ImpactLevel = 'high' | 'medium' | 'low';
+export type Impact = ImpactLevel; // Alias for compatibility
+export type EffortLevel = 'easy' | 'medium' | 'hard';
+export type Effort = EffortLevel; // Alias for compatibility
 export type ScanState = 'idle' | 'scanning' | 'complete' | 'error';
 export type TabId = 'overview' | 'issues' | 'pages';
-export type Severity = 'critical' | 'warning' | 'notice';
-export type Impact = 'high' | 'medium' | 'low';
-export type Effort = 'easy' | 'medium' | 'hard';
-
-export interface ScanProgress {
-  completed: number;
-  total: number;
-  tasks: string[];
-  currentTask?: string;
-}
 
 export interface AuditCheck {
   id: string;
-  category: string;
-  name: string;
-  description: string;
+  category: Category | string;
+  severity: SeverityLevel;
   passed: boolean;
-  severity: Severity;
-  value?: string | number;
-  expected?: string | number;
+  title?: string;
+  name?: string;
+  description: string;
+  fix?: string;
+  affectedPages?: string[];
 }
 
 export interface Issue {
   id: string;
   type: string;
-  severity: Severity;
-  category: string;
+  severity: SeverityLevel;
+  category: Category;
   title: string;
   description: string;
   affectedPages: string[];
   fix: string;
-  impact: Impact;
-  effort: Effort;
+  impact: ImpactLevel;
+  effort: EffortLevel;
+}
+
+export interface PageData {
+  url: string;
+  title: string | null;
+  description?: string | null;
+  meta_description?: string | null;
+  h1: string | null;
+  statusCode?: number;
+  status_code?: number;
+  loadTime?: number;
+  load_time?: number;
+  wordCount?: number;
+  word_count?: number;
+  images?: number;
+  links_internal?: number;
+  links_external?: number;
+  size?: number;
+  issues?: Issue[];
+  score: number;
 }
 
 export interface QuickWin {
   id: string;
   title: string;
-  description: string;
+  description?: string;
   estimatedTime: string;
   impactScore: number;
   affectedPages: number;
   fix: string;
+  category?: Category;
   completed?: boolean;
 }
 
-export interface PageData {
-  url: string;
-  status_code: number;
+export interface CategoryScoreData {
   score: number;
-  title?: string;
-  meta_description?: string;
-  h1?: string;
-  word_count?: number;
-  images?: number;
-  links_internal?: number;
-  links_external?: number;
-  load_time?: number;
-  size?: number;
-  issues: Issue[];
+  issueCount: number;
 }
 
 export interface CategoryScore {
-  name: string;
+  category: Category;
   score: number;
-  checks: AuditCheck[];
-  issueCount: number;
+  checks: number;
+  passed: number;
+  failed: number;
 }
 
 export interface SiteAuditResults {
   auditId: string;
   domain: string;
   overallScore: number;
-  categoryScores: Record<string, CategoryScore>;
-  pages: PageData[];
-  issues: Issue[];
-  quickWins: QuickWin[];
+  categoryScores: Record<string, CategoryScoreData>;
   pageCount: number;
   issuesCritical: number;
   issuesWarning: number;
   issuesNotice: number;
-  lighthouseScores?: {
+  lighthouseScores: {
     performance: number;
     accessibility: number;
     bestPractices: number;
     seo: number;
-  };
+  } | null;
+  pages: PageData[];
+  issues: Issue[];
+  quickWins: QuickWin[];
   crawlData?: unknown;
   apiCost: number;
   startedAt: string;
   completedAt: string;
 }
+
+export interface ScanProgress {
+  completed: number;
+  total: number;
+  tasks: string[];
+}
+
+// Component Props
 
 export interface ScanInputProps {
   onStartScan: (domain: string) => void;
@@ -114,13 +131,13 @@ export interface DashboardProps {
 
 export interface ScoreOverviewProps {
   overallScore: number;
-  categoryScores: Record<string, CategoryScore>;
-  lighthouseScores?: {
+  categoryScores: Record<string, CategoryScoreData>;
+  lighthouseScores: {
     performance: number;
     accessibility: number;
     bestPractices: number;
     seo: number;
-  };
+  } | null;
 }
 
 export interface IssuesTabProps {

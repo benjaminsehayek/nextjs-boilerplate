@@ -1,11 +1,11 @@
 // Site Audit Tool - Scoring Algorithms (Pure Functions)
 
-import type { AuditCheck, CategoryScore, Issue, QuickWin, PageData, Severity, Impact, Effort } from './types';
+import type { AuditCheck, CategoryScore, Issue, QuickWin, PageData, Severity, Impact, Effort, Category } from './types';
 
 /**
  * Calculate overall score from category scores
  */
-export function calculateOverallScore(categoryScores: Record<string, CategoryScore>): number {
+export function calculateOverallScore(categoryScores: Record<string, CategoryScore> | Record<string, { score: number }>): number {
   const scores = Object.values(categoryScores).map(cat => cat.score);
   if (scores.length === 0) return 0;
   return Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
@@ -237,6 +237,7 @@ export function identifyQuickWins(issues: Issue[]): QuickWin[] {
       impactScore: calculateImpactScore(issue),
       affectedPages: issue.affectedPages.length,
       fix: issue.fix,
+      category: issue.category,
       completed: false,
     }))
     .sort((a, b) => b.impactScore - a.impactScore)
@@ -275,6 +276,10 @@ export function groupIssuesBySeverity(issues: Issue[]): Record<Severity, Issue[]
 export function calculatePageScore(page: PageData): number {
   const checks: AuditCheck[] = [];
 
+  const metaDescription = page.meta_description || page.description;
+  const statusCode = page.status_code || page.statusCode;
+  const wordCount = page.word_count || page.wordCount;
+
   // Title check
   checks.push({
     id: 'title',
@@ -291,7 +296,7 @@ export function calculatePageScore(page: PageData): number {
     category: 'meta',
     name: 'Meta Description',
     description: 'Page has proper meta description',
-    passed: !!page.meta_description && page.meta_description.length >= 120 && page.meta_description.length <= 160,
+    passed: !!metaDescription && metaDescription.length >= 120 && metaDescription.length <= 160,
     severity: 'critical',
   });
 
@@ -311,7 +316,7 @@ export function calculatePageScore(page: PageData): number {
     category: 'content',
     name: 'Content Length',
     description: 'Page has sufficient content',
-    passed: (page.word_count || 0) >= 300,
+    passed: (wordCount || 0) >= 300,
     severity: 'warning',
   });
 
@@ -321,7 +326,7 @@ export function calculatePageScore(page: PageData): number {
     category: 'technical',
     name: 'HTTP Status',
     description: 'Page returns 200 status',
-    passed: page.status_code === 200,
+    passed: statusCode === 200,
     severity: 'critical',
   });
 
