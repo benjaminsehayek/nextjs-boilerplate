@@ -17,8 +17,9 @@ export async function createClient() {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options)
             );
-          } catch {
-            // setAll called from Server Component — ignore
+          } catch (error) {
+            // Log the error instead of silently ignoring it
+            console.error('Error setting cookies:', error);
           }
         },
       },
