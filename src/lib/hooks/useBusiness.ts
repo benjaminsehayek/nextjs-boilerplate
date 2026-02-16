@@ -21,7 +21,7 @@ export function useBusiness() {
 
         const { data } = await (supabase as any)
           .from('businesses')
-          .select('*')
+          .select('id, user_id, domain, name, place_id, cid, feature_id, phone, address, city, state, zip, latitude, longitude, industry, categories, created_at, updated_at')
           .eq('user_id', user.id);
 
         const biz = (data as Business[]) || [];

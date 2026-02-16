@@ -20,7 +20,7 @@ export function useLocations(businessId?: string) {
       try {
         const { data } = await (supabase as any)
           .from('business_locations')
-          .select('*')
+          .select('id, business_id, location_name, address, city, state, zip, latitude, longitude, phone, place_id, cid, gbp_listing, is_primary, created_at')
           .eq('business_id', businessId)
           .order('is_primary', { ascending: false })
           .order('location_name', { ascending: true });

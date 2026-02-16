@@ -3,7 +3,6 @@ export type SubscriptionStatus = 'active' | 'inactive' | 'past_due' | 'canceled'
 
 export interface Profile {
   id: string;
-  email: string;
   full_name: string | null;
   company_name: string | null;
   phone: string | null;
@@ -16,7 +15,6 @@ export interface Profile {
   content_tokens_limit: number;
   scan_credits_used: number;
   scan_credits_limit: number;
-  billing_period_start: string | null;
   created_at: string;
   updated_at: string;
 }

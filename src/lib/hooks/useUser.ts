@@ -45,12 +45,13 @@ export function useUser() {
           console.log('[useUser] Loading profile for user:', user.id);
           const { data, error: profileError } = await (supabase as any)
             .from('profiles')
-            .select('*')
+            .select('id, full_name, company_name, phone, avatar_url, stripe_customer_id, subscription_tier, subscription_status, subscription_period_end, content_tokens_used, content_tokens_limit, scan_credits_used, scan_credits_limit, created_at, updated_at')
             .eq('id', user.id)
             .single();
 
           if (profileError) {
             console.error('[useUser] Profile error:', profileError);
+            console.error('[useUser] Full error details:', JSON.stringify(profileError, null, 2));
           }
 
           console.log('[useUser] Profile loaded:', data ? 'success' : 'no data');
@@ -72,7 +73,7 @@ export function useUser() {
         if (session?.user) {
           const { data } = await (supabase as any)
             .from('profiles')
-            .select('*')
+            .select('id, full_name, company_name, phone, avatar_url, stripe_customer_id, subscription_tier, subscription_status, subscription_period_end, content_tokens_used, content_tokens_limit, scan_credits_used, scan_credits_limit, created_at, updated_at')
             .eq('id', session.user.id)
             .single();
           setProfile(data as Profile | null);
@@ -104,7 +105,7 @@ export function useUser() {
     try {
       const { data } = await (supabase as any)
         .from('profiles')
-        .select('*')
+        .select('id, full_name, company_name, phone, avatar_url, stripe_customer_id, subscription_tier, subscription_status, subscription_period_end, content_tokens_used, content_tokens_limit, scan_credits_used, scan_credits_limit, created_at, updated_at')
         .eq('id', user.id)
         .single();
       setProfile(data as Profile | null);
