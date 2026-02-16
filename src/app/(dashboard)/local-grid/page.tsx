@@ -36,7 +36,7 @@ export default function LocalGridPage() {
     async function loadRecentScan() {
       if (!business) return; // Guard against race condition
 
-      const { data } = await supabase
+      const { data } = await (supabase as any)
         .from('grid_scans')
         .select('*')
         .eq('business_id', business.id)
@@ -115,7 +115,7 @@ export default function LocalGridPage() {
       );
 
       // Create scan record in database
-      const { data: scan, error: dbError } = await supabase
+      const { data: scan, error: dbError } = await (supabase as any)
         .from('grid_scans')
         .insert({
           business_id: business.id,
@@ -157,7 +157,7 @@ export default function LocalGridPage() {
   ) => {
     try {
       // Update status to scanning
-      await supabase
+      await (supabase as any)
         .from('grid_scans')
         .update({ status: 'scanning' })
         .eq('id', scanId);
@@ -169,7 +169,7 @@ export default function LocalGridPage() {
         const keyword = config.keywords[kIdx];
 
         // Update progress
-        await supabase
+        await (supabase as any)
           .from('grid_scans')
           .update({
             progress: {
@@ -186,7 +186,7 @@ export default function LocalGridPage() {
           const point = gridPoints[pIdx];
 
           // Update current point
-          await supabase
+          await (supabase as any)
             .from('grid_scans')
             .update({
               progress: {
@@ -283,7 +283,7 @@ export default function LocalGridPage() {
       });
 
       // Save final results
-      await supabase
+      await (supabase as any)
         .from('grid_scans')
         .update({
           status: 'complete',
@@ -299,13 +299,13 @@ export default function LocalGridPage() {
 
       // Decrement scan credits
       if (userId) {
-        await supabase.rpc('decrement_scan_credits', {
+        await (supabase as any).rpc('decrement_scan_credits', {
           p_user_id: userId,
         });
       }
     } catch (err) {
       console.error('Scan error:', err);
-      await supabase
+      await (supabase as any)
         .from('grid_scans')
         .update({ status: 'failed' })
         .eq('id', scanId);

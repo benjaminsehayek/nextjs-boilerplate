@@ -63,7 +63,7 @@ export default function LeadIntelligencePage() {
     if (!business?.id) return;
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from('platform_connections')
         .select('*')
         .eq('business_id', business.id);
@@ -115,7 +115,7 @@ export default function LeadIntelligencePage() {
     if (!business?.id) return;
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from('leads')
         .select('*')
         .eq('business_id', business.id)
@@ -153,7 +153,7 @@ export default function LeadIntelligencePage() {
     try {
       // In production, this would initiate OAuth flow
       // For now, we'll just update the connection status
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('platform_connections')
         .upsert({
           business_id: business.id,
@@ -177,7 +177,7 @@ export default function LeadIntelligencePage() {
     if (!business?.id) return;
 
     try {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('platform_connections')
         .update({ connected: false })
         .eq('business_id', business.id)
@@ -196,7 +196,7 @@ export default function LeadIntelligencePage() {
     if (!business?.id) return;
 
     try {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('platform_connections')
         .update({ last_sync: new Date().toISOString() })
         .eq('business_id', business.id)

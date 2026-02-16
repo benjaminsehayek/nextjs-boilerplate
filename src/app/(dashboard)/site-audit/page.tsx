@@ -40,7 +40,7 @@ export default function SiteAuditPage() {
     async function checkExistingAudit() {
       if (!business?.id) return;
 
-      const { data: existingAudit } = await supabase
+      const { data: existingAudit } = await (supabase as any)
         .from('site_audits')
         .select('*')
         .eq('business_id', business.id)
@@ -103,7 +103,7 @@ export default function SiteAuditPage() {
   }, [auditId, supabase]);
 
   async function loadAuditResults(id: string) {
-    const { data: audit } = await supabase
+    const { data: audit } = await (supabase as any)
       .from('site_audits')
       .select('*')
       .eq('id', id)
@@ -152,7 +152,7 @@ export default function SiteAuditPage() {
 
     try {
       // Create audit record
-      const { data: audit, error: insertError } = await supabase
+      const { data: audit, error: insertError } = await (supabase as any)
         .from('site_audits')
         .insert({
           business_id: business.id,
@@ -197,7 +197,7 @@ export default function SiteAuditPage() {
 
     try {
       // Update status to crawling
-      await supabase
+      await (supabase as any)
         .from('site_audits')
         .update({ status: 'crawling' })
         .eq('id', id);
@@ -209,7 +209,7 @@ export default function SiteAuditPage() {
             const data = await dfsCall(check.endpoint, [{ target: cleanedDomain }]);
 
             // Update completed tasks
-            const { data: currentAudit } = await supabase
+            const { data: currentAudit } = await (supabase as any)
               .from('site_audits')
               .select('completed_tasks')
               .eq('id', id)
@@ -217,7 +217,7 @@ export default function SiteAuditPage() {
 
             const completedTasks = [...(currentAudit?.completed_tasks || []), check.name];
 
-            await supabase
+            await (supabase as any)
               .from('site_audits')
               .update({ completed_tasks: completedTasks })
               .eq('id', id);
@@ -230,7 +230,7 @@ export default function SiteAuditPage() {
       );
 
       // Update status to analyzing
-      await supabase
+      await (supabase as any)
         .from('site_audits')
         .update({ status: 'analyzing' })
         .eq('id', id);
@@ -239,7 +239,7 @@ export default function SiteAuditPage() {
       // For now, we'll mark as complete and let the backend handle it
       // In a real implementation, you'd process the results here
 
-      await supabase
+      await (supabase as any)
         .from('site_audits')
         .update({
           status: 'complete',
@@ -250,7 +250,7 @@ export default function SiteAuditPage() {
       // Load results
       await loadAuditResults(id);
     } catch (err: any) {
-      await supabase
+      await (supabase as any)
         .from('site_audits')
         .update({ status: 'failed' })
         .eq('id', id);

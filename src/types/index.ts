@@ -106,6 +106,11 @@ export interface ContentStrategy {
   id: string;
   business_id: string;
   status: string;
+  domain: string;
+  industry: string;
+  economics: Record<string, any> | null;
+  completed_tasks: string[] | null;
+  current_task: string | null;
   site_conversion_rate: number;
   keywords: unknown;
   clusters: unknown;

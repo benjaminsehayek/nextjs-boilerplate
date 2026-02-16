@@ -18,7 +18,7 @@ export function useLocations(businessId?: string) {
       }
 
       try {
-        const { data } = await supabase
+        const { data } = await (supabase as any)
           .from('business_locations')
           .select('*')
           .eq('business_id', businessId)

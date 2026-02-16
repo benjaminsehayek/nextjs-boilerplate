@@ -10,6 +10,7 @@ import { useBusiness } from '@/lib/hooks/useBusiness';
 import { useLocations } from '@/lib/hooks/useLocations';
 import { createClient } from '@/lib/supabase/client';
 import { cleanDomain, dfsCall } from '@/lib/dataforseo';
+import type { ContentStrategy } from '@/types';
 import type {
   AnalysisStatus,
   ContentStrategyConfig,
@@ -59,14 +60,15 @@ export default function ContentStrategyPage() {
     async function checkExistingAnalysis() {
       if (!business?.id) return;
 
-      const { data: existingStrategy } = await supabase
+      const { data } = await (supabase as any)
         .from('content_strategies')
         .select('*')
         .eq('business_id', business.id)
         .in('status', ['pending', 'analyzing'])
         .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        .limit(1);
+
+      const existingStrategy = data?.[0] as ContentStrategy | undefined;
 
       if (existingStrategy) {
         setStrategyId(existingStrategy.id);
@@ -128,26 +130,28 @@ export default function ContentStrategyPage() {
   }, [strategyId, supabase]);
 
   async function loadStrategyResults(id: string) {
-    const { data: strategy } = await supabase
+    const { data: strategy } = await (supabase as any)
       .from('content_strategies')
       .select('*')
       .eq('id', id)
       .single();
 
-    if (strategy && strategy.status === 'complete') {
+    const typedStrategy = strategy as ContentStrategy | null;
+
+    if (typedStrategy && typedStrategy.status === 'complete') {
       const results: ContentStrategyResults = {
-        strategyId: strategy.id,
-        domain: strategy.domain,
-        clusters: strategy.clusters_data || [],
-        opportunities: strategy.opportunities_data || [],
-        calendar: strategy.calendar_data || [],
-        cannibalization: strategy.cannibalization_data || [],
-        totalKeywords: strategy.total_keywords || 0,
-        totalSearchVolume: strategy.total_search_volume || 0,
-        estimatedMonthlyTraffic: strategy.estimated_monthly_traffic || 0,
-        estimatedMonthlyValue: strategy.estimated_monthly_value || 0,
-        apiCost: strategy.api_cost || 0,
-        analyzedAt: strategy.completed_at || new Date().toISOString(),
+        strategyId: typedStrategy.id,
+        domain: typedStrategy.domain,
+        clusters: (typedStrategy as any).clusters_data || [],
+        opportunities: (typedStrategy as any).opportunities_data || [],
+        calendar: (typedStrategy as any).calendar_data || [],
+        cannibalization: (typedStrategy as any).cannibalization_data || [],
+        totalKeywords: (typedStrategy as any).total_keywords || 0,
+        totalSearchVolume: (typedStrategy as any).total_search_volume || 0,
+        estimatedMonthlyTraffic: (typedStrategy as any).estimated_monthly_traffic || 0,
+        estimatedMonthlyValue: (typedStrategy as any).estimated_monthly_value || 0,
+        apiCost: typedStrategy.api_cost || 0,
+        analyzedAt: (typedStrategy as any).completed_at || new Date().toISOString(),
       };
 
       setResults(results);
@@ -172,7 +176,7 @@ export default function ContentStrategyPage() {
 
     try {
       // Create strategy record
-      const { data: strategy, error: insertError } = await supabase
+      const { data: strategy, error: insertError } = await (supabase as any)
         .from('content_strategies')
         .insert({
           business_id: business.id,
@@ -189,15 +193,17 @@ export default function ContentStrategyPage() {
         .select()
         .single();
 
-      if (insertError || !strategy) {
+      const typedNewStrategy = strategy as ContentStrategy | null;
+
+      if (insertError || !typedNewStrategy) {
         throw new Error('Failed to create strategy record');
       }
 
-      setStrategyId(strategy.id);
+      setStrategyId(typedNewStrategy.id);
       setAnalysisStatus('analyzing');
 
       // Start analysis in background
-      runAnalysis(strategy.id, cleanedDomain, inputConfig);
+      runAnalysis(typedNewStrategy.id, cleanedDomain, inputConfig);
     } catch (err: any) {
       setAnalysisStatus('error');
       setError(err.message || 'Failed to start analysis');
@@ -222,7 +228,7 @@ export default function ContentStrategyPage() {
 
     try {
       // Update status to analyzing
-      await supabase
+      await (supabase as any)
         .from('content_strategies')
         .update({
           status: 'analyzing',
@@ -271,7 +277,7 @@ export default function ContentStrategyPage() {
       );
 
       // Save final results
-      await supabase
+      await (supabase as any)
         .from('content_strategies')
         .update({
           status: 'complete',
@@ -291,7 +297,7 @@ export default function ContentStrategyPage() {
       // Load results
       await loadStrategyResults(id);
     } catch (err: any) {
-      await supabase
+      await (supabase as any)
         .from('content_strategies')
         .update({ status: 'failed' })
         .eq('id', id);
@@ -302,7 +308,7 @@ export default function ContentStrategyPage() {
   }
 
   async function updateProgress(id: string, taskName: string) {
-    const { data: currentStrategy } = await supabase
+    const { data: currentStrategy } = await (supabase as any)
       .from('content_strategies')
       .select('completed_tasks')
       .eq('id', id)
@@ -310,7 +316,7 @@ export default function ContentStrategyPage() {
 
     const completedTasks = [...(currentStrategy?.completed_tasks || []), taskName];
 
-    await supabase
+    await (supabase as any)
       .from('content_strategies')
       .update({
         completed_tasks: completedTasks,

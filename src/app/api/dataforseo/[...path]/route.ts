@@ -18,7 +18,7 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { data: profile } = await supabase
+  const { data: profile } = await (supabase as any)
     .from('profiles')
     .select('subscription_tier, subscription_status, scan_credits_used, scan_credits_limit')
     .eq('id', user.id)

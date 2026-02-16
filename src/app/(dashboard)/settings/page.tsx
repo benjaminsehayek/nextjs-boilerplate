@@ -75,7 +75,7 @@ export default function SettingsPage() {
 
     setSaving(true);
     try {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('businesses')
         .update({
           name: businessData.name,
@@ -109,7 +109,7 @@ export default function SettingsPage() {
       // Validate data
       profileUpdateSchema.parse(profileData);
 
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('profiles')
         .update({
           full_name: profileData.full_name,
@@ -141,7 +141,7 @@ export default function SettingsPage() {
 
     // Auto-save avatar to database
     try {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('profiles')
         .update({ avatar_url: url || null })
         .eq('id', user!.id);
@@ -183,7 +183,7 @@ export default function SettingsPage() {
     if (!confirm('Are you sure you want to delete this location?')) return;
 
     try {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('business_locations')
         .delete()
         .eq('id', id);

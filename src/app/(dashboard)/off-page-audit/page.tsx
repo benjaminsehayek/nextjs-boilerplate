@@ -40,7 +40,7 @@ export default function OffPageAuditPage() {
     async function checkExistingAudit() {
       if (!business?.id) return;
 
-      const { data: existingAudit } = await supabase
+      const { data: existingAudit } = await (supabase as any)
         .from('off_page_audits')
         .select('*')
         .eq('business_id', business.id)
@@ -103,7 +103,7 @@ export default function OffPageAuditPage() {
   }, [auditId, supabase]);
 
   async function loadAuditResults(id: string) {
-    const { data: audit } = await supabase
+    const { data: audit } = await (supabase as any)
       .from('off_page_audits')
       .select('*')
       .eq('id', id)
@@ -155,7 +155,7 @@ export default function OffPageAuditPage() {
 
     try {
       // Create audit record
-      const { data: audit, error: insertError } = await supabase
+      const { data: audit, error: insertError } = await (supabase as any)
         .from('off_page_audits')
         .insert({
           business_id: business.id,
@@ -187,7 +187,7 @@ export default function OffPageAuditPage() {
 
   async function runAuditChecks(id: string, cleanedDomain: string, competitors?: string[]) {
     try {
-      await supabase
+      await (supabase as any)
         .from('off_page_audits')
         .update({ status: 'analyzing' })
         .eq('id', id);
@@ -224,7 +224,7 @@ export default function OffPageAuditPage() {
       }
 
       // Save final results
-      await supabase
+      await (supabase as any)
         .from('off_page_audits')
         .update({
           status: 'complete',
@@ -240,7 +240,7 @@ export default function OffPageAuditPage() {
 
       await loadAuditResults(id);
     } catch (err: any) {
-      await supabase
+      await (supabase as any)
         .from('off_page_audits')
         .update({ status: 'failed' })
         .eq('id', id);
@@ -251,7 +251,7 @@ export default function OffPageAuditPage() {
   }
 
   async function updateTask(id: string, taskName: string) {
-    const { data: currentAudit } = await supabase
+    const { data: currentAudit } = await (supabase as any)
       .from('off_page_audits')
       .select('completed_tasks')
       .eq('id', id)
@@ -259,7 +259,7 @@ export default function OffPageAuditPage() {
 
     const completedTasks = [...(currentAudit?.completed_tasks || []), taskName];
 
-    await supabase
+    await (supabase as any)
       .from('off_page_audits')
       .update({ completed_tasks: completedTasks })
       .eq('id', id);

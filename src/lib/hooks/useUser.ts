@@ -43,7 +43,7 @@ export function useUser() {
 
         if (user) {
           console.log('[useUser] Loading profile for user:', user.id);
-          const { data, error: profileError } = await supabase
+          const { data, error: profileError } = await (supabase as any)
             .from('profiles')
             .select('*')
             .eq('id', user.id)
@@ -70,7 +70,7 @@ export function useUser() {
       async (_event, session) => {
         setUser(session?.user ?? null);
         if (session?.user) {
-          const { data } = await supabase
+          const { data } = await (supabase as any)
             .from('profiles')
             .select('*')
             .eq('id', session.user.id)
@@ -102,7 +102,7 @@ export function useUser() {
     if (!user) return;
 
     try {
-      const { data } = await supabase
+      const { data } = await (supabase as any)
         .from('profiles')
         .select('*')
         .eq('id', user.id)

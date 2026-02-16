@@ -97,7 +97,7 @@ export function LocationModal({ isOpen, onClose, location, businessId, onSave }:
 
       if (isEditMode && location) {
         // Update existing location
-        const { error } = await supabase
+        const { error } = await (supabase as any)
           .from('business_locations')
           .update(locationData)
           .eq('id', location.id);
@@ -106,7 +106,7 @@ export function LocationModal({ isOpen, onClose, location, businessId, onSave }:
 
         // If marking as primary, unset other primary locations
         if (formData.is_primary) {
-          await supabase
+          await (supabase as any)
             .from('business_locations')
             .update({ is_primary: false })
             .eq('business_id', businessId)
@@ -114,7 +114,7 @@ export function LocationModal({ isOpen, onClose, location, businessId, onSave }:
         }
       } else {
         // Create new location
-        const { error } = await supabase
+        const { error } = await (supabase as any)
           .from('business_locations')
           .insert(locationData);
 
@@ -122,7 +122,7 @@ export function LocationModal({ isOpen, onClose, location, businessId, onSave }:
 
         // If marking as primary, unset other primary locations
         if (formData.is_primary) {
-          await supabase
+          await (supabase as any)
             .from('business_locations')
             .update({ is_primary: false })
             .eq('business_id', businessId);

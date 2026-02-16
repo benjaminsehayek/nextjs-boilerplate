@@ -173,7 +173,7 @@ function fromDbFormat(row: any): Contact {
 export async function fetchContacts(): Promise<Contact[]> {
   const supabase = createClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from('contacts')
     .select('*')
     .order('created_at', { ascending: false });
@@ -200,7 +200,7 @@ export async function createContact(contact: Partial<Contact>): Promise<Contact>
     user_id: user.id,
   };
 
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from('contacts')
     .insert(dbData)
     .select()
@@ -225,7 +225,7 @@ export async function updateContact(
 
   const dbData = toDbFormat(updates);
 
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from('contacts')
     .update(dbData)
     .eq('id', id)
@@ -246,7 +246,7 @@ export async function updateContact(
 export async function deleteContact(id: string): Promise<void> {
   const supabase = createClient();
 
-  const { error } = await supabase
+  const { error } = await (supabase as any)
     .from('contacts')
     .delete()
     .eq('id', id);
@@ -273,7 +273,7 @@ export async function bulkCreateContacts(
     user_id: user.id,
   }));
 
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from('contacts')
     .insert(dbData)
     .select();
@@ -292,7 +292,7 @@ export async function bulkCreateContacts(
 export async function bulkDeleteContacts(ids: string[]): Promise<void> {
   const supabase = createClient();
 
-  const { error } = await supabase
+  const { error } = await (supabase as any)
     .from('contacts')
     .delete()
     .in('id', ids);
@@ -309,7 +309,7 @@ export async function bulkDeleteContacts(ids: string[]): Promise<void> {
 export async function searchContacts(query: string): Promise<Contact[]> {
   const supabase = createClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from('contacts')
     .select('*')
     .or(
@@ -337,7 +337,7 @@ export async function getContactStats(): Promise<{
 }> {
   const supabase = createClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from('contacts')
     .select('elv, email_opt_in, sms_opt_in');
 
@@ -346,9 +346,9 @@ export async function getContactStats(): Promise<{
     throw error;
   }
 
-  const totalElv = data.reduce((sum, c) => sum + (c.elv || 0), 0);
-  const emailOptedIn = data.filter((c) => c.email_opt_in).length;
-  const smsOptedIn = data.filter((c) => c.sms_opt_in).length;
+  const totalElv = data.reduce((sum: number, c: any) => sum + (c.elv || 0), 0);
+  const emailOptedIn = data.filter((c: any) => c.email_opt_in).length;
+  const smsOptedIn = data.filter((c: any) => c.sms_opt_in).length;
 
   return {
     totalContacts: data.length,

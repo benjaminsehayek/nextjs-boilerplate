@@ -85,7 +85,7 @@ export default function OnboardingPage() {
       console.log('Creating business for user:', user.id);
 
       // Create business
-      const { data: business, error: businessError } = await supabase
+      const { data: business, error: businessError } = await (supabase as any)
         .from('businesses')
         .insert({
           user_id: user.id,
@@ -109,7 +109,7 @@ export default function OnboardingPage() {
         if (businessError.message.includes('duplicate') || businessError.message.includes('unique')) {
           console.log('Business already exists, fetching...');
           // Business exists, fetch it
-          const { data: existingBusiness, error: fetchError } = await supabase
+          const { data: existingBusiness, error: fetchError } = await (supabase as any)
             .from('businesses')
             .select('*')
             .eq('user_id', user.id)
@@ -166,7 +166,7 @@ export default function OnboardingPage() {
       if (!businessId) throw new Error('Business not found');
 
       // Create primary location
-      const { error: locationError } = await supabase
+      const { error: locationError } = await (supabase as any)
         .from('business_locations')
         .insert({
           business_id: businessId,
@@ -206,7 +206,7 @@ export default function OnboardingPage() {
       }
 
       // Insert services
-      const { error: servicesError } = await supabase
+      const { error: servicesError } = await (supabase as any)
         .from('services')
         .insert(
           validServices.map((service, index) => ({
@@ -245,7 +245,7 @@ export default function OnboardingPage() {
       }
 
       // Insert markets
-      const { error: marketsError } = await supabase
+      const { error: marketsError } = await (supabase as any)
         .from('markets')
         .insert(
           validMarkets.map((market, index) => ({

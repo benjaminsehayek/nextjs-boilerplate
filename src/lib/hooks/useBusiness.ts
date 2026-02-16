@@ -19,7 +19,7 @@ export function useBusiness() {
           return;
         }
 
-        const { data } = await supabase
+        const { data } = await (supabase as any)
           .from('businesses')
           .select('*')
           .eq('user_id', user.id);
