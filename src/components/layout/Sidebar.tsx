@@ -19,6 +19,7 @@ const navItems = [
     { href: '/lead-database', label: 'Lead Database', icon: '👥' },
   ]},
   { section: 'Account', items: [
+    { href: '/billing', label: 'Billing', icon: '💳' },
     { href: '/settings', label: 'Settings', icon: '⚙️' },
   ]},
 ];

@@ -1,50 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useUser } from '@/lib/hooks/useUser';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import { createClient } from '@/lib/supabase/client';
-
-const tiers = [
-  {
-    name: 'Analysis',
-    price: '$120',
-    period: '/month',
-    features: [
-      'Site Audit',
-      'Content Strategy',
-      'Local Grid',
-      'Off-Page Audit',
-      '5 scans per month',
-    ],
-  },
-  {
-    name: 'Marketing',
-    price: '$250',
-    period: '/month',
-    features: [
-      'Everything in Analysis',
-      'Lead Database',
-      'Content Generation (6 articles/month)',
-      'Email & SMS campaigns',
-      '15 scans per month',
-    ],
-  },
-  {
-    name: 'Growth',
-    price: '$450',
-    period: '/month',
-    features: [
-      'Everything in Marketing',
-      'Lead Intelligence',
-      'Multi-location support',
-      'Cross-tool pipeline',
-      'Content Generation (30 articles/month)',
-      '50 scans per month',
-    ],
-  },
-];
 
 export default function SettingsPage() {
   const { user, profile } = useUser();
@@ -308,43 +269,27 @@ export default function SettingsPage() {
         </div>
       )}
 
-      <h2 className="font-display text-2xl mb-6">Subscription Plans</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {tiers.map((t) => (
-          <div
-            key={t.name}
-            className={`card p-6 ${
-              tier === t.name.toLowerCase()
-                ? 'border-flame-500 bg-flame-500/5'
-                : ''
-            }`}
-          >
-            <h3 className="font-display text-xl mb-2 text-flame-500">
-              {t.name}
-            </h3>
-            <div className="mb-4">
-              <span className="text-3xl font-display">{t.price}</span>
-              <span className="text-ash-400">{t.period}</span>
-            </div>
-            <ul className="space-y-2 mb-6">
-              {t.features.map((feature, i) => (
-                <li key={i} className="text-sm text-ash-300 flex items-start gap-2">
-                  <span className="text-success">✓</span>
-                  {feature}
-                </li>
-              ))}
-            </ul>
-            {tier === t.name.toLowerCase() ? (
-              <div className="btn-ghost w-full text-center cursor-default">
-                Current Plan
-              </div>
-            ) : (
-              <button className="btn-primary w-full">
-                Upgrade
-              </button>
-            )}
+      <h2 className="font-display text-2xl mb-6">Subscription</h2>
+      <div className="card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-display text-lg mb-1">Current Plan</h3>
+            <p className="text-2xl font-bold capitalize">{tier}</p>
           </div>
-        ))}
+          <Link href="/billing" className="btn-primary">
+            Manage Billing
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-char-700">
+          <div>
+            <p className="text-sm text-ash-400 mb-1">Scans Remaining</p>
+            <p className="text-xl font-semibold">{scansRemaining}</p>
+          </div>
+          <div>
+            <p className="text-sm text-ash-400 mb-1">Content Articles Remaining</p>
+            <p className="text-xl font-semibold">{tokensRemaining}</p>
+          </div>
+        </div>
       </div>
     </div>
   );

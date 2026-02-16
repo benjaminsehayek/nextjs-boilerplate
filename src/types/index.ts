@@ -186,3 +186,19 @@ export function grade(score: number): string {
   if (score >= 50) return 'D';
   return 'F';
 }
+
+// Billing & Stripe Types
+export interface CheckoutRequest {
+  tier: string;
+  interval: 'monthly' | 'annual';
+}
+
+export interface CheckoutResponse {
+  url: string;
+  sessionId: string;
+}
+
+export interface BillingError {
+  message: string;
+  code?: string;
+}
