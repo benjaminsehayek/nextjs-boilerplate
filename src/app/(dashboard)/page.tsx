@@ -5,12 +5,12 @@ import { useBusiness } from '@/lib/hooks/useBusiness';
 import Link from 'next/link';
 
 const tools = [
-  { href: '/dashboard/site-audit', icon: '🔍', name: 'Site Audit', desc: '52-point technical SEO check' },
-  { href: '/dashboard/content-strategy', icon: '📝', name: 'Content Strategy', desc: 'ROI-based keyword research' },
-  { href: '/dashboard/local-grid', icon: '📍', name: 'Local Grid', desc: 'Maps ranking heat map' },
-  { href: '/dashboard/off-page-audit', icon: '🔗', name: 'Off-Page Audit', desc: 'Backlinks, reviews, citations' },
-  { href: '/dashboard/lead-intelligence', icon: '📡', name: 'Lead Intelligence', desc: 'Multi-channel marketing dashboard' },
-  { href: '/dashboard/lead-database', icon: '👥', name: 'Lead Database', desc: 'CRM with lead scoring' },
+  { href: '/site-audit', icon: '🔍', name: 'Site Audit', desc: '52-point technical SEO check' },
+  { href: '/content-strategy', icon: '📝', name: 'Content Strategy', desc: 'ROI-based keyword research' },
+  { href: '/local-grid', icon: '📍', name: 'Local Grid', desc: 'Maps ranking heat map' },
+  { href: '/off-page-audit', icon: '🔗', name: 'Off-Page Audit', desc: 'Backlinks, reviews, citations' },
+  { href: '/lead-intelligence', icon: '📡', name: 'Lead Intelligence', desc: 'Multi-channel marketing dashboard' },
+  { href: '/lead-database', icon: '👥', name: 'Lead Database', desc: 'CRM with lead scoring' },
 ];
 
 export default function DashboardPage() {
@@ -34,7 +34,7 @@ export default function DashboardPage() {
           <p className="text-ash-300 mb-4">
             Complete your business profile to unlock all tools.
           </p>
-          <Link href="/dashboard/onboarding" className="btn-primary">
+          <Link href="/onboarding" className="btn-primary">
             Start Setup
           </Link>
         </div>

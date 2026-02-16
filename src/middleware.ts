@@ -29,7 +29,23 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user && request.nextUrl.pathname.startsWith('/dashboard')) {
+  // Protected routes that require authentication
+  const protectedPaths = [
+    '/site-audit',
+    '/content-strategy',
+    '/local-grid',
+    '/off-page-audit',
+    '/lead-intelligence',
+    '/lead-database',
+    '/settings',
+    '/onboarding',
+  ];
+
+  const isProtectedRoute = protectedPaths.some(path =>
+    request.nextUrl.pathname.startsWith(path)
+  );
+
+  if (!user && isProtectedRoute) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     url.searchParams.set('redirect', request.nextUrl.pathname);
@@ -42,7 +58,7 @@ export async function middleware(request: NextRequest) {
       request.nextUrl.pathname === '/signup')
   ) {
     const url = request.nextUrl.clone();
-    url.pathname = '/dashboard';
+    url.pathname = '/';
     return NextResponse.redirect(url);
   }
 
@@ -50,5 +66,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/login', '/signup'],
+  matcher: ['/', '/site-audit', '/content-strategy', '/local-grid', '/off-page-audit', '/lead-intelligence', '/lead-database', '/settings', '/onboarding', '/login', '/signup'],
 };

@@ -90,7 +90,7 @@ export default function ScanInput({ onStartScan, isLoading, scansRemaining }: Sc
                 </div>
               </div>
               {scansRemaining === 0 && (
-                <a href="/dashboard/settings" className="btn-primary">
+                <a href="/settings" className="btn-primary">
                   Upgrade Plan
                 </a>
               )}

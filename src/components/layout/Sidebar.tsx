@@ -8,18 +8,18 @@ import { useState } from 'react';
 
 const navItems = [
   { section: 'Overview', items: [
-    { href: '/dashboard', label: 'Dashboard', icon: '📊' },
+    { href: '/', label: 'Dashboard', icon: '📊' },
   ]},
   { section: 'Tools', items: [
-    { href: '/dashboard/site-audit', label: 'Site Audit', icon: '🔍' },
-    { href: '/dashboard/content-strategy', label: 'Content Strategy', icon: '📝' },
-    { href: '/dashboard/local-grid', label: 'Local Grid', icon: '📍' },
-    { href: '/dashboard/off-page-audit', label: 'Off-Page Audit', icon: '🔗' },
-    { href: '/dashboard/lead-intelligence', label: 'Lead Intelligence', icon: '📡' },
-    { href: '/dashboard/lead-database', label: 'Lead Database', icon: '👥' },
+    { href: '/site-audit', label: 'Site Audit', icon: '🔍' },
+    { href: '/content-strategy', label: 'Content Strategy', icon: '📝' },
+    { href: '/local-grid', label: 'Local Grid', icon: '📍' },
+    { href: '/off-page-audit', label: 'Off-Page Audit', icon: '🔗' },
+    { href: '/lead-intelligence', label: 'Lead Intelligence', icon: '📡' },
+    { href: '/lead-database', label: 'Lead Database', icon: '👥' },
   ]},
   { section: 'Account', items: [
-    { href: '/dashboard/settings', label: 'Settings', icon: '⚙️' },
+    { href: '/settings', label: 'Settings', icon: '⚙️' },
   ]},
 ];
 
