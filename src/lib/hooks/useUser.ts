@@ -16,21 +16,40 @@ export function useUser() {
 
   useEffect(() => {
     async function loadUser() {
+      console.log('[useUser] Starting to load user...');
+      console.log('[useUser] Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL?.substring(0, 20) + '...');
+
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        console.log('[useUser] Calling supabase.auth.getUser()...');
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+        if (authError) {
+          console.error('[useUser] Auth error:', authError);
+          throw authError;
+        }
+
+        console.log('[useUser] User loaded:', user ? 'authenticated' : 'not authenticated');
         setUser(user);
 
         if (user) {
-          const { data } = await supabase
+          console.log('[useUser] Loading profile for user:', user.id);
+          const { data, error: profileError } = await supabase
             .from('profiles')
             .select('*')
             .eq('id', user.id)
             .single();
+
+          if (profileError) {
+            console.error('[useUser] Profile error:', profileError);
+          }
+
+          console.log('[useUser] Profile loaded:', data ? 'success' : 'no data');
           setProfile(data as Profile | null);
         }
       } catch (error) {
-        console.error('Error loading user:', error);
+        console.error('[useUser] Error loading user:', error);
       } finally {
+        console.log('[useUser] Setting loading to false');
         setLoading(false);
       }
     }
