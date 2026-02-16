@@ -56,16 +56,33 @@ export function useUser() {
   }, []); // Empty dependency array - supabase client is stable
 
   const signOut = async () => {
+    console.log('Sign out initiated...');
     try {
-      await supabase.auth.signOut();
+      console.log('Calling supabase.auth.signOut()');
+      const { error } = await supabase.auth.signOut();
+
+      if (error) {
+        console.error('Supabase signOut error:', error);
+        throw error;
+      }
+
+      console.log('Sign out successful, clearing state');
       setUser(null);
       setProfile(null);
+
+      // Clear all local storage
+      localStorage.clear();
+      sessionStorage.clear();
+
+      console.log('Redirecting to home page');
       // Force a hard reload to clear all state
-      window.location.replace('/');
+      window.location.href = '/login';
     } catch (error) {
       console.error('Error signing out:', error);
       // Force reload anyway to clear state
-      window.location.replace('/');
+      localStorage.clear();
+      sessionStorage.clear();
+      window.location.href = '/login';
     }
   };
 

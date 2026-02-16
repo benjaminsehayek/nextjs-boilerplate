@@ -9,7 +9,8 @@
       "Bash(npx vercel --version)",
       "Bash(npx vercel login:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(find:*)"
     ]
   }
 }
