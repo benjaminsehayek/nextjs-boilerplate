@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/client';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import type { Profile } from '@/types';
 import type { User } from '@supabase/supabase-js';
 
@@ -9,6 +10,7 @@ export function useUser() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
   const supabase = createClient();
 
   useEffect(() => {
@@ -51,13 +53,20 @@ export function useUser() {
     );
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [supabase]);
 
   const signOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setProfile(null);
-    window.location.href = '/';
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+      setProfile(null);
+      // Force a hard reload to clear all state
+      window.location.replace('/');
+    } catch (error) {
+      console.error('Error signing out:', error);
+      // Force reload anyway to clear state
+      window.location.replace('/');
+    }
   };
 
   return { user, profile, loading, signOut };
