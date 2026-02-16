@@ -21,13 +21,13 @@ export function PlanCard({
   // Determine price to display
   const price = isFree
     ? 0
-    : typeof tier.price === 'number'
-    ? tier.price
+    : tier.tier === 'free'
+    ? 0
     : tier.price[interval];
 
   // Calculate annual savings
   const monthlySavings =
-    !isFree && typeof tier.price !== 'number' && interval === 'annual'
+    !isFree && tier.tier !== 'free' && interval === 'annual'
       ? Math.round(
           ((tier.price.monthly * 12 - tier.price.annual) / tier.price.monthly / 12) * 100
         )
