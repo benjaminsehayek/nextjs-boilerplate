@@ -75,10 +75,14 @@ export default function OnboardingPage() {
     setLoading(true);
     setError(null);
 
+    console.log('Starting business submission...', { user: !!user, businessData });
+
     try {
       if (!user) {
         throw new Error('Authentication session not found. Please refresh the page and try again.');
       }
+
+      console.log('Creating business for user:', user.id);
 
       // Create business
       const { data: business, error: businessError } = await supabase
@@ -97,23 +101,38 @@ export default function OnboardingPage() {
         .select()
         .single();
 
+      console.log('Business insert result:', { business, businessError });
+
       if (businessError) {
+        console.error('Business error:', businessError);
+
         if (businessError.message.includes('duplicate') || businessError.message.includes('unique')) {
+          console.log('Business already exists, fetching...');
           // Business exists, fetch it
-          const { data: existingBusiness } = await supabase
+          const { data: existingBusiness, error: fetchError } = await supabase
             .from('businesses')
             .select('*')
             .eq('user_id', user.id)
             .single();
 
+          console.log('Existing business:', { existingBusiness, fetchError });
+
+          if (fetchError) {
+            throw new Error(`Failed to fetch existing business: ${fetchError.message}`);
+          }
+
           if (existingBusiness) {
             setBusinessId(existingBusiness.id);
             setCurrentStep('location');
+            console.log('Moving to location step with existing business:', existingBusiness.id);
+          } else {
+            throw new Error('Business exists but could not be fetched');
           }
         } else {
-          throw businessError;
+          throw new Error(`Database error: ${businessError.message}`);
         }
-      } else {
+      } else if (business) {
+        console.log('Business created successfully:', business.id);
         setBusinessId(business.id);
         // Pre-fill location with business data
         setLocationData({
@@ -125,12 +144,16 @@ export default function OnboardingPage() {
           phone: businessData.phone,
         });
         setCurrentStep('location');
+        console.log('Moving to location step');
+      } else {
+        throw new Error('No business data returned and no error');
       }
     } catch (err) {
       console.error('Business creation error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to create business');
+      setError(err instanceof Error ? err.message : 'Failed to create business. Please try again.');
     } finally {
       setLoading(false);
+      console.log('Business submission complete');
     }
   };
 
