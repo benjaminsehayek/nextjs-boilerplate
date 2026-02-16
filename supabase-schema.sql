@@ -378,7 +378,7 @@ BEGIN
     NEW.id,
     NEW.raw_user_meta_data->>'full_name',
     'free',
-    0, -- Free tier gets 0 scans
+    3, -- Free tier gets 3 scans every 6 months (1 site-audit, 1 local-grid, 1 off-page-audit)
     0  -- Free tier gets 0 content tokens
   );
   RETURN NEW;
@@ -422,6 +422,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Function to reset monthly credits (call this via cron or manually)
+-- NOTE: Free tier credits reset every 6 months (manual), paid tiers reset monthly
 CREATE OR REPLACE FUNCTION public.reset_monthly_credits()
 RETURNS VOID AS $$
 BEGIN
@@ -430,7 +431,7 @@ BEGIN
     scan_credits_used = 0,
     content_tokens_used = 0,
     updated_at = NOW()
-  WHERE subscription_status = 'active';
+  WHERE subscription_status = 'active' AND subscription_tier != 'free';
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -448,6 +449,9 @@ DECLARE
 BEGIN
   -- Set credit limits based on tier
   CASE p_tier
+    WHEN 'free' THEN
+      v_scan_limit := 3; -- 3 scans every 6 months (1 site-audit, 1 local-grid, 1 off-page-audit)
+      v_token_limit := 0;
     WHEN 'analysis' THEN
       v_scan_limit := 5;
       v_token_limit := 0;
