@@ -25,7 +25,7 @@ export interface Business {
   id: string;
   user_id: string;
   domain: string;
-  business_name: string | null;
+  name: string;
   place_id: string | null;
   cid: string | null;
   feature_id: string | null;
@@ -38,7 +38,6 @@ export interface Business {
   longitude: number | null;
   industry: string | null;
   categories: string[];
-  is_primary: boolean;
   created_at: string;
   updated_at: string;
 }
