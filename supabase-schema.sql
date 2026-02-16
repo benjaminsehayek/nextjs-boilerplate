@@ -159,6 +159,73 @@ CREATE POLICY "Users can update own business audits"
   );
 
 -- ============================================================================
+-- GRID_SCANS TABLE
+-- ============================================================================
+-- Stores Local Grid scan results
+
+CREATE TABLE IF NOT EXISTS public.grid_scans (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+
+  -- Scan status
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'scanning', 'complete', 'failed')),
+
+  -- Business information
+  business_info JSONB NOT NULL, -- { name, address, city, state, zipCode, latitude, longitude, phone, website }
+
+  -- Grid configuration
+  config JSONB NOT NULL, -- { size, radius, keywords: [...] }
+
+  -- Grid points and results
+  points JSONB NOT NULL DEFAULT '[]', -- [{ id, lat, lng, position, rank, url, distance }]
+  rank_data JSONB DEFAULT '[]', -- [{ keyword, point, rank, url, topResults: [...] }]
+  heatmap_data JSONB DEFAULT '{}', -- { "keyword": { keyword, points: [...], averageRank, pointsRanking, notRanking } }
+
+  -- Progress tracking
+  progress JSONB DEFAULT '{"current": 0, "total": 0}', -- { current, total, currentKeyword?, currentPoint? }
+
+  -- Billing
+  total_cost DECIMAL(10, 4) DEFAULT 0,
+
+  -- Timestamps
+  scan_date TIMESTAMP WITH TIME ZONE NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create indexes for faster queries
+CREATE INDEX IF NOT EXISTS idx_grid_scans_business_id ON public.grid_scans(business_id);
+CREATE INDEX IF NOT EXISTS idx_grid_scans_status ON public.grid_scans(status);
+CREATE INDEX IF NOT EXISTS idx_grid_scans_created_at ON public.grid_scans(created_at DESC);
+
+-- Enable Row Level Security
+ALTER TABLE public.grid_scans ENABLE ROW LEVEL SECURITY;
+
+-- Policies: Users can only access scans for their own business
+CREATE POLICY "Users can view own business grid scans"
+  ON public.grid_scans FOR SELECT
+  USING (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can insert own business grid scans"
+  ON public.grid_scans FOR INSERT
+  WITH CHECK (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can update own business grid scans"
+  ON public.grid_scans FOR UPDATE
+  USING (
+    business_id IN (
+      SELECT id FROM public.businesses WHERE user_id = auth.uid()
+    )
+  );
+
+-- ============================================================================
 -- LEADS TABLE (Future use)
 -- ============================================================================
 -- Stores lead information for CRM
@@ -254,6 +321,21 @@ CREATE TRIGGER on_auth_user_created
 
 -- Function to increment scan credits
 CREATE OR REPLACE FUNCTION public.increment_scan_credits(
+  p_user_id UUID,
+  p_amount INTEGER DEFAULT 1
+)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE public.profiles
+  SET
+    scan_credits_used = scan_credits_used + p_amount,
+    updated_at = NOW()
+  WHERE id = p_user_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function to decrement scan credits (for scan usage)
+CREATE OR REPLACE FUNCTION public.decrement_scan_credits(
   p_user_id UUID,
   p_amount INTEGER DEFAULT 1
 )
