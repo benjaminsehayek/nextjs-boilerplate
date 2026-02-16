@@ -53,7 +53,7 @@ export function useUser() {
     );
 
     return () => subscription.unsubscribe();
-  }, [supabase]);
+  }, []); // Empty dependency array - supabase client is stable
 
   const signOut = async () => {
     try {
