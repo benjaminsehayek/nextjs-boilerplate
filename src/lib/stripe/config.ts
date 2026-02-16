@@ -43,10 +43,10 @@ export const SUBSCRIPTION_TIERS: Record<string, TierConfig> = {
     },
     features: [
       'Limited access',
-      '1 scan per month',
+      '3 scans per 6 months',
       'Basic support',
     ],
-    scans: 1,
+    scans: 3,
     tokens: 0,
     popular: false,
   },
