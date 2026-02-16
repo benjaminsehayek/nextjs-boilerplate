@@ -118,7 +118,7 @@ export default function SettingsPage() {
       setEditingProfile(false);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        alert(error.errors[0].message);
+        alert(error.issues[0].message);
       } else {
         console.error('Error updating profile:', error);
         alert('Failed to update profile');
