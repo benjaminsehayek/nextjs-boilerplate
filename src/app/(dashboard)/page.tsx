@@ -2,6 +2,10 @@
 
 import { useUser } from '@/lib/hooks/useUser';
 import { useBusiness } from '@/lib/hooks/useBusiness';
+import { DashboardStats } from '@/components/dashboard/DashboardStats';
+import { RecentActivity } from '@/components/dashboard/RecentActivity';
+import { ActionItems } from '@/components/dashboard/ActionItems';
+import { QuickStats } from '@/components/dashboard/QuickStats';
 import Link from 'next/link';
 
 const tools = [
@@ -14,7 +18,7 @@ const tools = [
 ];
 
 export default function HomePage() {
-  const { user } = useUser();
+  const { user, profile } = useUser();
   const { business } = useBusiness();
 
   // Show marketing landing page if not logged in
@@ -70,13 +74,15 @@ export default function HomePage() {
 
   return (
     <div>
+      {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-display mb-2">
           Welcome back, <span className="text-flame-500">{firstName}</span>
         </h1>
-        <p className="text-ash-300">Choose a tool to get started</p>
+        <p className="text-ash-300">Here's what's happening with your business</p>
       </div>
 
+      {/* Setup Alert */}
       {!business && (
         <div className="card p-6 mb-8 bg-ember-500/10 border-ember-500">
           <h2 className="font-display text-lg mb-2 text-ember-500">⚠️ Setup Required</h2>
@@ -89,6 +95,31 @@ export default function HomePage() {
         </div>
       )}
 
+      {business && (
+        <>
+          {/* Overview Stats */}
+          <DashboardStats business={business} />
+
+          {/* Main Content Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            {/* Left Column - Activity & Actions */}
+            <div className="lg:col-span-2 space-y-6">
+              <RecentActivity business={business} />
+              <ActionItems business={business} />
+            </div>
+
+            {/* Right Column - Quick Stats */}
+            <div className="lg:col-span-1">
+              <QuickStats profile={profile} />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Tools Grid */}
+      <div className="mb-4">
+        <h2 className="text-xl font-display mb-4">Tools</h2>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {tools.map((tool) => (
           <Link
