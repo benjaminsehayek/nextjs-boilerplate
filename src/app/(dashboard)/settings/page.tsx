@@ -10,6 +10,10 @@ import { createClient } from '@/lib/supabase/client';
 import { AvatarUpload } from '@/components/profile/AvatarUpload';
 import { LocationModal } from '@/components/settings/LocationModal';
 import { LocationsList } from '@/components/settings/LocationsList';
+import { ServiceModal } from '@/components/settings/ServiceModal';
+import { ServicesList } from '@/components/settings/ServicesList';
+import { MarketModal } from '@/components/settings/MarketModal';
+import { MarketsList } from '@/components/settings/MarketsList';
 import { profileUpdateSchema } from '@/lib/validations/profile';
 import { z } from 'zod';
 import type { BusinessLocation } from '@/types';
@@ -44,6 +48,18 @@ export default function SettingsPage() {
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [editingLocation, setEditingLocation] = useState<BusinessLocation | null>(null);
 
+  // Services state
+  const [services, setServices] = useState<any[]>([]);
+  const [servicesLoading, setServicesLoading] = useState(true);
+  const [showServiceModal, setShowServiceModal] = useState(false);
+  const [editingService, setEditingService] = useState<any | null>(null);
+
+  // Markets state
+  const [markets, setMarkets] = useState<any[]>([]);
+  const [marketsLoading, setMarketsLoading] = useState(true);
+  const [showMarketModal, setShowMarketModal] = useState(false);
+  const [editingMarket, setEditingMarket] = useState<any | null>(null);
+
   // Initialize business data when business loads
   useEffect(() => {
     if (business) {
@@ -69,6 +85,58 @@ export default function SettingsPage() {
       });
     }
   }, [profile]);
+
+  // Load services
+  useEffect(() => {
+    async function loadServices() {
+      if (!business?.id) {
+        setServicesLoading(false);
+        return;
+      }
+
+      try {
+        const { data } = await (supabase as any)
+          .from('services')
+          .select('*')
+          .eq('business_id', business.id)
+          .order('created_at', { ascending: true });
+
+        setServices(data || []);
+      } catch (error) {
+        console.error('Error loading services:', error);
+      } finally {
+        setServicesLoading(false);
+      }
+    }
+
+    loadServices();
+  }, [business?.id]);
+
+  // Load markets
+  useEffect(() => {
+    async function loadMarkets() {
+      if (!business?.id) {
+        setMarketsLoading(false);
+        return;
+      }
+
+      try {
+        const { data } = await (supabase as any)
+          .from('markets')
+          .select('*')
+          .eq('business_id', business.id)
+          .order('created_at', { ascending: true });
+
+        setMarkets(data || []);
+      } catch (error) {
+        console.error('Error loading markets:', error);
+      } finally {
+        setMarketsLoading(false);
+      }
+    }
+
+    loadMarkets();
+  }, [business?.id]);
 
   const handleBusinessUpdate = async () => {
     if (!business) return;
@@ -194,6 +262,64 @@ export default function SettingsPage() {
     } catch (error) {
       console.error('Error deleting location:', error);
       alert('Failed to delete location');
+    }
+  };
+
+  // Service handlers
+  const openAddServiceModal = () => {
+    setEditingService(null);
+    setShowServiceModal(true);
+  };
+
+  const openEditServiceModal = (service: any) => {
+    setEditingService(service);
+    setShowServiceModal(true);
+  };
+
+  const handleDeleteService = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this service?')) return;
+
+    try {
+      const { error } = await (supabase as any)
+        .from('services')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      window.location.reload();
+    } catch (error) {
+      console.error('Error deleting service:', error);
+      alert('Failed to delete service');
+    }
+  };
+
+  // Market handlers
+  const openAddMarketModal = () => {
+    setEditingMarket(null);
+    setShowMarketModal(true);
+  };
+
+  const openEditMarketModal = (market: any) => {
+    setEditingMarket(market);
+    setShowMarketModal(true);
+  };
+
+  const handleDeleteMarket = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this market?')) return;
+
+    try {
+      const { error } = await (supabase as any)
+        .from('markets')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      window.location.reload();
+    } catch (error) {
+      console.error('Error deleting market:', error);
+      alert('Failed to delete market');
     }
   };
 
@@ -499,6 +625,90 @@ export default function SettingsPage() {
           businessId={business.id}
           onSave={() => {
             setShowLocationModal(false);
+            window.location.reload();
+          }}
+        />
+      )}
+
+      {/* Services */}
+      {business && (
+        <div className="card p-6 mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-display text-xl">Services</h2>
+              <p className="text-sm text-ash-400">Manage your business services</p>
+            </div>
+            <button
+              onClick={openAddServiceModal}
+              className="btn-primary text-sm"
+            >
+              + Add Service
+            </button>
+          </div>
+
+          {servicesLoading ? (
+            <div className="h-32 bg-char-700 animate-pulse rounded-btn" />
+          ) : (
+            <ServicesList
+              services={services}
+              onEdit={openEditServiceModal}
+              onDelete={handleDeleteService}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Service Modal */}
+      {showServiceModal && business && (
+        <ServiceModal
+          isOpen={showServiceModal}
+          onClose={() => setShowServiceModal(false)}
+          service={editingService}
+          businessId={business.id}
+          onSave={() => {
+            setShowServiceModal(false);
+            window.location.reload();
+          }}
+        />
+      )}
+
+      {/* Markets */}
+      {business && (
+        <div className="card p-6 mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-display text-xl">Markets</h2>
+              <p className="text-sm text-ash-400">Manage your target markets</p>
+            </div>
+            <button
+              onClick={openAddMarketModal}
+              className="btn-primary text-sm"
+            >
+              + Add Market
+            </button>
+          </div>
+
+          {marketsLoading ? (
+            <div className="h-32 bg-char-700 animate-pulse rounded-btn" />
+          ) : (
+            <MarketsList
+              markets={markets}
+              onEdit={openEditMarketModal}
+              onDelete={handleDeleteMarket}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Market Modal */}
+      {showMarketModal && business && (
+        <MarketModal
+          isOpen={showMarketModal}
+          onClose={() => setShowMarketModal(false)}
+          market={editingMarket}
+          businessId={business.id}
+          onSave={() => {
+            setShowMarketModal(false);
             window.location.reload();
           }}
         />
