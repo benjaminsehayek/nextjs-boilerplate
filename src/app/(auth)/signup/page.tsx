@@ -58,7 +58,7 @@ export default function SignupPage() {
         <p className="text-ash-300 mb-6">
           We sent you a confirmation link. Click it to activate your account.
         </p>
-        <Link href="/login" className="btn-secondary w-full">
+        <Link href="/" className="btn-secondary w-full">
           Back to Login
         </Link>
       </div>
@@ -139,7 +139,7 @@ export default function SignupPage() {
 
       <p className="text-center mt-6 text-sm text-ash-400">
         Already have an account?{' '}
-        <Link href="/login" className="text-flame-500 hover:text-flame-600 font-semibold">
+        <Link href="/" className="text-flame-500 hover:text-flame-600 font-semibold">
           Sign in
         </Link>
       </p>

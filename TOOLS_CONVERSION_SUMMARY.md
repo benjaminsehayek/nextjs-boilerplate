@@ -128,7 +128,7 @@ All tables include:
 
 ## Deployment
 
-**URL:** https://nextjs-boilerplate-puce-six-11.vercel.app
+**URL:** https://nextjs-boilerplate-h4rguu0pp-crocs-and-clicks.vercel.app
 
 **Setup Required:**
 1. Run updated `supabase-schema.sql` in Supabase SQL Editor

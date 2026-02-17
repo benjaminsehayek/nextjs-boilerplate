@@ -87,7 +87,7 @@ export function useUser() {
       // If server action fails, try to clean up client-side and redirect
       localStorage.clear();
       sessionStorage.clear();
-      window.location.href = '/login';
+      window.location.href = '/';
     }
   };
 
