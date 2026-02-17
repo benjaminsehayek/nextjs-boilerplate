@@ -1,5 +1,28 @@
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
+// Simple cookie storage adapter for browser
+const cookieStorage = {
+  getItem: (key: string) => {
+    if (typeof document === 'undefined') return null;
+    const cookies = document.cookie.split(';');
+    for (const cookie of cookies) {
+      const [name, value] = cookie.trim().split('=');
+      if (name === key) {
+        return decodeURIComponent(value);
+      }
+    }
+    return null;
+  },
+  setItem: (key: string, value: string) => {
+    if (typeof document === 'undefined') return;
+    document.cookie = `${key}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax`;
+  },
+  removeItem: (key: string) => {
+    if (typeof document === 'undefined') return;
+    document.cookie = `${key}=; path=/; max-age=0`;
+  },
+};
+
 let client: ReturnType<typeof createSupabaseClient> | null = null;
 
 export function createClient() {
@@ -12,9 +35,9 @@ export function createClient() {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
-        detectSessionInUrl: true,
+        detectSessionInUrl: false,
         flowType: 'pkce',
-        storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+        storage: typeof window !== 'undefined' ? cookieStorage : undefined,
       },
     }
   );
