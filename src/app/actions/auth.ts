@@ -13,6 +13,6 @@ export async function signOut() {
   // Revalidate all paths to clear cached data
   revalidatePath('/', 'layout');
 
-  // Redirect to login
-  redirect('/login');
+  // Redirect to landing/login page
+  redirect('/');
 }

@@ -29,8 +29,11 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  const pathname = request.nextUrl.pathname;
+
   // Protected routes that require authentication
   const protectedPaths = [
+    '/dashboard',
     '/site-audit',
     '/content-strategy',
     '/local-grid',
@@ -42,23 +45,28 @@ export async function middleware(request: NextRequest) {
   ];
 
   const isProtectedRoute = protectedPaths.some(path =>
-    request.nextUrl.pathname.startsWith(path)
+    pathname.startsWith(path)
   );
 
+  // Unauthenticated user on a protected route → send to landing/login page
   if (!user && isProtectedRoute) {
     const url = request.nextUrl.clone();
-    url.pathname = '/login';
-    url.searchParams.set('redirect', request.nextUrl.pathname);
+    url.pathname = '/';
+    url.search = '';
     return NextResponse.redirect(url);
   }
 
-  if (
-    user &&
-    (request.nextUrl.pathname === '/login' ||
-      request.nextUrl.pathname === '/signup')
-  ) {
+  // Authenticated user visiting root (landing page) → send to dashboard
+  if (user && pathname === '/') {
     const url = request.nextUrl.clone();
-    url.pathname = '/';
+    url.pathname = '/dashboard';
+    return NextResponse.redirect(url);
+  }
+
+  // Authenticated user visiting /login or /signup → send to dashboard
+  if (user && (pathname === '/login' || pathname === '/signup')) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/dashboard';
     return NextResponse.redirect(url);
   }
 
@@ -66,5 +74,18 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/', '/site-audit', '/content-strategy', '/local-grid', '/off-page-audit', '/lead-intelligence', '/lead-database', '/settings', '/onboarding', '/login', '/signup'],
+  matcher: [
+    '/',
+    '/dashboard',
+    '/site-audit',
+    '/content-strategy',
+    '/local-grid',
+    '/off-page-audit',
+    '/lead-intelligence',
+    '/lead-database',
+    '/settings',
+    '/onboarding',
+    '/login',
+    '/signup',
+  ],
 };

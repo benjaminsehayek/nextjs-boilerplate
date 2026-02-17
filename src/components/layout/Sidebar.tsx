@@ -8,7 +8,7 @@ import { useState } from 'react';
 
 const navItems = [
   { section: 'Overview', items: [
-    { href: '/', label: 'Dashboard', icon: '📊' },
+    { href: '/dashboard', label: 'Dashboard', icon: '📊' },
   ]},
   { section: 'Tools', items: [
     { href: '/site-audit', label: 'Site Audit', icon: '🔍' },

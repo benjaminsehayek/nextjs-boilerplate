@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server';
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
-  const next = requestUrl.searchParams.get('next') ?? '/';
+  const next = requestUrl.searchParams.get('next') ?? '/dashboard';
 
   if (code) {
     const supabase = await createClient();
@@ -12,7 +12,7 @@ export async function GET(request: Request) {
 
     if (error) {
       console.error('OAuth callback error:', error);
-      return NextResponse.redirect(new URL('/login?error=oauth_failed', requestUrl.origin));
+      return NextResponse.redirect(new URL('/?error=oauth_failed', requestUrl.origin));
     }
   }
 
