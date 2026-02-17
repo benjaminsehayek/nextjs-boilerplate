@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@/lib/hooks/useUser';
@@ -21,7 +21,7 @@ import { profileUpdateSchema } from '@/lib/validations/profile';
 import { z } from 'zod';
 import type { BusinessLocation } from '@/types';
 
-export default function SettingsPage() {
+function SettingsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, profile, refreshProfile } = useUser();
@@ -621,7 +621,6 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
-      )}
 
           {/* Business Locations Card */}
           <div className="card p-6">
@@ -877,5 +876,13 @@ export default function SettingsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-ash-400">Loading settings...</div>}>
+      <SettingsPageContent />
+    </Suspense>
   );
 }
