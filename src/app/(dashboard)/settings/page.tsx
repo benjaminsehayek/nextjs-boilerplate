@@ -2,11 +2,14 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@/lib/hooks/useUser';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import { useLocations } from '@/lib/hooks/useLocations';
 import { createClient } from '@/lib/supabase/client';
+import { SettingsTabs } from '@/components/settings/SettingsTabs';
+import { UpgradeCTA } from '@/components/settings/UpgradeCTA';
 import { AvatarUpload } from '@/components/profile/AvatarUpload';
 import { LocationModal } from '@/components/settings/LocationModal';
 import { LocationsList } from '@/components/settings/LocationsList';
@@ -19,11 +22,22 @@ import { z } from 'zod';
 import type { BusinessLocation } from '@/types';
 
 export default function SettingsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, profile, refreshProfile } = useUser();
   const { tier, scansRemaining, tokensRemaining } = useSubscription();
   const { business } = useBusiness();
   const { locations, loading: locationsLoading } = useLocations(business?.id);
   const supabase = createClient();
+
+  // Tab state - get from URL or default to 'personal'
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'personal');
+
+  // Handle tab changes and update URL
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    router.push(`/settings?tab=${tab}`, { scroll: false });
+  };
 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -323,13 +337,30 @@ export default function SettingsPage() {
     }
   };
 
+  const scansUsed = profile?.scan_credits_used || 0;
+  const scansLimit = profile?.scan_credits_limit || 1;
+  const tokensUsed = profile?.content_tokens_used || 0;
+  const tokensLimit = profile?.content_tokens_limit || 0;
+  const scansPercentage = Math.round((scansUsed / scansLimit) * 100);
+  const tokensPercentage = tokensLimit > 0 ? Math.round((tokensUsed / tokensLimit) * 100) : 0;
+
   return (
     <div>
-      <h1 className="text-3xl font-display mb-8">
-        <span className="text-flame-500">Settings</span>
-      </h1>
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-3xl font-display mb-2">
+          <span className="text-flame-500">Settings</span>
+        </h1>
+        <p className="text-ash-300">Manage your account and business information</p>
+      </div>
 
-      {/* Profile Information Card */}
+      {/* Tabs */}
+      <SettingsTabs activeTab={activeTab} onTabChange={handleTabChange} />
+
+      {/* Personal Tab */}
+      {activeTab === 'personal' && user && (
+        <div className="space-y-6">
+          {/* Profile Information Card */}
       {user && (
         <div className="card p-6 mb-8">
           <div className="flex items-center justify-between mb-4">
@@ -398,29 +429,33 @@ export default function SettingsPage() {
         </div>
       )}
 
-      <div className="card p-6 mb-8">
-        <h2 className="font-display text-xl mb-4">Account Information</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <div className="input-label">Email</div>
-            <div className="text-ash-100">{user?.email}</div>
-          </div>
-          <div>
-            <div className="input-label">Current Plan</div>
-            <div className="text-ash-100 capitalize">{tier}</div>
-          </div>
-          <div>
-            <div className="input-label">Scans Remaining</div>
-            <div className="text-ash-100">{scansRemaining} this month</div>
-          </div>
-          <div>
-            <div className="input-label">Content Articles Remaining</div>
-            <div className="text-ash-100">{tokensRemaining}</div>
+          {/* Account Information Card */}
+          <div className="card p-6">
+            <h2 className="font-display text-xl mb-4">Account Information</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <div className="input-label">Email</div>
+                <div className="text-ash-100">{user?.email}</div>
+              </div>
+              <div>
+                <div className="input-label">Account Created</div>
+                <div className="text-ash-100">
+                  {new Date(user.created_at!).toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                  })}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {business && (
+      {/* Business Tab */}
+      {activeTab === 'business' && business && (
+        <div className="space-y-6">
+          {/* Business Information Card */}
         <div className="card p-6 mb-8">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-display text-xl">Business Information</h2>
@@ -588,31 +623,46 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Business Locations */}
-      {business && (
-        <div className="card p-6 mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-display text-xl">Business Locations</h2>
-              <p className="text-sm text-ash-400">Manage your business locations</p>
+          {/* Business Locations Card */}
+          <div className="card p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="font-display text-xl">Business Locations</h2>
+                <p className="text-sm text-ash-400">
+                  {tier === 'free' && 'Upgrade to Growth for multi-location'}
+                  {tier !== 'free' && 'Manage all your business locations'}
+                </p>
+              </div>
+              <button
+                onClick={openAddLocationModal}
+                className="btn-primary text-sm"
+                disabled={tier === 'free' && locations.length >= 1}
+              >
+                + Add Location
+              </button>
             </div>
-            <button
-              onClick={openAddLocationModal}
-              className="btn-primary text-sm"
-            >
-              + Add Location
-            </button>
-          </div>
 
-          {locationsLoading ? (
-            <div className="h-32 bg-char-700 animate-pulse rounded-btn" />
-          ) : (
-            <LocationsList
-              locations={locations}
-              onEdit={openEditLocationModal}
-              onDelete={handleDeleteLocation}
-            />
-          )}
+            {locationsLoading ? (
+              <div className="h-32 bg-char-700 animate-pulse rounded-btn" />
+            ) : (
+              <>
+                <LocationsList
+                  locations={locations}
+                  onEdit={openEditLocationModal}
+                  onDelete={handleDeleteLocation}
+                />
+                {tier === 'free' && locations.length >= 1 && (
+                  <div className="mt-6">
+                    <UpgradeCTA
+                      title="Unlock Multi-Location Management"
+                      description="Manage multiple locations with Growth tier."
+                      compact
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -630,33 +680,34 @@ export default function SettingsPage() {
         />
       )}
 
-      {/* Services */}
-      {business && (
-        <div className="card p-6 mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-display text-xl">Services</h2>
-              <p className="text-sm text-ash-400">Manage your business services</p>
+      {/* Services & Markets Tab */}
+      {activeTab === 'services' && business && (
+        <div className="space-y-6">
+          {/* Services Card */}
+          <div className="card p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="font-display text-xl">Services</h2>
+                <p className="text-sm text-ash-400">Define the services you offer</p>
+              </div>
+              <button
+                onClick={openAddServiceModal}
+                className="btn-primary text-sm"
+              >
+                + Add Service
+              </button>
             </div>
-            <button
-              onClick={openAddServiceModal}
-              className="btn-primary text-sm"
-            >
-              + Add Service
-            </button>
-          </div>
 
-          {servicesLoading ? (
-            <div className="h-32 bg-char-700 animate-pulse rounded-btn" />
-          ) : (
-            <ServicesList
-              services={services}
-              onEdit={openEditServiceModal}
-              onDelete={handleDeleteService}
-            />
-          )}
-        </div>
-      )}
+            {servicesLoading ? (
+              <div className="h-32 bg-char-700 animate-pulse rounded-btn" />
+            ) : (
+              <ServicesList
+                services={services}
+                onEdit={openEditServiceModal}
+                onDelete={handleDeleteService}
+              />
+            )}
+          </div>
 
       {/* Service Modal */}
       {showServiceModal && business && (
@@ -672,31 +723,31 @@ export default function SettingsPage() {
         />
       )}
 
-      {/* Markets */}
-      {business && (
-        <div className="card p-6 mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-display text-xl">Markets</h2>
-              <p className="text-sm text-ash-400">Manage your target markets</p>
+          {/* Markets Card */}
+          <div className="card p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="font-display text-xl">Target Markets</h2>
+                <p className="text-sm text-ash-400">Define the markets you serve</p>
+              </div>
+              <button
+                onClick={openAddMarketModal}
+                className="btn-primary text-sm"
+              >
+                + Add Market
+              </button>
             </div>
-            <button
-              onClick={openAddMarketModal}
-              className="btn-primary text-sm"
-            >
-              + Add Market
-            </button>
-          </div>
 
-          {marketsLoading ? (
-            <div className="h-32 bg-char-700 animate-pulse rounded-btn" />
-          ) : (
-            <MarketsList
-              markets={markets}
-              onEdit={openEditMarketModal}
-              onDelete={handleDeleteMarket}
-            />
-          )}
+            {marketsLoading ? (
+              <div className="h-32 bg-char-700 animate-pulse rounded-btn" />
+            ) : (
+              <MarketsList
+                markets={markets}
+                onEdit={openEditMarketModal}
+                onDelete={handleDeleteMarket}
+              />
+            )}
+          </div>
         </div>
       )}
 
@@ -714,28 +765,117 @@ export default function SettingsPage() {
         />
       )}
 
-      <h2 className="font-display text-2xl mb-6">Subscription</h2>
-      <div className="card p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="font-display text-lg mb-1">Current Plan</h3>
-            <p className="text-2xl font-bold capitalize">{tier}</p>
+      {/* Billing Tab */}
+      {activeTab === 'billing' && (
+        <div className="space-y-6">
+          {/* Current Plan Card */}
+          <div className="card p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="font-display text-xl">Current Plan</h2>
+                <p className="text-sm text-ash-400">Manage your subscription</p>
+              </div>
+              <Link href="/billing" className="btn-primary text-sm">
+                View All Plans
+              </Link>
+            </div>
+
+            <div className="flex items-center gap-4 mb-6">
+              <div className="flex-1">
+                <p className="text-3xl font-display capitalize mb-1">{tier}</p>
+                {profile?.subscription_status === 'active' && (
+                  <span className="inline-block px-3 py-1 bg-success/20 text-success text-sm rounded-full">
+                    Active
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
-          <Link href="/billing" className="btn-primary">
-            Manage Billing
-          </Link>
+
+          {/* Usage Card */}
+          <div className="card p-6">
+            <h2 className="font-display text-xl mb-6">Usage This Period</h2>
+
+            <div className="space-y-6">
+              {/* Scans */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium">Site Audits</span>
+                  <span className="text-sm text-ash-400">
+                    {scansUsed} / {scansLimit}
+                  </span>
+                </div>
+                <div className="h-2 bg-char-700 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${
+                      scansPercentage >= 90
+                        ? 'bg-danger'
+                        : scansPercentage >= 70
+                        ? 'bg-warning'
+                        : 'bg-flame-500'
+                    }`}
+                    style={{ width: `${Math.min(scansPercentage, 100)}%` }}
+                  />
+                </div>
+                <p className="text-xs text-ash-500 mt-1">
+                  {scansLimit - scansUsed} scans remaining
+                </p>
+              </div>
+
+              {/* Content Tokens */}
+              {tokensLimit > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium">Content Articles</span>
+                    <span className="text-sm text-ash-400">
+                      {tokensUsed} / {tokensLimit}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-char-700 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all ${
+                        tokensPercentage >= 90
+                          ? 'bg-danger'
+                          : tokensPercentage >= 70
+                          ? 'bg-warning'
+                          : 'bg-heat-500'
+                      }`}
+                      style={{ width: `${Math.min(tokensPercentage, 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-ash-500 mt-1">
+                    {tokensLimit - tokensUsed} articles remaining
+                  </p>
+                </div>
+              )}
+
+              {/* Reset Date */}
+              {profile?.subscription_period_end && (
+                <div className="pt-4 border-t border-char-700">
+                  <p className="text-sm text-ash-400">
+                    Resets on{' '}
+                    <span className="font-semibold text-ash-200">
+                      {new Date(profile.subscription_period_end).toLocaleDateString('en-US', {
+                        month: 'long',
+                        day: 'numeric',
+                      })}
+                    </span>
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Upgrade CTA if free tier */}
+          {tier === 'free' && (
+            <UpgradeCTA
+              title="Unlock More Power"
+              description="Upgrade to get more scans, content generation, and premium features."
+              feature="Starting at just $99/month for the Analysis tier"
+            />
+          )}
         </div>
-        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-char-700">
-          <div>
-            <p className="text-sm text-ash-400 mb-1">Scans Remaining</p>
-            <p className="text-xl font-semibold">{scansRemaining}</p>
-          </div>
-          <div>
-            <p className="text-sm text-ash-400 mb-1">Content Articles Remaining</p>
-            <p className="text-xl font-semibold">{tokensRemaining}</p>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
