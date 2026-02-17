@@ -24,9 +24,9 @@ import type { BusinessLocation } from '@/types';
 function SettingsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user, profile, refreshProfile } = useUser();
+  const { user, profile, loading: userLoading, refreshProfile } = useUser();
   const { tier, scansRemaining, tokensRemaining } = useSubscription();
-  const { business } = useBusiness();
+  const { business, loading: businessLoading } = useBusiness();
   const { locations, loading: locationsLoading } = useLocations(business?.id);
   const supabase = createClient();
 
@@ -344,6 +344,27 @@ function SettingsPageContent() {
   const scansPercentage = Math.round((scansUsed / scansLimit) * 100);
   const tokensPercentage = tokensLimit > 0 ? Math.round((tokensUsed / tokensLimit) * 100) : 0;
 
+  if (userLoading || businessLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="h-10 w-48 bg-char-700 animate-pulse rounded" />
+        <div className="flex gap-2 border-b border-char-700 pb-0">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-10 w-28 bg-char-700 animate-pulse rounded-t" />
+          ))}
+        </div>
+        <div className="card p-6">
+          <div className="h-6 w-32 bg-char-700 animate-pulse rounded mb-6" />
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-10 bg-char-700 animate-pulse rounded" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       {/* Header */}
@@ -358,105 +379,111 @@ function SettingsPageContent() {
       <SettingsTabs activeTab={activeTab} onTabChange={handleTabChange} />
 
       {/* Personal Tab */}
-      {activeTab === 'personal' && user && (
+      {activeTab === 'personal' && (
         <div className="space-y-6">
-          {/* Profile Information Card */}
-      {user && (
-        <div className="card p-6 mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-display text-xl">Profile</h2>
-            {!editingProfile ? (
-              <button
-                onClick={() => setEditingProfile(true)}
-                className="btn-secondary text-sm"
-              >
-                Edit
-              </button>
-            ) : (
-              <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    setEditingProfile(false);
-                    setProfileData({
-                      full_name: profile?.full_name || '',
-                      avatar_url: profile?.avatar_url || null,
-                    });
-                  }}
-                  className="btn-ghost text-sm"
-                  disabled={savingProfile}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleProfileUpdate}
-                  className="btn-primary text-sm"
-                  disabled={savingProfile}
-                >
-                  {savingProfile ? 'Saving...' : 'Save Changes'}
-                </button>
-              </div>
-            )}
-          </div>
+          {!user ? (
+            <div className="card p-6 text-ash-400">Not signed in.</div>
+          ) : (
+            <>
+              {/* Profile Information Card */}
+              <div className="card p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="font-display text-xl">Profile</h2>
+                  {!editingProfile ? (
+                    <button
+                      onClick={() => setEditingProfile(true)}
+                      className="btn-secondary text-sm"
+                    >
+                      Edit
+                    </button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setEditingProfile(false);
+                          setProfileData({
+                            full_name: profile?.full_name || '',
+                            avatar_url: profile?.avatar_url || null,
+                          });
+                        }}
+                        className="btn-ghost text-sm"
+                        disabled={savingProfile}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleProfileUpdate}
+                        className="btn-primary text-sm"
+                        disabled={savingProfile}
+                      >
+                        {savingProfile ? 'Saving...' : 'Save Changes'}
+                      </button>
+                    </div>
+                  )}
+                </div>
 
-          <div className="space-y-6">
-            {/* Avatar Upload */}
-            <div>
-              <div className="input-label mb-3">Profile Picture</div>
-              <AvatarUpload
-                userId={user.id}
-                currentAvatarUrl={profileData.avatar_url}
-                onUploadComplete={handleAvatarUpload}
-              />
-            </div>
+                <div className="space-y-6">
+                  {/* Avatar Upload */}
+                  <div>
+                    <div className="input-label mb-3">Profile Picture</div>
+                    <AvatarUpload
+                      userId={user.id}
+                      currentAvatarUrl={profileData.avatar_url}
+                      onUploadComplete={handleAvatarUpload}
+                    />
+                  </div>
 
-            {/* Full Name Field */}
-            <div>
-              <label className="input-label">Full Name</label>
-              {!editingProfile ? (
-                <div className="text-ash-100">{profile?.full_name || 'Not set'}</div>
-              ) : (
-                <input
-                  type="text"
-                  value={profileData.full_name}
-                  onChange={(e) => setProfileData({ ...profileData, full_name: e.target.value })}
-                  className="input"
-                  placeholder="Enter your full name"
-                  required
-                />
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-          {/* Account Information Card */}
-          <div className="card p-6">
-            <h2 className="font-display text-xl mb-4">Account Information</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <div className="input-label">Email</div>
-                <div className="text-ash-100">{user?.email}</div>
-              </div>
-              <div>
-                <div className="input-label">Account Created</div>
-                <div className="text-ash-100">
-                  {new Date(user.created_at!).toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                  })}
+                  {/* Full Name Field */}
+                  <div>
+                    <label className="input-label">Full Name</label>
+                    {!editingProfile ? (
+                      <div className="text-ash-100">{profile?.full_name || 'Not set'}</div>
+                    ) : (
+                      <input
+                        type="text"
+                        value={profileData.full_name}
+                        onChange={(e) => setProfileData({ ...profileData, full_name: e.target.value })}
+                        className="input"
+                        placeholder="Enter your full name"
+                      />
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
+
+              {/* Account Information Card */}
+              <div className="card p-6">
+                <h2 className="font-display text-xl mb-4">Account Information</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <div className="input-label">Email</div>
+                    <div className="text-ash-100">{user.email}</div>
+                  </div>
+                  <div>
+                    <div className="input-label">Account Created</div>
+                    <div className="text-ash-100">
+                      {new Date(user.created_at!).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
       {/* Business Tab */}
-      {activeTab === 'business' && business && (
+      {activeTab === 'business' && (
         <div className="space-y-6">
-          {/* Business Information Card */}
-        <div className="card p-6 mb-8">
+          {!business ? (
+            <div className="card p-6 text-ash-400">No business found. Please complete onboarding.</div>
+          ) : (
+          <>{/* Business Information Card */}
+          <div className="card p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-display text-xl">Business Information</h2>
             {!editing ? (
@@ -662,6 +689,8 @@ function SettingsPageContent() {
               </>
             )}
           </div>
+          </>
+          )}
         </div>
       )}
 
@@ -680,8 +709,12 @@ function SettingsPageContent() {
       )}
 
       {/* Services & Markets Tab */}
-      {activeTab === 'services' && business && (
+      {activeTab === 'services' && (
         <div className="space-y-6">
+          {!business ? (
+            <div className="card p-6 text-ash-400">No business found. Please complete onboarding.</div>
+          ) : (
+          <>
           {/* Services Card */}
           <div className="card p-6">
             <div className="flex items-center justify-between mb-6">
@@ -747,6 +780,8 @@ function SettingsPageContent() {
               />
             )}
           </div>
+          </>
+          )}
         </div>
       )}
 
