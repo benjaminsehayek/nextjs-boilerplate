@@ -136,7 +136,7 @@ const GoogleIcon = () => (
 );
 
 export default function LandingPage() {
-  const [mode, setMode] = useState<'signup' | 'signin'>('signup');
+  const [mode, setMode] = useState<'signup' | 'signin'>('signin');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -250,20 +250,20 @@ export default function LandingPage() {
             {/* Mode toggle tabs */}
             <div className="flex rounded-btn bg-char-900 p-1 mb-6">
               <button
-                onClick={() => switchMode('signup')}
-                className={`flex-1 py-2 text-sm font-semibold rounded transition-colors ${
-                  mode === 'signup' ? 'bg-flame-500 text-white' : 'text-ash-400 hover:text-ash-200'
-                }`}
-              >
-                Create Account
-              </button>
-              <button
                 onClick={() => switchMode('signin')}
                 className={`flex-1 py-2 text-sm font-semibold rounded transition-colors ${
                   mode === 'signin' ? 'bg-flame-500 text-white' : 'text-ash-400 hover:text-ash-200'
                 }`}
               >
                 Sign In
+              </button>
+              <button
+                onClick={() => switchMode('signup')}
+                className={`flex-1 py-2 text-sm font-semibold rounded transition-colors ${
+                  mode === 'signup' ? 'bg-flame-500 text-white' : 'text-ash-400 hover:text-ash-200'
+                }`}
+              >
+                Create Account
               </button>
             </div>
 
