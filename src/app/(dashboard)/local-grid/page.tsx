@@ -71,7 +71,7 @@ export default function LocalGridPage() {
           table: 'grid_scans',
           filter: `id=eq.${currentScan.id}`,
         },
-        (payload) => {
+        (payload: any) => {
           const updatedScan = payload.new as GridScanResult;
           setCurrentScan(updatedScan);
 

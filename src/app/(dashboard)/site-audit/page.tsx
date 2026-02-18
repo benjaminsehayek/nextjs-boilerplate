@@ -77,7 +77,7 @@ export default function SiteAuditPage() {
           table: 'site_audits',
           filter: `id=eq.${auditId}`,
         },
-        (payload) => {
+        (payload: any) => {
           const newData = payload.new as any;
 
           setProgress({
