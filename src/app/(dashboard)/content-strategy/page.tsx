@@ -104,7 +104,7 @@ export default function ContentStrategyPage() {
           table: 'content_strategies',
           filter: `id=eq.${strategyId}`,
         },
-        (payload) => {
+        (payload: any) => {
           const newData = payload.new as any;
 
           setProgress({
