@@ -26,7 +26,7 @@ function SettingsPageContent() {
   const searchParams = useSearchParams();
   const { user, profile, loading: userLoading, refreshProfile } = useUser();
   const { tier, scansRemaining, tokensRemaining } = useSubscription();
-  const { business, loading: businessLoading } = useBusiness(user?.id);
+  const { business } = useBusiness();
   const { locations, loading: locationsLoading } = useLocations(business?.id);
   const supabase = createClient();
 
@@ -344,7 +344,7 @@ function SettingsPageContent() {
   const scansPercentage = Math.round((scansUsed / scansLimit) * 100);
   const tokensPercentage = tokensLimit > 0 ? Math.round((tokensUsed / tokensLimit) * 100) : 0;
 
-  if (userLoading || businessLoading) {
+  if (userLoading) {
     return (
       <div className="space-y-6">
         <div className="h-10 w-48 bg-char-700 animate-pulse rounded" />

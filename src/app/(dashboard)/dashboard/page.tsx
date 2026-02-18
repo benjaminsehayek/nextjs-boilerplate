@@ -743,7 +743,7 @@ function OnboardingWizard({ userId }: { userId: string }) {
 
 export default function DashboardPage() {
   const { user, profile, loading } = useUser();
-  const { business, loading: businessLoading } = useBusiness(user?.id);
+  const { business } = useBusiness();
   const router = useRouter();
 
   useEffect(() => {
@@ -752,7 +752,7 @@ export default function DashboardPage() {
     }
   }, [user, loading, router]);
 
-  if (loading || businessLoading) {
+  if (loading) {
     return (
       <div className="space-y-6">
         <div className="h-10 w-64 bg-char-700 animate-pulse rounded" />
