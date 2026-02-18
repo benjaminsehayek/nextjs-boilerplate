@@ -2,6 +2,7 @@
 
 import { useUser } from '@/lib/hooks/useUser';
 import { useSubscription } from '@/lib/hooks/useSubscription';
+import { useBusiness } from '@/lib/hooks/useBusiness';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
@@ -36,6 +37,8 @@ function SidebarContent({
   const pathname = usePathname();
   const { user, profile, signOut } = useUser();
   const { tier } = useSubscription();
+  const { business } = useBusiness();
+  const needsOnboarding = !business;
 
   const initials = user?.user_metadata?.full_name
     ?.split(' ')
@@ -85,7 +88,7 @@ function SidebarContent({
                     href={item.href}
                     onClick={onLinkClick}
                     className={`
-                      flex items-center gap-3 px-3 py-2 rounded-btn
+                      relative flex items-center gap-3 px-3 py-2 rounded-btn
                       transition-all duration-200
                       ${isActive
                         ? 'bg-flame-500/10 text-flame-500 border-l-2 border-flame-500'
@@ -96,6 +99,12 @@ function SidebarContent({
                   >
                     <span className="text-lg">{item.icon}</span>
                     {!collapsed && <span className="font-medium">{item.label}</span>}
+                    {item.href === '/dashboard' && needsOnboarding && (
+                      <span className="ml-auto flex h-2 w-2 flex-shrink-0">
+                        <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-flame-500 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-flame-500" />
+                      </span>
+                    )}
                   </Link>
                 );
               })}
