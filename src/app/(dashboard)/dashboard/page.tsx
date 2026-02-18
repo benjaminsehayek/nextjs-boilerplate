@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useUser } from '@/lib/hooks/useUser';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import { DashboardStats } from '@/components/dashboard/DashboardStats';
@@ -71,11 +71,17 @@ interface MarketForm {
 
 function OnboardingWizard({ userId }: { userId: string }) {
   const supabase = createClient();
+  const wizardRef = useRef<HTMLDivElement>(null);
 
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('business');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [businessId, setBusinessId] = useState<string | null>(null);
+
+  // Scroll wizard into view whenever step changes
+  useEffect(() => {
+    wizardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [currentStep]);
 
   const [businessData, setBusinessData] = useState({
     name: '',
@@ -313,7 +319,7 @@ function OnboardingWizard({ userId }: { userId: string }) {
   }
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div ref={wizardRef} className="max-w-3xl mx-auto">
       <h1 className="text-3xl font-display mb-8 text-center">
         <span className="text-flame-500">Welcome to ScorchLocal!</span>
       </h1>
