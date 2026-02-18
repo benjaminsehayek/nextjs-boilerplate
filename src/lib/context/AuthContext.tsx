@@ -45,66 +45,70 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabase = createClient(); // singleton — same instance every call
 
   useEffect(() => {
-    // One-time load: verify session, then fetch profile + business in parallel
-    async function loadUser() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        setUser(user);
-        if (user) {
-          const [profileResult, businessResult] = await Promise.all([
-            (supabase as any)
-              .from('profiles')
-              .select(PROFILE_SELECT)
-              .eq('id', user.id)
-              .single(),
-            (supabase as any)
-              .from('businesses')
-              .select(BUSINESS_SELECT)
-              .eq('user_id', user.id),
-          ]);
-          setProfile(profileResult.data as Profile | null);
-          const bizList: Business[] = businessResult.data || [];
-          setBusinesses(bizList);
-          setBusiness(bizList[0] || null);
-        }
-      } catch (error) {
-        console.error('Error loading user:', error);
-      } finally {
+    // Track whether INITIAL_SESSION has been processed so we only
+    // call setLoading(false) once (on the first auth event).
+    let initialized = false;
+
+    // Safety: if onAuthStateChange never fires (bad config, offline),
+    // unblock the UI after 8 seconds rather than spinning forever.
+    const safetyTimer = setTimeout(() => {
+      if (!initialized) {
+        initialized = true;
         setLoading(false);
       }
-    }
+    }, 8000);
 
-    loadUser();
-
-    // One listener for the entire app — handles token refresh, sign-in, sign-out
+    // onAuthStateChange fires INITIAL_SESSION immediately from the local
+    // session store — no server round-trip needed. Security is enforced by:
+    //   • middleware (server-side getUser() for protected routes)
+    //   • API routes (server-side getUser() for DataForSEO / Stripe)
+    //   • Supabase RLS policies (per-user data access)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event: any, session: any) => {
+        clearTimeout(safetyTimer);
+
         setUser(session?.user ?? null);
+
         if (session?.user) {
-          const [profileResult, businessResult] = await Promise.all([
-            (supabase as any)
-              .from('profiles')
-              .select(PROFILE_SELECT)
-              .eq('id', session.user.id)
-              .single(),
-            (supabase as any)
-              .from('businesses')
-              .select(BUSINESS_SELECT)
-              .eq('user_id', session.user.id),
-          ]);
-          setProfile(profileResult.data as Profile | null);
-          const bizList: Business[] = businessResult.data || [];
-          setBusinesses(bizList);
-          setBusiness(bizList[0] || null);
+          try {
+            const [profileResult, businessResult] = await Promise.all([
+              (supabase as any)
+                .from('profiles')
+                .select(PROFILE_SELECT)
+                .eq('id', session.user.id)
+                .single(),
+              (supabase as any)
+                .from('businesses')
+                .select(BUSINESS_SELECT)
+                .eq('user_id', session.user.id),
+            ]);
+            setProfile(profileResult.data as Profile | null);
+            const bizList: Business[] = businessResult.data || [];
+            setBusinesses(bizList);
+            setBusiness(bizList[0] || null);
+          } catch (error) {
+            console.error('Error loading profile/business:', error);
+          }
         } else {
           setProfile(null);
           setBusiness(null);
           setBusinesses([]);
         }
+
+        // Only flip loading→false on the very first event (INITIAL_SESSION).
+        // Subsequent events (TOKEN_REFRESHED, SIGNED_OUT, etc.) update state
+        // but don't re-trigger the loading skeleton.
+        if (!initialized) {
+          initialized = true;
+          setLoading(false);
+        }
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(safetyTimer);
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signOut = async () => {
