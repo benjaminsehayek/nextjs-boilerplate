@@ -37,7 +37,7 @@ const Dashboard = dynamic(() => import('@/components/tools/ContentStrategy/Dashb
 export default function ContentStrategyPage() {
   const { user } = useUser();
   const { scansRemaining } = useSubscription();
-  const { business } = useBusiness();
+  const { business } = useBusiness(user?.id);
   const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
 
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('idle');

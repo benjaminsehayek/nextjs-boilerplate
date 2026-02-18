@@ -26,7 +26,7 @@ function SettingsPageContent() {
   const searchParams = useSearchParams();
   const { user, profile, loading: userLoading, refreshProfile } = useUser();
   const { tier, scansRemaining, tokensRemaining } = useSubscription();
-  const { business, loading: businessLoading } = useBusiness();
+  const { business, loading: businessLoading } = useBusiness(user?.id);
   const { locations, loading: locationsLoading } = useLocations(business?.id);
   const supabase = createClient();
 

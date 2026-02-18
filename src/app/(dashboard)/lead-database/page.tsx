@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
 import { LocationSelector } from '@/components/ui/LocationSelector';
+import { useUser } from '@/lib/hooks/useUser';
 import { useLocations } from '@/lib/hooks/useLocations';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import ContactTable from '@/components/tools/LeadDatabase/ContactTable';
@@ -23,7 +24,8 @@ import { DEFAULT_SEGMENTS } from '@/components/tools/LeadDatabase/types';
 import { filterContacts, exportToCSV, daysSinceActivity, isReachable } from '@/components/tools/LeadDatabase/utils';
 
 export default function LeadDatabasePage() {
-  const { business } = useBusiness();
+  const { user } = useUser();
+  const { business } = useBusiness(user?.id);
   const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);

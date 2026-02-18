@@ -743,7 +743,7 @@ function OnboardingWizard({ userId }: { userId: string }) {
 
 export default function DashboardPage() {
   const { user, profile, loading } = useUser();
-  const { business, loading: businessLoading } = useBusiness();
+  const { business, loading: businessLoading } = useBusiness(user?.id);
   const router = useRouter();
 
   useEffect(() => {

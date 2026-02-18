@@ -10,6 +10,7 @@ import { ScanProgress } from '@/components/tools/LocalGrid/ScanProgress';
 import { ResultsDashboard } from '@/components/tools/LocalGrid/ResultsDashboard';
 import { generateGridPoints, findBusinessRank, calculateCost } from '@/components/tools/LocalGrid/utils';
 import { createClient } from '@/lib/supabase/client';
+import { useUser } from '@/lib/hooks/useUser';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import { useLocations } from '@/lib/hooks/useLocations';
 import { useSubscription } from '@/lib/hooks/useSubscription';
@@ -18,7 +19,8 @@ import type { BusinessInfo, GridConfig, GridScanResult, HeatmapData, RankData } 
 type ScanState = 'setup' | 'configure' | 'scanning' | 'complete' | 'error';
 
 export default function LocalGridPage() {
-  const { business } = useBusiness();
+  const { user } = useUser();
+  const { business } = useBusiness(user?.id);
   const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
   const { scansRemaining, profile } = useSubscription();
   const supabase = createClient();

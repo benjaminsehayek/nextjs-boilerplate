@@ -22,7 +22,7 @@ const Dashboard = dynamic(() => import('@/components/tools/OffPageAudit/Dashboar
 export default function OffPageAuditPage() {
   const { user } = useUser();
   const { scansRemaining } = useSubscription();
-  const { business } = useBusiness();
+  const { business } = useBusiness(user?.id);
   const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
 
   const [auditStatus, setAuditStatus] = useState<AuditStatus>('idle');

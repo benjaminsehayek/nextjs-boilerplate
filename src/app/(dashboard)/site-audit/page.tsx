@@ -22,7 +22,7 @@ const Dashboard = dynamic(() => import('@/components/tools/SiteAudit/Dashboard')
 export default function SiteAuditPage() {
   const { user } = useUser();
   const { scansRemaining } = useSubscription();
-  const { business } = useBusiness();
+  const { business } = useBusiness(user?.id);
   const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
 
   const [scanState, setScanState] = useState<ScanState>('idle');

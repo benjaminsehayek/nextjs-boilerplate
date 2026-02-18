@@ -28,7 +28,7 @@ const LeadAttribution = dynamic(() => import('@/components/tools/LeadIntelligenc
 
 export default function LeadIntelligencePage() {
   const { user } = useUser();
-  const { business } = useBusiness();
+  const { business } = useBusiness(user?.id);
   const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
   const supabase = createClient();
 
