@@ -30,7 +30,7 @@ export default function DashboardPage() {
     }
   }, [user, loading, router]);
 
-  if (loading || !user) {
+  if (loading) {
     return (
       <div className="space-y-6">
         <div className="h-10 w-64 bg-char-700 animate-pulse rounded" />
@@ -42,6 +42,10 @@ export default function DashboardPage() {
         <div className="h-48 bg-char-700 animate-pulse rounded-btn" />
       </div>
     );
+  }
+
+  if (!user) {
+    return null; // redirect in progress
   }
 
   const firstName = user.user_metadata?.full_name?.split(' ')[0] || 'there';

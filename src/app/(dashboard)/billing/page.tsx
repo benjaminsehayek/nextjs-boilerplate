@@ -1,6 +1,5 @@
 'use client';
 
-import { useUser } from '@/lib/hooks/useUser';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
 import { CurrentPlanCard } from '@/components/billing/CurrentPlanCard';
@@ -13,11 +12,10 @@ import type { CheckoutResponse } from '@/types';
 import { useState, useEffect } from 'react';
 
 export default function BillingPage() {
-  const { profile, loading: userLoading } = useUser();
-  const { tier, loading: subLoading } = useSubscription();
+  const { profile, tier, loading } = useSubscription();
   const [showSuccess, setShowSuccess] = useState(false);
   const [interval, setInterval] = useState<BillingInterval>('monthly');
-  const [loading, setLoading] = useState<string | null>(null);
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Check for success redirect from Stripe
@@ -26,27 +24,23 @@ export default function BillingPage() {
       const params = new URLSearchParams(window.location.search);
       if (params.get('session_id')) {
         setShowSuccess(true);
-        // Clear the session_id from URL
         window.history.replaceState({}, '', '/billing');
-        // Hide success message after 5 seconds
         setTimeout(() => setShowSuccess(false), 5000);
       }
     }
   }, []);
 
   const handleSelectPlan = async (planTier: string, planInterval: BillingInterval) => {
-    // Handle free tier separately (future implementation)
     if (planTier === 'free') {
       setError('Downgrading to free tier is not yet supported. Please contact support.');
       return;
     }
 
-    // Prevent selecting current plan
     if (planTier === tier) {
       return;
     }
 
-    setLoading(planTier);
+    setCheckoutLoading(planTier);
     setError(null);
 
     try {
@@ -64,8 +58,6 @@ export default function BillingPage() {
       }
 
       const { url }: CheckoutResponse = await response.json();
-
-      // Redirect to Stripe checkout
       window.location.href = url;
     } catch (err) {
       console.error('Checkout error:', err);
@@ -74,13 +66,11 @@ export default function BillingPage() {
           ? err.message
           : 'Failed to initiate checkout. Please try again.'
       );
-      setLoading(null);
+      setCheckoutLoading(null);
     }
   };
 
-  const isLoading = userLoading || subLoading;
-
-  if (isLoading) {
+  if (loading) {
     return (
       <ToolPageShell
         icon="💳"
@@ -157,7 +147,7 @@ export default function BillingPage() {
               interval={interval}
               currentTier={tier}
               onSelectPlan={handleSelectPlan}
-              loading={loading === tierConfig.tier}
+              loading={checkoutLoading === tierConfig.tier}
             />
           ))}
         </div>

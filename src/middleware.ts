@@ -41,11 +41,12 @@ export async function middleware(request: NextRequest) {
     '/lead-intelligence',
     '/lead-database',
     '/settings',
+    '/billing',
     '/onboarding',
   ];
 
   const isProtectedRoute = protectedPaths.some(path =>
-    pathname.startsWith(path)
+    pathname === path || pathname.startsWith(path + '/')
   );
 
   // Unauthenticated user on a protected route → send to landing/login page
@@ -75,17 +76,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/',
-    '/dashboard',
-    '/site-audit',
-    '/content-strategy',
-    '/local-grid',
-    '/off-page-audit',
-    '/lead-intelligence',
-    '/lead-database',
-    '/settings',
-    '/onboarding',
-    '/login',
-    '/signup',
+    '/((?!_next/static|_next/image|favicon.ico|.*\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js)$).*)',
   ],
 };
