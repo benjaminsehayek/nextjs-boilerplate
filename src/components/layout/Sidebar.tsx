@@ -37,7 +37,7 @@ function SidebarContent({
   const pathname = usePathname();
   const { user, profile, signOut } = useUser();
   const { tier } = useSubscription();
-  const { business } = useBusiness(user?.id);
+  const { business } = useBusiness();
   const needsOnboarding = !business;
 
   const initials = user?.user_metadata?.full_name

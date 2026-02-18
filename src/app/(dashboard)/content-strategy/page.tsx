@@ -37,7 +37,7 @@ const Dashboard = dynamic(() => import('@/components/tools/ContentStrategy/Dashb
 export default function ContentStrategyPage() {
   const { user } = useUser();
   const { scansRemaining } = useSubscription();
-  const { business } = useBusiness(user?.id);
+  const { business } = useBusiness();
   const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
 
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('idle');
@@ -290,9 +290,14 @@ export default function ContentStrategyPage() {
           total_search_volume: totalSearchVolume,
           estimated_monthly_traffic: estimatedMonthlyTraffic,
           estimated_monthly_value: estimatedMonthlyValue,
-          api_cost: 0.5, // Placeholder - should calculate actual cost
+          api_cost: 0.5,
         })
         .eq('id', id);
+
+      // Deduct one scan credit on successful completion
+      if (user?.id) {
+        await (supabase as any).rpc('increment_scan_credits', { p_user_id: user.id, p_amount: 1 });
+      }
 
       // Load results
       await loadStrategyResults(id);

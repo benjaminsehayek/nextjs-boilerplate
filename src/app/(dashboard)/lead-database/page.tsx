@@ -25,7 +25,7 @@ import { filterContacts, exportToCSV, daysSinceActivity, isReachable } from '@/c
 
 export default function LeadDatabasePage() {
   const { user } = useUser();
-  const { business } = useBusiness(user?.id);
+  const { business } = useBusiness();
   const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);

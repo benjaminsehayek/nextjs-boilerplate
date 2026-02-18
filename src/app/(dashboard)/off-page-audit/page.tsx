@@ -22,7 +22,7 @@ const Dashboard = dynamic(() => import('@/components/tools/OffPageAudit/Dashboar
 export default function OffPageAuditPage() {
   const { user } = useUser();
   const { scansRemaining } = useSubscription();
-  const { business } = useBusiness(user?.id);
+  const { business } = useBusiness();
   const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
 
   const [auditStatus, setAuditStatus] = useState<AuditStatus>('idle');
@@ -232,11 +232,16 @@ export default function OffPageAuditPage() {
           referring_domains: referringDomains,
           anchor_data: anchorData,
           competitor_data: competitorData,
-          backlink_data: [], // Store full backlink list if needed
-          api_cost: 0.15, // Estimate based on API calls
+          backlink_data: [],
+          api_cost: 0.15,
           completed_at: new Date().toISOString(),
         })
         .eq('id', id);
+
+      // Deduct one scan credit on successful completion
+      if (user?.id) {
+        await (supabase as any).rpc('increment_scan_credits', { p_user_id: user.id, p_amount: 1 });
+      }
 
       await loadAuditResults(id);
     } catch (err: any) {
@@ -283,8 +288,10 @@ export default function OffPageAuditPage() {
     const diversityScore = referringDomains > 0 ? Math.min(100, (referringDomains / totalBacklinks) * 100) : 0;
     const qualityScore = Math.round((followRatio * 40) + (diversityScore * 0.3) + (domainRating * 0.3));
 
-    // Calculate toxicity score (would need actual spam data from API)
-    const toxicScore = Math.round(Math.random() * 30); // Placeholder
+    // Estimate toxicity from nofollow ratio (high nofollow = more questionable link sources)
+    const toxicScore = totalBacklinks > 0
+      ? Math.round((nofollowLinks / totalBacklinks) * 25)
+      : 0;
 
     return {
       totalBacklinks,
@@ -308,8 +315,8 @@ export default function OffPageAuditPage() {
       pageRank: d.page_from_rank || 0,
       firstSeen: d.first_seen || new Date().toISOString(),
       lastSeen: d.last_seen || new Date().toISOString(),
-      toxicityScore: Math.round(Math.random() * 100), // Placeholder
-      toxicityLevel: Math.random() > 0.7 ? 'clean' : Math.random() > 0.3 ? 'suspicious' : 'toxic',
+      toxicityScore: Math.max(0, Math.min(100, 100 - Math.round((d.domain_from_rank || 0) / 10))),
+      toxicityLevel: (d.domain_from_rank || 0) > 700 ? 'clean' : (d.domain_from_rank || 0) > 300 ? 'suspicious' : 'toxic',
       follow: d.dofollow || 0,
       nofollow: d.nofollow || 0,
     }));
@@ -332,9 +339,10 @@ export default function OffPageAuditPage() {
   function determineAnchorType(anchor: string): 'exact' | 'partial' | 'branded' | 'naked' | 'generic' {
     if (!anchor) return 'generic';
     if (anchor.match(/^https?:\/\//)) return 'naked';
-    if (anchor.match(/click here|read more|learn more|this|here/i)) return 'generic';
-    // Simplified logic - in production, compare against target keywords
-    return Math.random() > 0.5 ? 'branded' : 'partial';
+    if (anchor.match(/^www\./i)) return 'naked';
+    if (anchor.match(/click here|read more|learn more|^this$|^here$|^website$|^page$|^link$/i)) return 'generic';
+    // Without keyword data, default to 'partial' (conservative, non-random)
+    return 'partial';
   }
 
   async function analyzeCompetitors(competitors: string[]) {
@@ -354,7 +362,9 @@ export default function OffPageAuditPage() {
             (Math.log10(Math.max(1, summary.referring_domains || 0)) * 20) +
             (Math.log10(Math.max(1, summary.backlinks || 0)) * 10)
           )),
-          toxicScore: Math.round(Math.random() * 30),
+          toxicScore: summary.backlinks > 0
+            ? Math.round(((summary.nofollow || 0) / summary.backlinks) * 25)
+            : 0,
         };
       })
     );

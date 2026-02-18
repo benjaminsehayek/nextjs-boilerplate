@@ -22,7 +22,7 @@ const Dashboard = dynamic(() => import('@/components/tools/SiteAudit/Dashboard')
 export default function SiteAuditPage() {
   const { user } = useUser();
   const { scansRemaining } = useSubscription();
-  const { business } = useBusiness(user?.id);
+  const { business } = useBusiness();
   const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
 
   const [scanState, setScanState] = useState<ScanState>('idle');
@@ -235,17 +235,91 @@ export default function SiteAuditPage() {
         .update({ status: 'analyzing' })
         .eq('id', id);
 
-      // Process results (this would call scoring functions)
-      // For now, we'll mark as complete and let the backend handle it
-      // In a real implementation, you'd process the results here
+      // Process collected API results
+      const successfulResults = results
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && r.value.status === 'success')
+        .map((r) => r.value);
+
+      const crawlData: Record<string, any> = {};
+      for (const result of successfulResults) {
+        crawlData[result.category] = result.data;
+      }
+
+      // Extract Lighthouse scores (from performance/mobile checks)
+      const lighthouseResult = successfulResults.find(
+        (r) => r.category === 'performance' || r.category === 'mobile'
+      );
+      const lighthouseRaw = lighthouseResult?.data?.tasks?.[0]?.result?.[0]?.items?.[0];
+      const lighthouseScores = lighthouseRaw ? {
+        performance: Math.round((lighthouseRaw.categories?.performance?.score || 0) * 100),
+        accessibility: Math.round((lighthouseRaw.categories?.accessibility?.score || 0) * 100),
+        best_practices: Math.round((lighthouseRaw.categories?.['best-practices']?.score || 0) * 100),
+        seo: Math.round((lighthouseRaw.categories?.seo?.score || 0) * 100),
+      } : null;
+
+      // Extract on-page page data (use first instant_pages result)
+      const onPageResult = successfulResults.find((r) => r.category === 'meta');
+      const pageItem = onPageResult?.data?.tasks?.[0]?.result?.[0]?.items?.[0];
+
+      // Count issues from checks object
+      let issuesCritical = 0;
+      let issuesWarning = 0;
+      let issuesNotice = 0;
+      const issuesList: any[] = [];
+
+      if (pageItem?.checks) {
+        const checks = pageItem.checks;
+        // Critical issues
+        if (!checks.title) { issuesCritical++; issuesList.push({ name: 'Missing title tag', severity: 'critical', category: 'meta' }); }
+        if (!checks.meta_description) { issuesWarning++; issuesList.push({ name: 'Missing meta description', severity: 'warning', category: 'meta' }); }
+        if (!checks.h1) { issuesWarning++; issuesList.push({ name: 'Missing H1 tag', severity: 'warning', category: 'content' }); }
+        if (checks.duplicate_title) { issuesCritical++; issuesList.push({ name: 'Duplicate title tags', severity: 'critical', category: 'meta' }); }
+        if (checks.duplicate_meta_description) { issuesWarning++; issuesList.push({ name: 'Duplicate meta descriptions', severity: 'warning', category: 'meta' }); }
+        if (checks.is_https === false) { issuesCritical++; issuesList.push({ name: 'Not using HTTPS', severity: 'critical', category: 'security' }); }
+        if (checks.no_image_alt) { issuesWarning++; issuesList.push({ name: 'Images missing alt text', severity: 'warning', category: 'images' }); }
+      }
+
+      // Compute category scores
+      const categoryScores: Record<string, number> = {
+        meta: pageItem ? computeMetaScore(pageItem) : 0,
+        content: pageItem ? computeContentScore(pageItem) : 0,
+        links: pageItem ? computeLinksScore(pageItem) : 0,
+        images: pageItem ? computeImagesScore(pageItem) : 0,
+        performance: lighthouseScores?.performance || 0,
+        schema: pageItem ? computeSchemaScore(pageItem) : 0,
+        security: pageItem ? computeSecurityScore(pageItem) : 0,
+        mobile: lighthouseScores?.seo || 0,
+      };
+
+      const overallScore = Math.round(
+        Object.values(categoryScores).reduce((a, b) => a + b, 0) / Object.keys(categoryScores).length
+      );
+
+      const pageCount = onPageResult?.data?.tasks?.[0]?.result?.[0]?.crawl_progress?.pages_crawled || 1;
 
       await (supabase as any)
         .from('site_audits')
         .update({
           status: 'complete',
           completed_at: new Date().toISOString(),
+          overall_score: overallScore,
+          category_scores: categoryScores,
+          lighthouse_scores: lighthouseScores,
+          page_count: pageCount,
+          issues_critical: issuesCritical,
+          issues_warning: issuesWarning,
+          issues_notice: issuesNotice,
+          crawl_data: crawlData,
+          pages_data: { pages: pageItem ? [pageItem] : [] },
+          issues_data: { issues: issuesList, quickWins: issuesList.filter((i) => i.severity === 'warning') },
+          api_cost: successfulResults.length * 0.002,
         })
         .eq('id', id);
+
+      // Deduct one scan credit on successful completion
+      if (user?.id) {
+        await (supabase as any).rpc('increment_scan_credits', { p_user_id: user.id, p_amount: 1 });
+      }
 
       // Load results
       await loadAuditResults(id);
@@ -318,4 +392,62 @@ export default function SiteAuditPage() {
       </ToolPageShell>
     </ToolGate>
   );
+}
+
+// Scoring helpers — compute 0-100 scores from DataForSEO instant_pages page item
+function computeMetaScore(page: any): number {
+  const c = page?.checks || {};
+  let score = 100;
+  if (!c.title || c.title === 'absent' || c.title === 'empty') score -= 30;
+  if (!c.meta_description || c.meta_description === 'absent') score -= 20;
+  if (c.duplicate_title) score -= 25;
+  if (c.duplicate_meta_description) score -= 15;
+  if (!c.canonical || c.canonical === 'absent') score -= 10;
+  return Math.max(0, score);
+}
+
+function computeContentScore(page: any): number {
+  const c = page?.checks || {};
+  let score = 100;
+  if (!c.h1 || c.h1 === 'absent') score -= 20;
+  if (c.duplicate_content) score -= 30;
+  if ((page?.content?.plain_text_word_count || 0) < 300) score -= 20;
+  if (c.is_404) score -= 30;
+  return Math.max(0, score);
+}
+
+function computeLinksScore(page: any): number {
+  const c = page?.checks || {};
+  let score = 100;
+  if (c.broken_links) score -= 30;
+  if (c.no_follow_all) score -= 15;
+  if (c.redirect_chain) score -= 15;
+  if (c.canonical_to_redirect) score -= 10;
+  return Math.max(0, score);
+}
+
+function computeImagesScore(page: any): number {
+  const c = page?.checks || {};
+  let score = 100;
+  if (c.no_image_alt) score -= 30;
+  if (c.no_image_title) score -= 15;
+  if (c.images_too_large) score -= 25;
+  return Math.max(0, score);
+}
+
+function computeSchemaScore(page: any): number {
+  const c = page?.checks || {};
+  let score = 60; // baseline — schema is optional
+  if (c.has_micromarkup) score = 100;
+  if (c.valid_micromarkup === false) score = 40;
+  return Math.max(0, score);
+}
+
+function computeSecurityScore(page: any): number {
+  const c = page?.checks || {};
+  let score = 100;
+  if (c.is_https === false) score -= 50;
+  if (c.mixed_content) score -= 30;
+  if (c.seo_friendly_url === false) score -= 10;
+  return Math.max(0, score);
 }

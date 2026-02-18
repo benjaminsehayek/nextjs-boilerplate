@@ -20,7 +20,7 @@ type ScanState = 'setup' | 'configure' | 'scanning' | 'complete' | 'error';
 
 export default function LocalGridPage() {
   const { user } = useUser();
-  const { business } = useBusiness(user?.id);
+  const { business } = useBusiness();
   const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
   const { scansRemaining, profile } = useSubscription();
   const supabase = createClient();

@@ -43,15 +43,6 @@ export async function POST(
     });
 
     const data = await dfsResponse.json();
-
-    const cost = data.tasks?.reduce(
-      (sum: number, t: { cost?: number }) => sum + (t.cost || 0), 0
-    ) || 0;
-
-    if (cost > 0) {
-      await supabase.rpc('increment_scan_credits', { p_user_id: user.id, p_amount: 1 });
-    }
-
     return NextResponse.json(data);
   } catch (error) {
     console.error('DataForSEO proxy error:', error);
