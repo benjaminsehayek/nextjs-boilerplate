@@ -117,7 +117,9 @@ function OnboardingWizard({ userId }: { userId: string }) {
     setError(null);
 
     try {
-      const { data: business, error: businessError } = await (supabase as any)
+      // Split insert from select — chaining .select().single() on insert
+      // can hang if the RETURNING clause is blocked by RLS.
+      const { error: insertError } = await (supabase as any)
         .from('businesses')
         .insert({
           user_id: userId,
@@ -129,42 +131,35 @@ function OnboardingWizard({ userId }: { userId: string }) {
           state: businessData.state || null,
           zip: businessData.zip || null,
           industry: businessData.industry || null,
-        })
-        .select()
+        });
+
+      if (insertError) {
+        if (!insertError.message.includes('duplicate') && !insertError.message.includes('unique')) {
+          throw new Error(`Database error: ${insertError.message}`);
+        }
+        // Duplicate — fall through to fetch the existing record
+      }
+
+      // Always fetch the business record by user_id (handles both new insert and duplicate)
+      const { data: business, error: fetchError } = await (supabase as any)
+        .from('businesses')
+        .select('id')
+        .eq('user_id', userId)
         .single();
 
-      if (businessError) {
-        if (businessError.message.includes('duplicate') || businessError.message.includes('unique')) {
-          const { data: existingBusiness, error: fetchError } = await (supabase as any)
-            .from('businesses')
-            .select('*')
-            .eq('user_id', userId)
-            .single();
+      if (fetchError) throw new Error(`Failed to fetch business: ${fetchError.message}`);
+      if (!business) throw new Error('Business not found after insert');
 
-          if (fetchError) throw new Error(`Failed to fetch existing business: ${fetchError.message}`);
-          if (existingBusiness) {
-            setBusinessId(existingBusiness.id);
-            setCurrentStep('location');
-          } else {
-            throw new Error('Business exists but could not be fetched');
-          }
-        } else {
-          throw new Error(`Database error: ${businessError.message}`);
-        }
-      } else if (business) {
-        setBusinessId(business.id);
-        setLocationData({
-          location_name: businessData.name + ' - Main',
-          address: businessData.address,
-          city: businessData.city,
-          state: businessData.state,
-          zip: businessData.zip,
-          phone: businessData.phone,
-        });
-        setCurrentStep('location');
-      } else {
-        throw new Error('No business data returned');
-      }
+      setBusinessId(business.id);
+      setLocationData({
+        location_name: businessData.name + ' - Main',
+        address: businessData.address,
+        city: businessData.city,
+        state: businessData.state,
+        zip: businessData.zip,
+        phone: businessData.phone,
+      });
+      setCurrentStep('location');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create business. Please try again.');
     } finally {
