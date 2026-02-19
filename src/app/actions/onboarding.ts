@@ -16,8 +16,9 @@ export async function createBusiness(data: {
 }): Promise<{ businessId: string | null; error: string | null }> {
   const supabase = await createClient();
 
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (!user || authError) return { businessId: null, error: 'Not authenticated' };
+  const { data: { session }, error: authError } = await supabase.auth.getSession();
+  if (!session?.user || authError) return { businessId: null, error: 'Not authenticated' };
+  const user = session.user;
 
   const { error: insertError } = await (supabase as any)
     .from('businesses')
@@ -67,8 +68,8 @@ export async function createLocation(data: {
 }): Promise<{ error: string | null }> {
   const supabase = await createClient();
 
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (!user || authError) return { error: 'Not authenticated' };
+  const { data: { session }, error: authError } = await supabase.auth.getSession();
+  if (!session?.user || authError) return { error: 'Not authenticated' };
 
   const { error } = await (supabase as any)
     .from('business_locations')
@@ -99,8 +100,8 @@ export async function createServices(
 ): Promise<{ error: string | null }> {
   const supabase = await createClient();
 
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (!user || authError) return { error: 'Not authenticated' };
+  const { data: { session }, error: authError } = await supabase.auth.getSession();
+  if (!session?.user || authError) return { error: 'Not authenticated' };
 
   const { error } = await (supabase as any)
     .from('services')
@@ -122,8 +123,8 @@ export async function createMarkets(
 ): Promise<{ error: string | null }> {
   const supabase = await createClient();
 
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (!user || authError) return { error: 'Not authenticated' };
+  const { data: { session }, error: authError } = await supabase.auth.getSession();
+  if (!session?.user || authError) return { error: 'Not authenticated' };
 
   const { error } = await (supabase as any)
     .from('markets')
