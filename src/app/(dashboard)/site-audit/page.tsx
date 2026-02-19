@@ -374,6 +374,7 @@ export default function SiteAuditPage() {
               onStartScan={startAudit}
               isLoading={false}
               scansRemaining={scansRemaining}
+              defaultDomain={business?.domain || ''}
             />
           </>
         )}

@@ -534,6 +534,8 @@ export default function ContentStrategyPage() {
               onStartAnalysis={startAnalysis}
               isLoading={false}
               scansRemaining={scansRemaining}
+              defaultDomain={business?.domain || ''}
+              defaultIndustry={business?.industry || ''}
             />
           </>
         )}

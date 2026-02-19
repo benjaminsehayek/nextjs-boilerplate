@@ -3,9 +3,9 @@
 import { useState } from 'react';
 import type { ConfigFormProps, ContentStrategyConfig, EconomicsConfig } from './types';
 
-export default function ConfigForm({ onStartAnalysis, isLoading, scansRemaining }: ConfigFormProps) {
-  const [domain, setDomain] = useState('');
-  const [industry, setIndustry] = useState('');
+export default function ConfigForm({ onStartAnalysis, isLoading, scansRemaining, defaultDomain = '', defaultIndustry = '' }: ConfigFormProps) {
+  const [domain, setDomain] = useState(defaultDomain);
+  const [industry, setIndustry] = useState(defaultIndustry);
   const [showEconomics, setShowEconomics] = useState(false);
   const [economics, setEconomics] = useState<EconomicsConfig>({});
   const [validationError, setValidationError] = useState<string | null>(null);

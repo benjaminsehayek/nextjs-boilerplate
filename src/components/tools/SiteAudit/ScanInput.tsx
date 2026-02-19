@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import type { ScanInputProps } from './types';
 
-export default function ScanInput({ onStartScan, isLoading, scansRemaining }: ScanInputProps) {
-  const [domain, setDomain] = useState('');
+export default function ScanInput({ onStartScan, isLoading, scansRemaining, defaultDomain = '' }: ScanInputProps) {
+  const [domain, setDomain] = useState(defaultDomain);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   function validateDomain(input: string): boolean {

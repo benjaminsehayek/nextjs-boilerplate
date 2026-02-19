@@ -102,6 +102,8 @@ export interface ConfigFormProps {
   onStartAnalysis: (config: ContentStrategyConfig) => void;
   isLoading: boolean;
   scansRemaining: number;
+  defaultDomain?: string;
+  defaultIndustry?: string;
 }
 
 export interface ProgressTrackerProps {

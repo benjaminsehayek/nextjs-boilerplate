@@ -116,6 +116,7 @@ export interface ScanInputProps {
   onStartScan: (domain: string) => void;
   isLoading: boolean;
   scansRemaining: number;
+  defaultDomain?: string;
 }
 
 export interface ProgressTrackerProps {
