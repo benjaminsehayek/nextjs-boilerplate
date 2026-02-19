@@ -9,7 +9,7 @@ import { ActionItems } from '@/components/dashboard/ActionItems';
 import { QuickStats } from '@/components/dashboard/QuickStats';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import { createBusiness, createLocation, createServices, createMarkets } from '@/app/actions/onboarding';
 
 const tools = [
   { href: '/site-audit', icon: '🔍', name: 'Site Audit', desc: '52-point technical SEO check' },
@@ -69,8 +69,7 @@ interface MarketForm {
   area_codes: string;
 }
 
-function OnboardingWizard({ userId }: { userId: string }) {
-  const supabase = createClient();
+function OnboardingWizard() {
   const wizardRef = useRef<HTMLDivElement>(null);
 
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('business');
@@ -117,40 +116,11 @@ function OnboardingWizard({ userId }: { userId: string }) {
     setError(null);
 
     try {
-      // Split insert from select — chaining .select().single() on insert
-      // can hang if the RETURNING clause is blocked by RLS.
-      const { error: insertError } = await (supabase as any)
-        .from('businesses')
-        .insert({
-          user_id: userId,
-          name: businessData.name,
-          domain: businessData.domain,
-          phone: businessData.phone || null,
-          address: businessData.address || null,
-          city: businessData.city || null,
-          state: businessData.state || null,
-          zip: businessData.zip || null,
-          industry: businessData.industry || null,
-        });
+      const { businessId: id, error } = await createBusiness(businessData);
+      if (error) throw new Error(error);
+      if (!id) throw new Error('Business not found after insert');
 
-      if (insertError) {
-        if (!insertError.message.includes('duplicate') && !insertError.message.includes('unique')) {
-          throw new Error(`Database error: ${insertError.message}`);
-        }
-        // Duplicate — fall through to fetch the existing record
-      }
-
-      // Always fetch the business record by user_id (handles both new insert and duplicate)
-      const { data: business, error: fetchError } = await (supabase as any)
-        .from('businesses')
-        .select('id')
-        .eq('user_id', userId)
-        .single();
-
-      if (fetchError) throw new Error(`Failed to fetch business: ${fetchError.message}`);
-      if (!business) throw new Error('Business not found after insert');
-
-      setBusinessId(business.id);
+      setBusinessId(id);
       setLocationData({
         location_name: businessData.name + ' - Main',
         address: businessData.address,
@@ -175,20 +145,8 @@ function OnboardingWizard({ userId }: { userId: string }) {
     try {
       if (!businessId) throw new Error('Business not found');
 
-      const { error: locationError } = await (supabase as any)
-        .from('business_locations')
-        .insert({
-          business_id: businessId,
-          location_name: locationData.location_name,
-          address: locationData.address || null,
-          city: locationData.city,
-          state: locationData.state,
-          zip: locationData.zip || null,
-          phone: locationData.phone || null,
-          is_primary: true,
-        });
-
-      if (locationError) throw locationError;
+      const { error } = await createLocation({ business_id: businessId, ...locationData });
+      if (error) throw new Error(error);
 
       setCurrentStep('services');
     } catch (err) {
@@ -209,19 +167,16 @@ function OnboardingWizard({ userId }: { userId: string }) {
       const validServices = services.filter((s) => s.name.trim());
       if (validServices.length === 0) throw new Error('Please add at least one service');
 
-      const { error: servicesError } = await (supabase as any)
-        .from('services')
-        .insert(
-          validServices.map((service, index) => ({
-            business_id: businessId,
-            name: service.name,
-            profit_per_job: parseFloat(service.profit_per_job) || 0,
-            close_rate: parseFloat(service.close_rate) / 100 || 0.3,
-            sort_order: index,
-          }))
-        );
-
-      if (servicesError) throw servicesError;
+      const { error } = await createServices(
+        businessId,
+        validServices.map((service, index) => ({
+          name: service.name,
+          profit_per_job: parseFloat(service.profit_per_job) || 0,
+          close_rate: parseFloat(service.close_rate) / 100 || 0.3,
+          sort_order: index,
+        }))
+      );
+      if (error) throw new Error(error);
 
       setCurrentStep('markets');
     } catch (err) {
@@ -242,19 +197,16 @@ function OnboardingWizard({ userId }: { userId: string }) {
       const validMarkets = markets.filter((m) => m.name.trim() && m.cities.trim());
       if (validMarkets.length === 0) throw new Error('Please add at least one market');
 
-      const { error: marketsError } = await (supabase as any)
-        .from('markets')
-        .insert(
-          validMarkets.map((market, index) => ({
-            business_id: businessId,
-            name: market.name,
-            cities: market.cities.split(',').map((c) => c.trim()).filter(Boolean),
-            area_codes: market.area_codes.split(',').map((a) => a.trim()).filter(Boolean),
-            is_primary: index === 0,
-          }))
-        );
-
-      if (marketsError) throw marketsError;
+      const { error } = await createMarkets(
+        businessId,
+        validMarkets.map((market, index) => ({
+          name: market.name,
+          cities: market.cities.split(',').map((c) => c.trim()).filter(Boolean),
+          area_codes: market.area_codes.split(',').map((a) => a.trim()).filter(Boolean),
+          is_primary: index === 0,
+        }))
+      );
+      if (error) throw new Error(error);
 
       setCurrentStep('complete');
 
@@ -771,7 +723,7 @@ export default function DashboardPage() {
 
   // Show onboarding wizard if no business yet
   if (!business) {
-    return <OnboardingWizard userId={user.id} />;
+    return <OnboardingWizard />;
   }
 
   const firstName = user.user_metadata?.full_name?.split(' ')[0] || 'there';
