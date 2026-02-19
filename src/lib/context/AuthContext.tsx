@@ -65,8 +65,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     //   • Supabase RLS policies (per-user data access)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event: any, session: any) => {
-        clearTimeout(safetyTimer);
-
         setUser(session?.user ?? null);
 
         if (session?.user) {
@@ -98,6 +96,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Only flip loading→false on the very first event (INITIAL_SESSION).
         // Subsequent events (TOKEN_REFRESHED, SIGNED_OUT, etc.) update state
         // but don't re-trigger the loading skeleton.
+        // Clear safety timer HERE (after data loaded), not at callback start —
+        // if Promise.all hangs, the safety timer still fires as a fallback.
+        clearTimeout(safetyTimer);
         if (!initialized) {
           initialized = true;
           setLoading(false);
