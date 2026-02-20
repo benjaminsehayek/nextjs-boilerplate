@@ -6,11 +6,9 @@ import { signOut as serverSignOut } from '@/app/actions/auth';
 import type { User } from '@supabase/supabase-js';
 import type { Profile, Business } from '@/types';
 
-const PROFILE_SELECT =
-  'id, full_name, company_name, phone, avatar_url, stripe_customer_id, subscription_tier, subscription_status, subscription_period_end, content_tokens_used, content_tokens_limit, scan_credits_used, scan_credits_limit, created_at, updated_at';
+const PROFILE_SELECT = '*';
 
-const BUSINESS_SELECT =
-  'id, user_id, domain, name, place_id, cid, feature_id, phone, address, city, state, zip, latitude, longitude, industry, categories, created_at, updated_at';
+const BUSINESS_SELECT = '*';
 
 interface AuthContextValue {
   user: User | null;
@@ -80,6 +78,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 .select(BUSINESS_SELECT)
                 .eq('user_id', session.user.id),
             ]);
+            if (profileResult.error) console.error('Profile query error:', profileResult.error);
+            if (businessResult.error) console.error('Business query error:', businessResult.error);
             setProfile(profileResult.data as Profile | null);
             const bizList: Business[] = businessResult.data || [];
             setBusinesses(bizList);
@@ -140,10 +140,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshBusiness = async () => {
     if (!user) return;
     try {
-      const { data } = await (supabase as any)
+      const { data, error } = await (supabase as any)
         .from('businesses')
         .select(BUSINESS_SELECT)
         .eq('user_id', user.id);
+      if (error) console.error('refreshBusiness query error:', error);
       const bizList: Business[] = data || [];
       setBusinesses(bizList);
       setBusiness(bizList[0] || null);
