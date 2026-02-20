@@ -84,6 +84,26 @@ function OnboardingWizard() {
     wizardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [currentStep]);
 
+  // When onboarding completes, refresh business data so the dashboard renders.
+  // Fallback: if refreshBusiness doesn't resolve within 5s, force a page reload.
+  // Both timers are cleaned up if the component unmounts (business loaded → dashboard shows).
+  useEffect(() => {
+    if (currentStep !== 'complete') return;
+
+    const refreshTimer = setTimeout(() => {
+      refreshBusiness();
+    }, 1500);
+
+    const fallbackTimer = setTimeout(() => {
+      window.location.reload();
+    }, 5000);
+
+    return () => {
+      clearTimeout(refreshTimer);
+      clearTimeout(fallbackTimer);
+    };
+  }, [currentStep, refreshBusiness]);
+
   const [businessData, setBusinessData] = useState({
     name: '',
     domain: '',
@@ -211,13 +231,6 @@ function OnboardingWizard() {
       if (error) throw new Error(error);
 
       setCurrentStep('complete');
-
-      // Refresh business data in AuthContext so dashboard renders
-      // instead of relying on window.location.reload() which can
-      // fail if the AuthContext re-init doesn't pick up the new data.
-      setTimeout(async () => {
-        await refreshBusiness();
-      }, 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create markets');
     } finally {
