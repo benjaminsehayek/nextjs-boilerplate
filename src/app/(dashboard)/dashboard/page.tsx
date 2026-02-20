@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useUser } from '@/lib/hooks/useUser';
 import { useBusiness } from '@/lib/hooks/useBusiness';
+import { useAuth } from '@/lib/context/AuthContext';
 import { DashboardStats } from '@/components/dashboard/DashboardStats';
 import { RecentActivity } from '@/components/dashboard/RecentActivity';
 import { ActionItems } from '@/components/dashboard/ActionItems';
@@ -71,6 +72,7 @@ interface MarketForm {
 
 function OnboardingWizard() {
   const wizardRef = useRef<HTMLDivElement>(null);
+  const { refreshBusiness } = useAuth();
 
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('business');
   const [loading, setLoading] = useState(false);
@@ -210,8 +212,11 @@ function OnboardingWizard() {
 
       setCurrentStep('complete');
 
-      setTimeout(() => {
-        window.location.reload();
+      // Refresh business data in AuthContext so dashboard renders
+      // instead of relying on window.location.reload() which can
+      // fail if the AuthContext re-init doesn't pick up the new data.
+      setTimeout(async () => {
+        await refreshBusiness();
       }, 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create markets');
