@@ -12,7 +12,32 @@ export interface BusinessInfo {
   longitude: number;
   phone?: string;
   website?: string;
+  // Google identifiers for accurate rank matching
+  placeId?: string;
+  cid?: string;
+  featureId?: string;
+  domain?: string;
+  category?: string;
 }
+
+/** DataForSEO Maps SERP response item */
+export interface MapsSerpItem {
+  type: string; // "maps_search" | "maps_paid_item"
+  rank_group: number;
+  rank_absolute: number;
+  domain: string | null;
+  title: string;
+  url: string | null;
+  cid?: string;
+  feature_id?: string;
+  place_id?: string;
+  address?: string;
+  phone?: string;
+  is_paid?: boolean;
+  rating?: { value: number; votes_count: number } | null;
+}
+
+export type MatchMethod = 'cid' | 'placeId' | 'exactName' | 'significantWords' | 'domain' | null;
 
 export interface GridPoint {
   id: string;
@@ -21,6 +46,7 @@ export interface GridPoint {
   position: number; // 1-81 depending on grid size
   rank: number | null;
   url: string | null;
+  matchMethod?: MatchMethod;
   distance: number; // km from center
 }
 
@@ -58,6 +84,7 @@ export interface RankData {
   point: number;
   rank: number | null;
   url: string | null;
+  matchMethod?: MatchMethod;
   topResults: {
     position: number;
     title: string;

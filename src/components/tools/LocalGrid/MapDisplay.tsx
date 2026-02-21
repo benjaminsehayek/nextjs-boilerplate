@@ -61,43 +61,55 @@ export function MapDisplay({ business, gridPoints, heatmapData, showHeatmap = fa
       if (gridPoints.length > 0) {
         gridPoints.forEach((point) => {
           let color = '#94A3B8'; // Default gray
-          let size = 8;
+          let size = showHeatmap ? 24 : 8;
+          let textColor = '#fff';
 
           if (showHeatmap && point.rank !== null) {
-            // Color based on rank (green = top 3, yellow = 4-10, orange = 11-20, red = 20+)
             if (point.rank <= 3) {
               color = '#10B981'; // green
-              size = 12;
             } else if (point.rank <= 10) {
               color = '#FBBF24'; // yellow
-              size = 10;
+              textColor = '#1a1a1a';
             } else if (point.rank <= 20) {
               color = '#FB923C'; // orange
-              size = 9;
+              textColor = '#1a1a1a';
             } else {
               color = '#EF4444'; // red
-              size = 8;
             }
           } else if (point.rank === null && showHeatmap) {
             color = '#64748B'; // Not ranking - dark gray
-            size = 6;
+            size = 20;
           }
 
-          const pointIcon = L.divIcon({
-            className: 'grid-point',
-            html: `<div style="background: ${color}; width: ${size}px; height: ${size}px; border-radius: 50%; border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.3);"></div>`,
-            iconSize: [size, size],
-            iconAnchor: [size / 2, size / 2],
-          });
+          const label = showHeatmap
+            ? (point.rank !== null ? String(point.rank) : '—')
+            : '';
+
+          const pointIcon = showHeatmap
+            ? L.divIcon({
+                className: 'grid-point',
+                html: `<div style="background:${color};width:${size}px;height:${size}px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:${textColor};line-height:1;">${label}</div>`,
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size / 2],
+              })
+            : L.divIcon({
+                className: 'grid-point',
+                html: `<div style="background:${color};width:${size}px;height:${size}px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>`,
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size / 2],
+              });
 
           const marker = L.marker([point.lat, point.lng], { icon: pointIcon }).addTo(
             mapInstanceRef.current
           );
 
-          // Add popup with ranking info
+          // Add popup with ranking info + match method
           if (showHeatmap) {
+            const matchLabel = point.matchMethod
+              ? `<br><span style="font-size:10px;opacity:0.7">Matched by: ${point.matchMethod}</span>`
+              : '';
             const popupContent = point.rank
-              ? `<strong>Rank: #${point.rank}</strong><br>Distance: ${point.distance.toFixed(2)}km<br>Point ${point.position}`
+              ? `<strong>Rank: #${point.rank}</strong>${matchLabel}<br>Distance: ${point.distance.toFixed(2)}km<br>Point ${point.position}`
               : `<strong>Not Ranking</strong><br>Distance: ${point.distance.toFixed(2)}km<br>Point ${point.position}`;
             marker.bindPopup(popupContent);
           } else {

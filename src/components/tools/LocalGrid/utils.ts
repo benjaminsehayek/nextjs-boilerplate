@@ -1,36 +1,39 @@
-import type { BusinessInfo, GridPoint, GridSize, HeatmapData, RankData } from './types';
+import type { BusinessInfo, GridPoint, GridSize, HeatmapData, MapsSerpItem, MatchMethod, RankData } from './types';
 
-/**
- * Generate grid points around a center location
- */
+// ── Stopwords for significant-word matching ──────────────────────────
+
+const STOPWORDS = new Set([
+  'the', 'and', 'of', 'in', 'at', 'to', 'for', 'a', 'an', 'is', 'on', 'by',
+  'llc', 'inc', 'corp', 'co', 'ltd', 'group', 'services', 'service',
+  'solutions', 'consulting', 'management', 'associates', 'enterprise',
+  'enterprises', 'company', 'professional', 'professionals', 'center',
+  'centre', 'shop', 'store', 'studio', 'agency', 'firm',
+]);
+
+// ── Grid generation ──────────────────────────────────────────────────
+
 export function generateGridPoints(
   center: { lat: number; lng: number },
   gridSize: GridSize,
   radiusKm: number
 ): GridPoint[] {
   const points: GridPoint[] = [];
-  const earthRadiusKm = 6371;
 
-  // Calculate the distance between grid points
-  const totalDistanceKm = radiusKm * 2; // Total grid coverage
+  const totalDistanceKm = radiusKm * 2;
   const stepKm = totalDistanceKm / (gridSize - 1 || 1);
 
-  // Calculate offset in degrees (approximate)
-  const latOffsetPerKm = 1 / 111; // 1 degree latitude ≈ 111 km
+  const latOffsetPerKm = 1 / 111;
   const lngOffsetPerKm = 1 / (111 * Math.cos((center.lat * Math.PI) / 180));
 
   let pointId = 1;
 
   for (let row = 0; row < gridSize; row++) {
     for (let col = 0; col < gridSize; col++) {
-      // Calculate offset from center
       const latOffset = (row - (gridSize - 1) / 2) * stepKm * latOffsetPerKm;
       const lngOffset = (col - (gridSize - 1) / 2) * stepKm * lngOffsetPerKm;
 
       const lat = center.lat + latOffset;
       const lng = center.lng + lngOffset;
-
-      // Calculate distance from center using Haversine formula
       const distance = calculateDistance(center.lat, center.lng, lat, lng);
 
       points.push({
@@ -50,11 +53,8 @@ export function generateGridPoints(
   return points;
 }
 
-/**
- * Calculate distance between two coordinates using Haversine formula
- */
 function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371; // Earth's radius in km
+  const R = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
 
@@ -73,32 +73,302 @@ function toRad(degrees: number): number {
   return (degrees * Math.PI) / 180;
 }
 
-/**
- * Process rank data from API into heatmap format
- */
+// ── Name matching helpers ────────────────────────────────────────────
+
+export function getSignificantWords(name: string): string[] {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !STOPWORDS.has(w));
+}
+
+function normalizeDomain(url: string): string {
+  try {
+    return url
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .split('/')[0]
+      .toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+// ── Extract map items from DataForSEO response ──────────────────────
+
+export function extractMapItems(resultData: any): MapsSerpItem[] {
+  if (!resultData) return [];
+
+  const items: any[] = resultData.items || [];
+
+  // Primary: direct maps_search items at top level
+  let mapItems = items.filter(
+    (item: any) => item.type === 'maps_search'
+  );
+
+  // Fallback: look for local_pack / maps_pack containers
+  if (mapItems.length === 0) {
+    for (const item of items) {
+      if (
+        item.type === 'local_pack' ||
+        item.type === 'maps_pack' ||
+        item.type === 'local_results'
+      ) {
+        const nested = item.items || item.results || [];
+        mapItems = nested.filter((n: any) => n.type !== 'maps_paid_item');
+        if (mapItems.length > 0) break;
+      }
+    }
+  }
+
+  // Exclude paid ads
+  return mapItems.filter((item: any) => item.type !== 'maps_paid_item' && !item.is_paid);
+}
+
+// ── Business rank matching (6-level cascade) ─────────────────────────
+
+export function findBusinessRank(
+  mapItems: MapsSerpItem[],
+  business: BusinessInfo
+): { rank: number | null; url: string | null; matchMethod: MatchMethod } {
+  if (!mapItems.length) return { rank: null, url: null, matchMethod: null };
+
+  const bizCid = business.cid || null;
+  const bizPlaceId = business.placeId || null;
+  const bizFeatureId = business.featureId || null;
+  const bizName = business.name.toLowerCase().trim();
+  const bizDomain = business.domain ? normalizeDomain(business.domain) : (business.website ? normalizeDomain(business.website) : null);
+  const bizWords = getSignificantWords(business.name);
+
+  for (const item of mapItems) {
+    // 1. CID match (strongest)
+    if (bizCid && item.cid && item.cid === bizCid) {
+      return { rank: item.rank_group, url: item.url, matchMethod: 'cid' };
+    }
+
+    // 2. Place ID match
+    if (bizPlaceId && item.place_id && item.place_id === bizPlaceId) {
+      return { rank: item.rank_group, url: item.url, matchMethod: 'placeId' };
+    }
+
+    // 3. Feature ID match
+    if (bizFeatureId && item.feature_id && item.feature_id === bizFeatureId) {
+      return { rank: item.rank_group, url: item.url, matchMethod: 'placeId' };
+    }
+  }
+
+  // 4. Exact name match
+  for (const item of mapItems) {
+    const itemName = (item.title || '').toLowerCase().trim();
+    if (itemName && bizName && itemName === bizName) {
+      return { rank: item.rank_group, url: item.url, matchMethod: 'exactName' };
+    }
+  }
+
+  // 5. Significant words match (need ≥2 words, all must appear in title)
+  if (bizWords.length >= 2) {
+    for (const item of mapItems) {
+      const itemTitle = (item.title || '').toLowerCase();
+      const allMatch = bizWords.every((word) => itemTitle.includes(word));
+      if (allMatch) {
+        return { rank: item.rank_group, url: item.url, matchMethod: 'significantWords' };
+      }
+    }
+  }
+
+  // 6. Domain match (weakest)
+  if (bizDomain) {
+    for (const item of mapItems) {
+      const itemDomain = item.domain ? normalizeDomain(item.domain) : null;
+      if (itemDomain && itemDomain === bizDomain) {
+        return { rank: item.rank_group, url: item.url, matchMethod: 'domain' };
+      }
+    }
+  }
+
+  return { rank: null, url: null, matchMethod: null };
+}
+
+// ── Google Maps URL parser ───────────────────────────────────────────
+
+export interface ParsedMapsUrl {
+  placeId?: string;
+  cid?: string;
+  featureId?: string;
+  lat?: number;
+  lng?: number;
+  name?: string;
+}
+
+export function parseGoogleMapsUrl(url: string): ParsedMapsUrl {
+  const result: ParsedMapsUrl = {};
+
+  try {
+    // Extract Place ID: ChIJ... format
+    const placeIdMatch = url.match(/place_id[=:]([A-Za-z0-9_-]+)/);
+    if (placeIdMatch) result.placeId = placeIdMatch[1];
+
+    // Extract Feature ID: 0x...:0x... format (also contains CID)
+    const featureIdMatch = url.match(/(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
+    if (featureIdMatch) {
+      result.featureId = featureIdMatch[1];
+      // Extract CID from feature ID hex: the second 0x part
+      const cidHex = featureIdMatch[1].split(':')[1];
+      if (cidHex) {
+        try {
+          result.cid = BigInt(cidHex).toString();
+        } catch { /* ignore invalid hex */ }
+      }
+    }
+
+    // Extract CID from !1s pattern: !1s0x...:0xHEX
+    const bangCidMatch = url.match(/!1s0x[0-9a-fA-F]+:0x([0-9a-fA-F]+)/);
+    if (bangCidMatch && !result.cid) {
+      try {
+        result.cid = BigInt('0x' + bangCidMatch[1]).toString();
+      } catch { /* ignore */ }
+    }
+
+    // Extract CID from ludocid= or ?cid= parameter
+    const ludocidMatch = url.match(/[?&](?:ludocid|cid)=(\d+)/);
+    if (ludocidMatch && !result.cid) {
+      result.cid = ludocidMatch[1];
+    }
+
+    // Extract ftid= parameter
+    const ftidMatch = url.match(/ftid=([^&]+)/);
+    if (ftidMatch && !result.featureId) {
+      result.featureId = decodeURIComponent(ftidMatch[1]);
+    }
+
+    // Extract coordinates: @lat,lng pattern
+    const coordMatch = url.match(/@(-?\d+\.?\d*),(-?\d+\.?\d*)/);
+    if (coordMatch) {
+      result.lat = parseFloat(coordMatch[1]);
+      result.lng = parseFloat(coordMatch[2]);
+    }
+
+    // Extract business name from /place/NAME/ path
+    const placeNameMatch = url.match(/\/place\/([^/@]+)/);
+    if (placeNameMatch) {
+      result.name = decodeURIComponent(placeNameMatch[1].replace(/\+/g, ' '));
+    }
+
+    // Extract Place ID from data= parameter: !19s prefix
+    const dataPlaceId = url.match(/!19s(ChIJ[A-Za-z0-9_-]+)/);
+    if (dataPlaceId && !result.placeId) {
+      result.placeId = dataPlaceId[1];
+    }
+  } catch {
+    // Return whatever we parsed so far
+  }
+
+  return result;
+}
+
+// ── Input type detection ─────────────────────────────────────────────
+
+export type InputType = 'mapsUrl' | 'website' | 'phone' | 'name';
+
+export function detectInputType(input: string): InputType {
+  const trimmed = input.trim();
+
+  // Google Maps URL
+  if (/google\.[a-z.]+\/maps/i.test(trimmed) || /maps\.google\./i.test(trimmed) || /goo\.gl\/maps/i.test(trimmed)) {
+    return 'mapsUrl';
+  }
+
+  // Website URL (has http/https or looks like a domain)
+  if (/^https?:\/\//i.test(trimmed) || /^[a-z0-9-]+\.[a-z]{2,}/i.test(trimmed)) {
+    return 'website';
+  }
+
+  // Phone number (digits, spaces, dashes, parens — at least 7 digits)
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length >= 7 && /^[+\d()\s.-]+$/.test(trimmed)) {
+    return 'phone';
+  }
+
+  return 'name';
+}
+
+// ── localStorage scan cache (24hr TTL) ───────────────────────────────
+
+const CACHE_PREFIX = 'lgrid_';
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function cacheKey(keyword: string, lat: number, lng: number): string {
+  return `${CACHE_PREFIX}${keyword}_${lat.toFixed(5)}_${lng.toFixed(5)}`;
+}
+
+export function getCachedResult(keyword: string, lat: number, lng: number): any | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(cacheKey(keyword, lat, lng));
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    if (Date.now() - cached.ts > CACHE_TTL_MS) {
+      localStorage.removeItem(cacheKey(keyword, lat, lng));
+      return null;
+    }
+    return cached.data;
+  } catch {
+    return null;
+  }
+}
+
+export function setCachedResult(keyword: string, lat: number, lng: number, data: any): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(
+      cacheKey(keyword, lat, lng),
+      JSON.stringify({ ts: Date.now(), data })
+    );
+  } catch {
+    // localStorage full — silently fail
+  }
+}
+
+export function clearScanCache(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(CACHE_PREFIX)) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    // ignore
+  }
+}
+
+// ── Heatmap data processing ──────────────────────────────────────────
+
 export function processRankData(rankData: RankData[], gridSize: number): HeatmapData {
   const keyword = rankData[0]?.keyword || '';
   const totalPoints = gridSize * gridSize;
 
-  // Create map of point positions to rank data
   const pointRankMap = new Map<number, { rank: number | null; lat: number; lng: number }>();
 
   rankData.forEach((data) => {
     pointRankMap.set(data.point, {
       rank: data.rank,
-      lat: 0, // Will be filled from grid points
-      lng: 0, // Will be filled from grid points
+      lat: 0,
+      lng: 0,
     });
   });
 
-  const points = Array.from(pointRankMap.entries()).map(([position, data]) => ({
+  const points = Array.from(pointRankMap.entries()).map(([, data]) => ({
     lat: data.lat,
     lng: data.lng,
     rank: data.rank,
     intensity: calculateIntensity(data.rank),
   }));
 
-  // Calculate statistics
   const rankedPoints = rankData.filter((d) => d.rank !== null);
   const avgRank =
     rankedPoints.length > 0
@@ -114,9 +384,6 @@ export function processRankData(rankData: RankData[], gridSize: number): Heatmap
   };
 }
 
-/**
- * Calculate heatmap intensity (0-1) based on rank
- */
 function calculateIntensity(rank: number | null): number {
   if (rank === null) return 0;
   if (rank <= 3) return 1.0;
@@ -125,77 +392,19 @@ function calculateIntensity(rank: number | null): number {
   return 0.2;
 }
 
-/**
- * Find business rank in search results
- */
-export function findBusinessRank(
-  searchResults: any[],
-  businessDomain: string,
-  businessName: string
-): { rank: number | null; url: string | null } {
-  // Normalize business domain (remove www, protocol, etc.)
-  const normalizedDomain = normalizeDomain(businessDomain);
-  const normalizedName = businessName.toLowerCase().trim();
+// ── Display helpers ──────────────────────────────────────────────────
 
-  for (let i = 0; i < searchResults.length; i++) {
-    const result = searchResults[i];
-    const resultDomain = normalizeDomain(result.url || '');
-    const resultTitle = (result.title || '').toLowerCase();
-
-    // Check if domain matches or business name is in title
-    if (
-      resultDomain.includes(normalizedDomain) ||
-      normalizedDomain.includes(resultDomain) ||
-      resultTitle.includes(normalizedName)
-    ) {
-      return {
-        rank: i + 1, // Rank starts at 1
-        url: result.url,
-      };
-    }
-  }
-
-  return { rank: null, url: null };
-}
-
-/**
- * Normalize domain for comparison
- */
-function normalizeDomain(url: string): string {
-  try {
-    let domain = url
-      .replace(/^https?:\/\//, '')
-      .replace(/^www\./, '')
-      .split('/')[0]
-      .toLowerCase();
-    return domain;
-  } catch {
-    return url.toLowerCase();
-  }
-}
-
-/**
- * Format coordinates for display
- */
 export function formatCoordinate(value: number, isLatitude: boolean): string {
   const direction = isLatitude ? (value >= 0 ? 'N' : 'S') : value >= 0 ? 'E' : 'W';
   return `${Math.abs(value).toFixed(6)}° ${direction}`;
 }
 
-/**
- * Calculate estimated scan time in minutes
- */
 export function estimateScanTime(totalChecks: number): { min: number; max: number } {
-  // DataForSEO typically processes 5-10 requests per minute
   const min = Math.ceil(totalChecks / 10);
   const max = Math.ceil(totalChecks / 5);
   return { min, max };
 }
 
-/**
- * Calculate API cost estimate
- */
 export function calculateCost(totalChecks: number): number {
-  // DataForSEO Local Pack API costs approximately $0.003 per check
   return totalChecks * 0.003;
 }

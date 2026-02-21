@@ -8,13 +8,14 @@ import { BusinessLookup } from '@/components/tools/LocalGrid/BusinessLookup';
 import { GridConfigurator } from '@/components/tools/LocalGrid/GridConfigurator';
 import { ScanProgress } from '@/components/tools/LocalGrid/ScanProgress';
 import { ResultsDashboard } from '@/components/tools/LocalGrid/ResultsDashboard';
-import { generateGridPoints, findBusinessRank, calculateCost } from '@/components/tools/LocalGrid/utils';
+import { generateGridPoints, findBusinessRank, extractMapItems, calculateCost, getCachedResult, setCachedResult, clearScanCache } from '@/components/tools/LocalGrid/utils';
+import { dfsCall } from '@/lib/dataforseo';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/lib/hooks/useUser';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import { useLocations } from '@/lib/hooks/useLocations';
 import { useSubscription } from '@/lib/hooks/useSubscription';
-import type { BusinessInfo, GridConfig, GridScanResult, HeatmapData, RankData } from '@/components/tools/LocalGrid/types';
+import type { BusinessInfo, GridConfig, GridPoint, GridScanResult, HeatmapData, MapsSerpItem, RankData } from '@/components/tools/LocalGrid/types';
 
 type ScanState = 'setup' | 'configure' | 'scanning' | 'complete' | 'error';
 
@@ -150,11 +151,13 @@ export default function LocalGridPage() {
     }
   };
 
+  const BATCH_SIZE = 5; // Concurrent API calls per batch
+
   const runGridScan = async (
     scanId: string,
-    businessInfo: BusinessInfo,
+    bizInfo: BusinessInfo,
     config: GridConfig,
-    gridPoints: any[],
+    gridPoints: GridPoint[],
     userId?: string
   ) => {
     try {
@@ -165,12 +168,13 @@ export default function LocalGridPage() {
         .eq('id', scanId);
 
       const allRankData: RankData[] = [];
+      let cacheHits = 0;
 
       // Process each keyword
       for (let kIdx = 0; kIdx < config.keywords.length; kIdx++) {
         const keyword = config.keywords[kIdx];
 
-        // Update progress
+        // Update keyword-level progress
         await (supabase as any)
           .from('grid_scans')
           .update({
@@ -183,62 +187,68 @@ export default function LocalGridPage() {
           })
           .eq('id', scanId);
 
-        // Process each grid point for this keyword
-        for (let pIdx = 0; pIdx < gridPoints.length; pIdx++) {
-          const point = gridPoints[pIdx];
+        // Process grid points in concurrent batches
+        for (let batchStart = 0; batchStart < gridPoints.length; batchStart += BATCH_SIZE) {
+          const batch = gridPoints.slice(batchStart, batchStart + BATCH_SIZE);
 
-          // Update current point
-          await (supabase as any)
-            .from('grid_scans')
-            .update({
-              progress: {
-                current: kIdx,
-                total: config.keywords.length,
-                currentKeyword: keyword.text,
-                currentPoint: pIdx + 1,
-              },
+          const batchResults = await Promise.allSettled(
+            batch.map(async (point, batchIdx) => {
+              const pIdx = batchStart + batchIdx;
+
+              // Check localStorage cache first
+              const cached = getCachedResult(keyword.text, point.lat, point.lng);
+              if (cached) {
+                cacheHits++;
+                return { pIdx, point, data: cached, fromCache: true };
+              }
+
+              // Call DataForSEO Maps SERP API via dfsCall helper
+              const result = await dfsCall<any>('serp/google/maps/live/advanced', [
+                {
+                  keyword: keyword.text,
+                  location_coordinate: `${point.lat},${point.lng},100`,
+                  language_code: 'en',
+                  device: 'mobile',
+                  os: 'ios',
+                  depth: 20,
+                },
+              ]);
+
+              const resultData = result.tasks?.[0]?.result?.[0] || null;
+
+              // Cache the result
+              if (resultData) {
+                setCachedResult(keyword.text, point.lat, point.lng, resultData);
+              }
+
+              return { pIdx, point, data: resultData, fromCache: false };
             })
-            .eq('id', scanId);
+          );
 
-          try {
-            // Call DataForSEO Local Pack API
-            const response = await fetch('/api/dataforseo', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                endpoint: 'serp/google/organic/live/advanced',
-                data: [
-                  {
-                    keyword: keyword.text,
-                    location_coordinate: `${point.lat},${point.lng}`,
-                    language_code: 'en',
-                    device: 'mobile',
-                    os: 'ios',
-                  },
-                ],
-              }),
-            });
+          // Process batch results
+          for (const settled of batchResults) {
+            if (settled.status === 'rejected') {
+              console.error('Batch point error:', settled.reason);
+              continue;
+            }
 
-            const result = await response.json();
+            const { pIdx, point, data } = settled.value;
 
-            if (result.tasks?.[0]?.result?.[0]?.items) {
-              const searchResults = result.tasks[0].result[0].items;
+            if (data) {
+              // Extract map items (filters paid ads, handles response shape variants)
+              const mapItems = extractMapItems(data);
 
-              // Find business rank in results
-              const { rank, url } = findBusinessRank(
-                searchResults,
-                businessInfo.website || '',
-                businessInfo.name
-              );
+              // Find business rank using 6-level cascade
+              const { rank, url, matchMethod } = findBusinessRank(mapItems, bizInfo);
 
-              // Store rank data
               const rankData: RankData = {
                 keyword: keyword.text,
                 point: point.position,
                 rank,
                 url,
-                topResults: searchResults.slice(0, 5).map((item: any, idx: number) => ({
-                  position: idx + 1,
+                matchMethod,
+                topResults: mapItems.slice(0, 5).map((item: MapsSerpItem) => ({
+                  position: item.rank_group,
                   title: item.title || '',
                   domain: item.domain || '',
                   url: item.url || '',
@@ -250,31 +260,49 @@ export default function LocalGridPage() {
               // Update grid point with rank
               gridPoints[pIdx].rank = rank;
               gridPoints[pIdx].url = url;
+              gridPoints[pIdx].matchMethod = matchMethod;
             }
-          } catch (pointError) {
-            console.error(`Error scanning point ${pIdx + 1}:`, pointError);
-            // Continue with next point even if this one fails
           }
 
-          // Small delay to respect rate limits
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          // Update progress after each batch (not every point)
+          await (supabase as any)
+            .from('grid_scans')
+            .update({
+              progress: {
+                current: kIdx,
+                total: config.keywords.length,
+                currentKeyword: keyword.text,
+                currentPoint: Math.min(batchStart + BATCH_SIZE, gridPoints.length),
+              },
+            })
+            .eq('id', scanId);
+
+          // Small delay between batches to respect rate limits
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
       }
 
-      // Calculate heatmap data
-      const heatmapData: Record<string, HeatmapData> = {};
+      // Calculate heatmap data per keyword
+      const heatmap: Record<string, HeatmapData> = {};
       config.keywords.forEach((keyword) => {
         const keywordData = allRankData.filter((d) => d.keyword === keyword.text);
         const rankedPoints = keywordData.filter((d) => d.rank !== null);
 
-        heatmapData[keyword.text] = {
+        // Build a lookup from point position → rank for this keyword
+        const pointRankMap = new Map<number, number | null>();
+        keywordData.forEach((d) => pointRankMap.set(d.point, d.rank));
+
+        heatmap[keyword.text] = {
           keyword: keyword.text,
-          points: gridPoints.map((p) => ({
-            lat: p.lat,
-            lng: p.lng,
-            rank: p.rank,
-            intensity: p.rank ? (p.rank <= 3 ? 1 : p.rank <= 10 ? 0.7 : 0.4) : 0,
-          })),
+          points: gridPoints.map((p) => {
+            const rank = pointRankMap.get(p.position) ?? null;
+            return {
+              lat: p.lat,
+              lng: p.lng,
+              rank,
+              intensity: rank ? (rank <= 3 ? 1 : rank <= 10 ? 0.7 : 0.4) : 0,
+            };
+          }),
           averageRank:
             rankedPoints.length > 0
               ? rankedPoints.reduce((sum, d) => sum + (d.rank || 0), 0) / rankedPoints.length
@@ -291,7 +319,7 @@ export default function LocalGridPage() {
           status: 'complete',
           points: gridPoints,
           rank_data: allRankData,
-          heatmap_data: heatmapData,
+          heatmap_data: heatmap,
           progress: {
             current: config.keywords.length,
             total: config.keywords.length,
@@ -304,6 +332,10 @@ export default function LocalGridPage() {
         await (supabase as any).rpc('decrement_scan_credits', {
           p_user_id: userId,
         });
+      }
+
+      if (cacheHits > 0) {
+        console.log(`Scan complete: ${cacheHits} cache hits saved API calls`);
       }
     } catch (err) {
       console.error('Scan error:', err);
@@ -319,6 +351,7 @@ export default function LocalGridPage() {
     setCurrentScan(null);
     setHeatmapData({});
     setScanState('setup');
+    clearScanCache();
   };
 
   const handleBackToBusiness = () => {
