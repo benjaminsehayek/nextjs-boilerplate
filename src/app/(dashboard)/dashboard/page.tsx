@@ -190,21 +190,35 @@ function OnboardingWizard() {
         }
       } else if (inputType === 'website') {
         const cleanDomain = trimmed.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+
+        // Try exact domain match in business listings first
         const result = await dfsCall<any>('business_data/business_listings/search/live', [
           { categories: [], filters: ['domain', '=', cleanDomain], language_code: 'en', limit: 5 },
         ]);
         const items = result.tasks?.[0]?.result?.[0]?.items || [];
-        if (items.length === 0) throw new Error(`No business found for "${cleanDomain}"`);
-        const results = items.map((item: any) => listingToBusinessData(item));
-        if (results.length === 1) { applyLookupResult(results[0]); return; }
-        setLookupResults(results);
+
+        if (items.length > 0) {
+          const results = items.map((item: any) => listingToBusinessData(item));
+          if (results.length === 1) { applyLookupResult(results[0]); return; }
+          setLookupResults(results);
+        } else {
+          // Fallback: search Google Maps with the domain as keyword
+          const mapsResult = await dfsCall<any>('serp/google/maps/live/advanced', [
+            { keyword: cleanDomain, language_code: 'en', depth: 5 },
+          ]);
+          const mapsItems = (mapsResult.tasks?.[0]?.result?.[0]?.items || []).filter((i: any) => i.type === 'maps_search');
+          if (mapsItems.length === 0) throw new Error(`No business found for "${cleanDomain}". Try searching by business name instead.`);
+          const results = mapsItems.slice(0, 5).map((item: any) => mapItemToBusinessData(item));
+          if (results.length === 1) { applyLookupResult(results[0]); return; }
+          setLookupResults(results);
+        }
       } else if (inputType === 'phone') {
         const digits = trimmed.replace(/\D/g, '');
         const result = await dfsCall<any>('business_data/business_listings/search/live', [
           { categories: [], filters: ['phone', 'like', `%${digits.slice(-10)}%`], language_code: 'en', limit: 5 },
         ]);
         const items = result.tasks?.[0]?.result?.[0]?.items || [];
-        if (items.length === 0) throw new Error(`No business found for this phone number`);
+        if (items.length === 0) throw new Error(`No business found for this phone number. Try searching by business name instead.`);
         const results = items.map((item: any) => listingToBusinessData(item));
         if (results.length === 1) { applyLookupResult(results[0]); return; }
         setLookupResults(results);
@@ -214,7 +228,7 @@ function OnboardingWizard() {
           { categories: [], filters: ['title', 'like', `%${trimmed}%`], language_code: 'en', limit: 5 },
         ]);
         const items = result.tasks?.[0]?.result?.[0]?.items || [];
-        if (items.length === 0) throw new Error(`No business found for "${trimmed}". Fill in the form manually.`);
+        if (items.length === 0) throw new Error(`No business found for "${trimmed}". Try a different search or enter manually.`);
         const results = items.map((item: any) => listingToBusinessData(item));
         if (results.length === 1) { applyLookupResult(results[0]); return; }
         setLookupResults(results);
