@@ -5,34 +5,61 @@ import type { DashboardProps, TabId } from './types';
 import ScoreOverview from './ScoreOverview';
 import dynamic from 'next/dynamic';
 
-// Lazy load heavy tab components
+// Lazy load tab components
+const OverviewTab = dynamic(() => import('./OverviewTab'));
 const IssuesTab = dynamic(() => import('./IssuesTab'));
+const MetaTab = dynamic(() => import('./MetaTab'));
+const ContentTab = dynamic(() => import('./ContentTab'));
+const LinksTab = dynamic(() => import('./LinksTab'));
+const ResourcesTab = dynamic(() => import('./ResourcesTab'));
+const TechnicalTab = dynamic(() => import('./TechnicalTab'));
 const PagesTab = dynamic(() => import('./PagesTab'));
-const QuickWins = dynamic(() => import('./QuickWins'));
+const PageSpeedTab = dynamic(() => import('./PageSpeedTab'));
+const SocialTab = dynamic(() => import('./SocialTab'));
+const LocalRankingsTab = dynamic(() => import('./LocalRankingsTab'));
+const PageHealthTab = dynamic(() => import('./PageHealthTab'));
+const StructureTab = dynamic(() => import('./StructureTab'));
 
 export default function Dashboard({ results, activeTab, onTabChange }: DashboardProps) {
   const [quickWinCompletions, setQuickWinCompletions] = useState<Record<string, boolean>>({});
 
   const tabs: Array<{ id: TabId; name: string; badge?: number }> = [
     { id: 'overview', name: 'Overview' },
-    {
-      id: 'issues',
-      name: 'Issues',
-      badge: results.issuesCritical + results.issuesWarning,
-    },
-    { id: 'pages', name: 'Pages', badge: results.pageCount },
+    { id: 'issues', name: 'Issues', badge: results.issuesCritical + results.issuesWarning },
+    { id: 'meta', name: 'Meta Tags', badge: results.categoryScores.meta?.issues },
+    { id: 'content', name: 'Content', badge: results.categoryScores.content?.issues },
+    { id: 'links', name: 'Links', badge: results.categoryScores.links?.issues },
+    { id: 'resources', name: 'Resources', badge: results.categoryScores.resources?.issues },
+    { id: 'technical', name: 'Technical', badge: results.categoryScores.technical?.issues },
+    { id: 'pages', name: 'All Pages' },
+    { id: 'pagespeed', name: 'Page Speed' },
+    { id: 'social', name: 'Social/OG' },
+    { id: 'localrankings', name: 'Local Rankings' },
+    { id: 'pagehealth', name: 'Page Health' },
+    { id: 'structure', name: 'Structure' },
   ];
 
-  function handleToggleQuickWin(id: string) {
-    setQuickWinCompletions(prev => ({
-      ...prev,
-      [id]: !prev[id],
-    }));
+  function handleCategoryClick(category: string) {
+    // Map score categories to tabs
+    const tabMap: Record<string, TabId> = {
+      meta: 'meta',
+      content: 'content',
+      links: 'links',
+      resources: 'resources',
+      performance: 'pagespeed',
+      accessibility: 'pagespeed',
+      technical: 'technical',
+      seo: 'overview',
+      social: 'social',
+      security: 'technical',
+    };
+    const tab = tabMap[category];
+    if (tab) onTabChange(tab);
   }
 
   return (
     <div className="space-y-6">
-      {/* Header with Domain and Export */}
+      {/* Header */}
       <div className="card p-6">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
@@ -40,75 +67,48 @@ export default function Dashboard({ results, activeTab, onTabChange }: Dashboard
               <span className="text-gradient-flame">{results.domain}</span>
             </h2>
             <p className="text-sm text-ash-500">
-              Scanned {new Date(results.completedAt).toLocaleDateString()} at{' '}
-              {new Date(results.completedAt).toLocaleTimeString()}
+              {results.pageCount} pages crawled · Scanned {new Date(results.completedAt).toLocaleDateString()}
             </p>
           </div>
-
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => window.print()}
-              className="btn-ghost"
-            >
-              <span className="flex items-center gap-2">
-                <span>📄</span>
-                Export PDF
-              </span>
-            </button>
-
-            <button
-              onClick={() => {
-                const data = JSON.stringify(results, null, 2);
-                const blob = new Blob([data], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `site-audit-${results.domain}-${new Date().toISOString().split('T')[0]}.json`;
-                a.click();
-              }}
-              className="btn-ghost"
-            >
-              <span className="flex items-center gap-2">
-                <span>💾</span>
-                Download JSON
-              </span>
+            <button onClick={() => window.print()} className="btn-ghost text-sm">
+              📄 Export PDF
             </button>
           </div>
         </div>
       </div>
 
-      {/* Quick Wins Section (always visible) */}
-      {results.quickWins.length > 0 && (
-        <QuickWins
-          quickWins={results.quickWins.map(qw => ({
-            ...qw,
-            completed: quickWinCompletions[qw.id] || false,
-          }))}
-          onToggleComplete={handleToggleQuickWin}
-        />
-      )}
+      {/* Score Overview */}
+      <ScoreOverview
+        overallScore={results.overallScore}
+        categoryScores={results.categoryScores}
+        lighthouseScores={results.lighthouseScores}
+        onCategoryClick={handleCategoryClick}
+      />
 
       {/* Tab Navigation */}
-      <div className="border-b border-char-700">
-        <div className="flex gap-1 overflow-x-auto">
+      <div className="border-b border-char-700 -mx-1">
+        <div className="flex gap-0.5 overflow-x-auto px-1 pb-px">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
-              className={`px-6 py-3 font-display text-sm transition-all whitespace-nowrap ${
-                activeTab === tab.id
-                  ? 'border-b-2 border-flame-500 text-flame-500'
-                  : 'text-ash-400 hover:text-ash-200'
-              }`}
+              className={
+                'px-4 py-2.5 font-display text-xs whitespace-nowrap transition-all border-b-2 ' +
+                (activeTab === tab.id
+                  ? 'border-flame-500 text-flame-500'
+                  : 'border-transparent text-ash-400 hover:text-ash-200')
+              }
             >
               {tab.name}
-              {tab.badge !== undefined && tab.badge > 0 && (
+              {tab.badge != null && tab.badge > 0 && (
                 <span
-                  className={`ml-2 px-2 py-0.5 text-xs rounded-full ${
-                    activeTab === tab.id
+                  className={
+                    'ml-1.5 px-1.5 py-0.5 text-[10px] rounded-full ' +
+                    (activeTab === tab.id
                       ? 'bg-flame-500 text-white'
-                      : 'bg-char-700 text-ash-400'
-                  }`}
+                      : 'bg-char-700 text-ash-400')
+                  }
                 >
                   {tab.badge}
                 </span>
@@ -120,24 +120,24 @@ export default function Dashboard({ results, activeTab, onTabChange }: Dashboard
 
       {/* Tab Content */}
       <div className="min-h-[400px]">
-        {activeTab === 'overview' && (
-          <ScoreOverview
-            overallScore={results.overallScore}
-            categoryScores={results.categoryScores}
-            lighthouseScores={results.lighthouseScores}
-          />
-        )}
-
-        {activeTab === 'issues' && <IssuesTab issues={results.issues} />}
-
-        {activeTab === 'pages' && <PagesTab pages={results.pages} />}
+        {activeTab === 'overview' && <OverviewTab results={results} />}
+        {activeTab === 'issues' && <IssuesTab issues={results.issues} quickWins={results.quickWins} />}
+        {activeTab === 'meta' && <MetaTab results={results} />}
+        {activeTab === 'content' && <ContentTab results={results} />}
+        {activeTab === 'links' && <LinksTab results={results} />}
+        {activeTab === 'resources' && <ResourcesTab results={results} />}
+        {activeTab === 'technical' && <TechnicalTab results={results} />}
+        {activeTab === 'pages' && <PagesTab pages={results.crawlData.pages?.items || []} domain={results.domain} />}
+        {activeTab === 'pagespeed' && <PageSpeedTab results={results} />}
+        {activeTab === 'social' && <SocialTab results={results} />}
+        {activeTab === 'localrankings' && <LocalRankingsTab results={results} />}
+        {activeTab === 'pagehealth' && <PageHealthTab results={results} />}
+        {activeTab === 'structure' && <StructureTab results={results} />}
       </div>
 
       {/* Footer */}
       <div className="card p-4 text-center text-sm text-ash-500">
-        <p>
-          API Cost: ${results.apiCost.toFixed(4)} • Scan ID: {results.auditId.slice(0, 8)}...
-        </p>
+        API Cost: ${results.apiCost.toFixed(4)} · Scan ID: {results.auditId.slice(0, 8)}
       </div>
     </div>
   );

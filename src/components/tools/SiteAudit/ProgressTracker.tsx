@@ -1,122 +1,113 @@
 'use client';
 
+import { useRef, useEffect } from 'react';
 import type { ProgressTrackerProps } from './types';
-
-const TASK_ICONS: Record<string, string> = {
-  'Meta Data': '🏷️',
-  'Content': '📝',
-  'Links': '🔗',
-  'Images': '🖼️',
-  'Performance': '⚡',
-  'Schema': '📋',
-  'Security': '🔒',
-  'Mobile': '📱',
-};
+import { formatTime, crawlProgressPercent } from '@/lib/siteAudit/utils';
 
 export default function ProgressTracker({ progress, domain }: ProgressTrackerProps) {
-  const percentage = Math.round((progress.completed / progress.total) * 100);
+  const logEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [progress.log.length]);
+
+  const pct = progress.phase === 'complete'
+    ? 100
+    : progress.phase === 'crawling'
+      ? crawlProgressPercent(progress.pagesCrawled, progress.pagesInQueue, false) * 0.4
+      : progress.phase === 'fetching'
+        ? 40 + (progress.completed / Math.max(1, progress.total)) * 30
+        : progress.phase === 'analyzing' || progress.phase === 'keywords'
+          ? 70 + (progress.completed / Math.max(1, progress.total)) * 30
+          : (progress.completed / Math.max(1, progress.total)) * 10;
+
+  const phaseLabel: Record<string, string> = {
+    submitting: 'Starting crawl...',
+    crawling: 'Crawling ' + domain,
+    fetching: 'Fetching detailed reports...',
+    analyzing: 'Analyzing results...',
+    keywords: 'Keyword intelligence...',
+    complete: 'Complete!',
+  };
 
   return (
-    <div className="max-w-3xl mx-auto">
-      <div className="card p-8">
-        <div className="text-center mb-8">
-          <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-flame-gradient flex items-center justify-center animate-pulse">
-            <span className="text-4xl">🔍</span>
-          </div>
-          <h2 className="text-2xl font-display mb-2">
-            Analyzing <span className="text-gradient-flame">{domain}</span>
+    <div className="max-w-3xl mx-auto space-y-6">
+      {/* Progress Card */}
+      <div className="card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-display text-lg">
+            {phaseLabel[progress.phase] || 'Processing...'}
           </h2>
-          <p className="text-ash-400">
-            Please wait while we perform a comprehensive audit...
-          </p>
+          <span className="text-ash-400 text-sm font-mono">
+            {formatTime(progress.elapsedSeconds)}
+          </span>
         </div>
 
         {/* Progress Bar */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-2">
-            <span className="input-label">Progress</span>
-            <span className="font-display text-flame-500">{percentage}%</span>
-          </div>
-          <div className="h-3 bg-char-900 rounded-pill overflow-hidden">
-            <div
-              className="h-full bg-flame-gradient transition-all duration-500 ease-out"
-              style={{ width: `${percentage}%` }}
-            />
-          </div>
-          <div className="flex items-center justify-between mt-2 text-sm text-ash-500">
-            <span>{progress.completed} of {progress.total} checks complete</span>
-            <span>~{Math.max(1, Math.ceil((progress.total - progress.completed) * 0.5))} min remaining</span>
-          </div>
+        <div className="w-full h-3 bg-char-700 rounded-full overflow-hidden mb-3">
+          <div
+            className="h-full bg-flame-gradient rounded-full transition-all duration-500"
+            style={{ width: Math.round(pct) + '%' }}
+          />
         </div>
 
-        {/* Task List */}
-        <div className="space-y-3">
-          {Object.keys(TASK_ICONS).map((taskName, index) => {
-            const isCompleted = progress.tasks.includes(taskName);
-            const isCurrent = index === progress.completed && !isCompleted;
-
-            return (
-              <div
-                key={taskName}
-                className={`flex items-center gap-3 p-3 rounded-btn transition-all ${
-                  isCompleted
-                    ? 'bg-success/10 border border-success/30'
-                    : isCurrent
-                    ? 'bg-flame-500/10 border border-flame-500/30'
-                    : 'bg-char-800 border border-char-700'
-                }`}
-              >
-                <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                    isCompleted
-                      ? 'bg-success'
-                      : isCurrent
-                      ? 'bg-flame-gradient animate-pulse'
-                      : 'bg-char-700'
-                  }`}
-                >
-                  {isCompleted ? (
-                    <span className="text-white text-xl">✓</span>
-                  ) : isCurrent ? (
-                    <span className="spinner-sm border-white border-t-white"></span>
-                  ) : (
-                    <span className="text-xl">{TASK_ICONS[taskName]}</span>
-                  )}
-                </div>
-
-                <div className="flex-1">
-                  <div className={`font-display ${isCompleted ? 'text-success' : isCurrent ? 'text-flame-500' : 'text-ash-400'}`}>
-                    {taskName}
-                  </div>
-                  <div className="text-xs text-ash-500">
-                    {isCompleted ? 'Complete' : isCurrent ? 'In progress...' : 'Waiting...'}
-                  </div>
-                </div>
-
-                {isCompleted && (
-                  <div className="text-success text-2xl">✓</div>
-                )}
-              </div>
-            );
-          })}
+        <div className="flex items-center justify-between text-sm text-ash-400">
+          <span>
+            {progress.phase === 'crawling'
+              ? progress.pagesCrawled + ' / ~' + (progress.pagesCrawled + progress.pagesInQueue) + ' pages'
+              : progress.completed + ' / ' + progress.total + ' tasks'}
+          </span>
+          <span>{Math.round(pct)}%</span>
         </div>
 
-        <div className="mt-6 p-4 bg-char-900 rounded-btn border border-char-700">
-          <div className="flex items-start gap-3">
-            <span className="text-xl">💡</span>
-            <div>
-              <p className="text-sm text-ash-300">
-                <strong className="text-ash-100">Did you know?</strong> We're analyzing 8 critical SEO categories including meta tags, content quality, link structure, image optimization, performance metrics, schema markup, security, and mobile responsiveness.
-              </p>
+        {/* Stats Row */}
+        {progress.phase === 'crawling' && (
+          <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-char-700">
+            <div className="text-center">
+              <div className="text-xl font-display">{progress.pagesCrawled}</div>
+              <div className="text-xs text-ash-500">Crawled</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xl font-display">{progress.pagesInQueue}</div>
+              <div className="text-xs text-ash-500">In Queue</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xl font-display">{formatTime(progress.elapsedSeconds)}</div>
+              <div className="text-xs text-ash-500">Elapsed</div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
-      <div className="mt-6 text-center text-sm text-ash-500">
-        <p>
-          You can safely navigate away. We'll save your progress and you can return to view results.
-        </p>
+      {/* Log */}
+      <div className="card">
+        <div className="p-4 border-b border-char-700">
+          <h3 className="font-display text-sm text-ash-400">Activity Log</h3>
+        </div>
+        <div className="p-4 max-h-64 overflow-y-auto font-mono text-xs space-y-1">
+          {progress.log.length === 0 && (
+            <p className="text-ash-500">Waiting for crawl to start...</p>
+          )}
+          {progress.log.map((entry, i) => (
+            <div
+              key={i}
+              className={
+                'flex items-start gap-2 ' +
+                (entry.level === 'success'
+                  ? 'text-success'
+                  : entry.level === 'warning'
+                    ? 'text-warning'
+                    : entry.level === 'error'
+                      ? 'text-danger'
+                      : 'text-ash-400')
+              }
+            >
+              <span className="shrink-0 w-1.5 h-1.5 mt-1.5 rounded-full bg-current" />
+              <span>{entry.message}</span>
+            </div>
+          ))}
+          <div ref={logEndRef} />
+        </div>
       </div>
     </div>
   );

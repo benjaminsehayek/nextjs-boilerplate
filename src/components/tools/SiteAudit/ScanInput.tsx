@@ -3,8 +3,16 @@
 import { useState } from 'react';
 import type { ScanInputProps } from './types';
 
+const MAX_PAGES_OPTIONS = [
+  { value: 50, label: '50 pages', desc: 'Quick scan' },
+  { value: 100, label: '100 pages', desc: 'Standard' },
+  { value: 250, label: '250 pages', desc: 'Recommended' },
+  { value: 500, label: '500 pages', desc: 'Deep scan' },
+];
+
 export default function ScanInput({ onStartScan, isLoading, scansRemaining, defaultDomain = '' }: ScanInputProps) {
   const [domain, setDomain] = useState(defaultDomain);
+  const [maxPages, setMaxPages] = useState(250);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   function validateDomain(input: string): boolean {
@@ -13,13 +21,11 @@ export default function ScanInput({ onStartScan, isLoading, scansRemaining, defa
       return false;
     }
 
-    // Remove protocol if present
     let cleaned = input.trim().toLowerCase();
     cleaned = cleaned.replace(/^https?:\/\//, '');
     cleaned = cleaned.replace(/^www\./, '');
     cleaned = cleaned.replace(/\/$/, '');
 
-    // Basic domain validation
     const domainRegex = /^[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,}$/;
     if (!domainRegex.test(cleaned)) {
       setValidationError('Please enter a valid domain (e.g., example.com)');
@@ -32,9 +38,8 @@ export default function ScanInput({ onStartScan, isLoading, scansRemaining, defa
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-
     if (validateDomain(domain)) {
-      onStartScan(domain);
+      onStartScan(domain, maxPages);
     }
   }
 
@@ -49,7 +54,7 @@ export default function ScanInput({ onStartScan, isLoading, scansRemaining, defa
             Start Your <span className="text-gradient-flame">Site Audit</span>
           </h2>
           <p className="text-ash-400">
-            Get a comprehensive 52-point technical SEO analysis in minutes
+            Full-site crawl with 40+ issue checks, Lighthouse scores, and keyword intelligence
           </p>
         </div>
 
@@ -78,6 +83,29 @@ export default function ScanInput({ onStartScan, isLoading, scansRemaining, defa
             </p>
           </div>
 
+          {/* Max Pages Selector */}
+          <div>
+            <label className="input-label mb-2 block">Crawl Depth</label>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {MAX_PAGES_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setMaxPages(opt.value)}
+                  className={
+                    'p-3 rounded-btn border text-center transition-colors ' +
+                    (maxPages === opt.value
+                      ? 'border-flame-500 bg-flame-500/10 text-white'
+                      : 'border-char-700 bg-char-900 text-ash-400 hover:border-ash-500')
+                  }
+                >
+                  <div className="font-display text-sm">{opt.label}</div>
+                  <div className="text-xs mt-0.5 opacity-70">{opt.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="bg-char-900 rounded-btn p-4 border border-char-700">
             <div className="flex items-center justify-between">
               <div>
@@ -90,7 +118,7 @@ export default function ScanInput({ onStartScan, isLoading, scansRemaining, defa
                 </div>
               </div>
               {scansRemaining === 0 && (
-                <a href="/settings" className="btn-primary">
+                <a href="/billing" className="btn-primary">
                   Upgrade Plan
                 </a>
               )}
@@ -119,12 +147,12 @@ export default function ScanInput({ onStartScan, isLoading, scansRemaining, defa
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {[
-              { icon: '📊', text: 'Overall SEO health score' },
-              { icon: '🔍', text: '8 category breakdowns' },
-              { icon: '⚠️', text: 'Critical issues identified' },
+              { icon: '📊', text: '10-category health score' },
+              { icon: '🔍', text: 'Full-site crawl (up to ' + maxPages + ' pages)' },
+              { icon: '⚠️', text: '40+ issue types detected' },
               { icon: '🎯', text: 'Quick win recommendations' },
-              { icon: '📄', text: 'Page-by-page analysis' },
-              { icon: '⚡', text: 'Performance metrics' },
+              { icon: '⚡', text: 'Lighthouse performance scores' },
+              { icon: '📍', text: 'Local keyword rankings' },
             ].map((item, i) => (
               <div key={i} className="flex items-center gap-2 text-sm text-ash-300">
                 <span>{item.icon}</span>
@@ -137,7 +165,7 @@ export default function ScanInput({ onStartScan, isLoading, scansRemaining, defa
 
       <div className="mt-6 text-center text-sm text-ash-500">
         <p>
-          Scan typically takes 2-3 minutes. You can navigate away and come back to view results.
+          Analysis typically takes 2-5 minutes depending on site size. You can navigate away and come back.
         </p>
       </div>
     </div>
