@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useUser } from '@/lib/hooks/useUser';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import { useAuth } from '@/lib/context/AuthContext';
@@ -11,6 +11,8 @@ import { QuickStats } from '@/components/dashboard/QuickStats';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createBusiness, createLocation, createServices, createMarkets } from '@/app/actions/onboarding';
+import { dfsCall } from '@/lib/dataforseo';
+import { detectInputType, parseGoogleMapsUrl } from '@/components/tools/LocalGrid/utils';
 
 const tools = [
   { href: '/site-audit', icon: '🔍', name: 'Site Audit', desc: '52-point technical SEO check' },
@@ -56,6 +58,10 @@ interface LocationForm {
   state: string;
   zip: string;
   phone: string;
+  latitude?: number;
+  longitude?: number;
+  place_id?: string;
+  cid?: string;
 }
 
 interface ServiceForm {
@@ -113,7 +119,17 @@ function OnboardingWizard() {
     state: '',
     zip: '',
     industry: '',
+    latitude: 0,
+    longitude: 0,
+    place_id: '',
+    cid: '',
   });
+
+  // Smart lookup state
+  const [lookupInput, setLookupInput] = useState('');
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupResults, setLookupResults] = useState<any[]>([]);
+  const [lookupDone, setLookupDone] = useState(false);
 
   const [locationData, setLocationData] = useState<LocationForm>({
     location_name: '',
@@ -131,6 +147,104 @@ function OnboardingWizard() {
   const [markets, setMarkets] = useState<MarketForm[]>([
     { name: 'Primary Market', cities: '', area_codes: '' },
   ]);
+
+  const handleSmartLookup = useCallback(async () => {
+    const trimmed = lookupInput.trim();
+    if (!trimmed) return;
+
+    setLookupLoading(true);
+    setError(null);
+    setLookupResults([]);
+
+    try {
+      const inputType = detectInputType(trimmed);
+
+      if (inputType === 'mapsUrl') {
+        // Parse URL client-side for identifiers + coords
+        const parsed = parseGoogleMapsUrl(trimmed);
+        const keyword = parsed.name || trimmed;
+        const locParam = parsed.lat && parsed.lng ? `${parsed.lat},${parsed.lng},1000` : undefined;
+
+        const result = await dfsCall<any>('serp/google/maps/live/advanced', [
+          { keyword, ...(locParam ? { location_coordinate: locParam } : {}), language_code: 'en', depth: 5 },
+        ]);
+
+        const items = (result.tasks?.[0]?.result?.[0]?.items || []).filter((i: any) => i.type === 'maps_search');
+        if (items.length > 0) {
+          const results = items.slice(0, 5).map((item: any) => mapItemToBusinessData(item, parsed));
+          // Auto-match by CID/placeId if available
+          if (parsed.cid || parsed.placeId) {
+            const match = results.find((r: any) =>
+              (parsed.cid && r.cid === parsed.cid) || (parsed.placeId && r.place_id === parsed.placeId)
+            );
+            if (match) { applyLookupResult(match); return; }
+          }
+          if (results.length === 1) { applyLookupResult(results[0]); return; }
+          setLookupResults(results);
+        } else if (parsed.lat && parsed.lng) {
+          // Fallback: use parsed coords directly
+          setBusinessData((prev) => ({ ...prev, latitude: parsed.lat!, longitude: parsed.lng!, place_id: parsed.placeId || '', cid: parsed.cid || '' }));
+          setLookupDone(true);
+        } else {
+          setError('Could not find business from this Maps URL');
+        }
+      } else if (inputType === 'website') {
+        const cleanDomain = trimmed.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+        const result = await dfsCall<any>('business_data/business_listings/search/live', [
+          { categories: [], filters: ['domain', '=', cleanDomain], language_code: 'en', limit: 5 },
+        ]);
+        const items = result.tasks?.[0]?.result?.[0]?.items || [];
+        if (items.length === 0) throw new Error(`No business found for "${cleanDomain}"`);
+        const results = items.map((item: any) => listingToBusinessData(item));
+        if (results.length === 1) { applyLookupResult(results[0]); return; }
+        setLookupResults(results);
+      } else if (inputType === 'phone') {
+        const digits = trimmed.replace(/\D/g, '');
+        const result = await dfsCall<any>('business_data/business_listings/search/live', [
+          { categories: [], filters: ['phone', 'like', `%${digits.slice(-10)}%`], language_code: 'en', limit: 5 },
+        ]);
+        const items = result.tasks?.[0]?.result?.[0]?.items || [];
+        if (items.length === 0) throw new Error(`No business found for this phone number`);
+        const results = items.map((item: any) => listingToBusinessData(item));
+        if (results.length === 1) { applyLookupResult(results[0]); return; }
+        setLookupResults(results);
+      } else {
+        // Name search
+        const result = await dfsCall<any>('business_data/business_listings/search/live', [
+          { categories: [], filters: ['title', 'like', `%${trimmed}%`], language_code: 'en', limit: 5 },
+        ]);
+        const items = result.tasks?.[0]?.result?.[0]?.items || [];
+        if (items.length === 0) throw new Error(`No business found for "${trimmed}". Fill in the form manually.`);
+        const results = items.map((item: any) => listingToBusinessData(item));
+        if (results.length === 1) { applyLookupResult(results[0]); return; }
+        setLookupResults(results);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lookup failed. Fill in the form manually.');
+    } finally {
+      setLookupLoading(false);
+    }
+  }, [lookupInput]);
+
+  const applyLookupResult = (result: any) => {
+    setBusinessData({
+      name: result.name || '',
+      domain: result.domain || '',
+      phone: result.phone || '',
+      address: result.address || '',
+      city: result.city || '',
+      state: result.state || '',
+      zip: result.zip || '',
+      industry: result.category || '',
+      latitude: result.latitude || 0,
+      longitude: result.longitude || 0,
+      place_id: result.place_id || '',
+      cid: result.cid || '',
+    });
+    setLookupResults([]);
+    setLookupDone(true);
+    setError(null);
+  };
 
   const handleBusinessSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -150,6 +264,10 @@ function OnboardingWizard() {
         state: businessData.state,
         zip: businessData.zip,
         phone: businessData.phone,
+        latitude: businessData.latitude || undefined,
+        longitude: businessData.longitude || undefined,
+        place_id: businessData.place_id || undefined,
+        cid: businessData.cid || undefined,
       });
       setCurrentStep('location');
     } catch (err) {
@@ -332,115 +450,197 @@ function OnboardingWizard() {
       {currentStep === 'business' && (
         <div className="card p-8">
           <h2 className="text-2xl font-display mb-2 text-center">Business Information</h2>
-          <p className="text-ash-400 text-center mb-6">Tell us about your business</p>
+          <p className="text-ash-400 text-center mb-6">Search for your business to auto-fill details</p>
 
-          <form onSubmit={handleBusinessSubmit} className="space-y-4">
-            <div>
-              <label className="input-label">Business Name *</label>
-              <input
-                type="text"
-                value={businessData.name}
-                onChange={(e) => setBusinessData({ ...businessData, name: e.target.value })}
-                className="input"
-                placeholder="Smith Plumbing &amp; Heating"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="input-label">Website Domain *</label>
-              <input
-                type="text"
-                value={businessData.domain}
-                onChange={(e) => setBusinessData({ ...businessData, domain: e.target.value })}
-                onBlur={(e) => {
-                  const clean = normalizeDomain(e.target.value);
-                  if (clean !== businessData.domain) {
-                    setBusinessData({ ...businessData, domain: clean });
-                  }
-                }}
-                className="input"
-                placeholder="smithplumbing.com"
-                required
-              />
-              <p className="text-xs text-ash-400 mt-1">Paste any URL — we will extract the domain automatically</p>
-            </div>
-
-            <div>
-              <label className="input-label">Industry</label>
-              <input
-                type="text"
-                value={businessData.industry}
-                onChange={(e) => setBusinessData({ ...businessData, industry: e.target.value })}
-                className="input"
-                placeholder="Plumbing, HVAC, Roofing, etc."
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="input-label">Phone</label>
-                <input
-                  type="tel"
-                  value={businessData.phone}
-                  onChange={(e) => setBusinessData({ ...businessData, phone: e.target.value })}
-                  className="input"
-                  placeholder="(555) 123-4567"
-                />
-              </div>
-              <div>
-                <label className="input-label">Street Address</label>
+          {/* Smart Lookup */}
+          {!lookupDone && (
+            <div className="mb-6">
+              <label className="input-label">Find your business</label>
+              <div className="flex gap-2">
                 <input
                   type="text"
-                  value={businessData.address}
-                  onChange={(e) => setBusinessData({ ...businessData, address: e.target.value })}
-                  className="input"
-                  placeholder="123 Main St"
+                  className="input flex-1"
+                  placeholder="Business name, website, phone, or Google Maps URL"
+                  value={lookupInput}
+                  onChange={(e) => setLookupInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleSmartLookup())}
                 />
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleSmartLookup}
+                  disabled={lookupLoading || !lookupInput.trim()}
+                >
+                  {lookupLoading ? 'Searching...' : 'Lookup'}
+                </button>
               </div>
-            </div>
+              {lookupInput.trim().length > 2 && (
+                <p className="text-xs text-ash-400 mt-1">
+                  {detectInputType(lookupInput) === 'mapsUrl' ? 'Google Maps URL detected' :
+                   detectInputType(lookupInput) === 'website' ? 'Website URL detected' :
+                   detectInputType(lookupInput) === 'phone' ? 'Phone number detected' : 'Business name'}
+                </p>
+              )}
 
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <label className="input-label">City</label>
-                <input
-                  type="text"
-                  value={businessData.city}
-                  onChange={(e) => setBusinessData({ ...businessData, city: e.target.value })}
-                  className="input"
-                  placeholder="Portland"
-                />
-              </div>
-              <div>
-                <label className="input-label">State</label>
-                <input
-                  type="text"
-                  value={businessData.state}
-                  onChange={(e) => setBusinessData({ ...businessData, state: e.target.value })}
-                  className="input"
-                  placeholder="OR"
-                  maxLength={2}
-                />
-              </div>
-              <div>
-                <label className="input-label">ZIP</label>
-                <input
-                  type="text"
-                  value={businessData.zip}
-                  onChange={(e) => setBusinessData({ ...businessData, zip: e.target.value })}
-                  className="input"
-                  placeholder="97201"
-                  maxLength={10}
-                />
-              </div>
-            </div>
+              {/* Multi-result picker */}
+              {lookupResults.length > 1 && (
+                <div className="mt-3 space-y-2">
+                  <p className="text-sm text-ash-300">Multiple results found. Select your business:</p>
+                  {lookupResults.map((result: any, idx: number) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => applyLookupResult(result)}
+                      className="w-full text-left p-3 rounded-lg border border-ash-700 hover:border-flame-500 hover:bg-flame-500/5 transition-colors"
+                    >
+                      <div className="font-medium">{result.name}</div>
+                      <div className="text-sm text-ash-400">
+                        {result.address}{result.city ? `, ${result.city}` : ''}{result.state ? `, ${result.state}` : ''}
+                      </div>
+                      {result.phone && <div className="text-xs text-ash-400">{result.phone}</div>}
+                    </button>
+                  ))}
+                </div>
+              )}
 
-            <div className="flex justify-end gap-3 pt-4">
-              <button type="submit" className="btn-primary" disabled={loading}>
-                {loading ? 'Saving...' : 'Continue'}
+              <button
+                type="button"
+                className="text-sm text-ash-400 hover:text-ash-200 mt-3"
+                onClick={() => setLookupDone(true)}
+              >
+                Or enter manually
               </button>
             </div>
-          </form>
+          )}
+
+          {/* Business Form (shown after lookup or manual entry) */}
+          {lookupDone && (
+            <form onSubmit={handleBusinessSubmit} className="space-y-4">
+              {businessData.name && (
+                <button
+                  type="button"
+                  className="text-sm text-ash-400 hover:text-ash-200 mb-2"
+                  onClick={() => { setLookupDone(false); setLookupResults([]); }}
+                >
+                  Search for a different business
+                </button>
+              )}
+
+              <div>
+                <label className="input-label">Business Name *</label>
+                <input
+                  type="text"
+                  value={businessData.name}
+                  onChange={(e) => setBusinessData({ ...businessData, name: e.target.value })}
+                  className="input"
+                  placeholder="Smith Plumbing &amp; Heating"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="input-label">Website Domain *</label>
+                <input
+                  type="text"
+                  value={businessData.domain}
+                  onChange={(e) => setBusinessData({ ...businessData, domain: e.target.value })}
+                  onBlur={(e) => {
+                    const clean = normalizeDomain(e.target.value);
+                    if (clean !== businessData.domain) {
+                      setBusinessData({ ...businessData, domain: clean });
+                    }
+                  }}
+                  className="input"
+                  placeholder="smithplumbing.com"
+                  required
+                />
+                <p className="text-xs text-ash-400 mt-1">Paste any URL — we will extract the domain automatically</p>
+              </div>
+
+              <div>
+                <label className="input-label">Industry</label>
+                <input
+                  type="text"
+                  value={businessData.industry}
+                  onChange={(e) => setBusinessData({ ...businessData, industry: e.target.value })}
+                  className="input"
+                  placeholder="Plumbing, HVAC, Roofing, etc."
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="input-label">Phone</label>
+                  <input
+                    type="tel"
+                    value={businessData.phone}
+                    onChange={(e) => setBusinessData({ ...businessData, phone: e.target.value })}
+                    className="input"
+                    placeholder="(555) 123-4567"
+                  />
+                </div>
+                <div>
+                  <label className="input-label">Street Address</label>
+                  <input
+                    type="text"
+                    value={businessData.address}
+                    onChange={(e) => setBusinessData({ ...businessData, address: e.target.value })}
+                    className="input"
+                    placeholder="123 Main St"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="input-label">City</label>
+                  <input
+                    type="text"
+                    value={businessData.city}
+                    onChange={(e) => setBusinessData({ ...businessData, city: e.target.value })}
+                    className="input"
+                    placeholder="Portland"
+                  />
+                </div>
+                <div>
+                  <label className="input-label">State</label>
+                  <input
+                    type="text"
+                    value={businessData.state}
+                    onChange={(e) => setBusinessData({ ...businessData, state: e.target.value })}
+                    className="input"
+                    placeholder="OR"
+                    maxLength={2}
+                  />
+                </div>
+                <div>
+                  <label className="input-label">ZIP</label>
+                  <input
+                    type="text"
+                    value={businessData.zip}
+                    onChange={(e) => setBusinessData({ ...businessData, zip: e.target.value })}
+                    className="input"
+                    placeholder="97201"
+                    maxLength={10}
+                  />
+                </div>
+              </div>
+
+              {businessData.latitude !== 0 && businessData.longitude !== 0 && (
+                <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-sm text-green-400">
+                  Coordinates found: {businessData.latitude.toFixed(6)}, {businessData.longitude.toFixed(6)}
+                  {businessData.place_id && <span className="ml-2">| Place ID linked</span>}
+                  {businessData.cid && <span className="ml-2">| CID linked</span>}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-4">
+                <button type="submit" className="btn-primary" disabled={loading}>
+                  {loading ? 'Saving...' : 'Continue'}
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       )}
 
@@ -708,6 +908,43 @@ function OnboardingWizard() {
       </p>
     </div>
   );
+}
+
+// ─── Lookup Helpers ──────────────────────────────────────────────────────────
+
+function mapItemToBusinessData(item: any, parsed?: { placeId?: string; cid?: string }) {
+  const addressParts = (item.address || '').split(',').map((s: string) => s.trim());
+  return {
+    name: item.title || '',
+    domain: item.domain || '',
+    phone: item.phone || '',
+    address: addressParts[0] || item.address || '',
+    city: addressParts[1] || '',
+    state: addressParts[2]?.split(' ')[0] || '',
+    zip: addressParts[2]?.split(' ')[1] || '',
+    category: item.category || '',
+    latitude: item.gps_coordinates?.latitude || item.latitude || 0,
+    longitude: item.gps_coordinates?.longitude || item.longitude || 0,
+    place_id: item.place_id || parsed?.placeId || '',
+    cid: item.cid || parsed?.cid || '',
+  };
+}
+
+function listingToBusinessData(item: any) {
+  return {
+    name: item.title || '',
+    domain: item.domain || '',
+    phone: item.phone || '',
+    address: item.address || '',
+    city: item.address_info?.city || '',
+    state: item.address_info?.region || '',
+    zip: item.address_info?.zip || '',
+    category: item.category || '',
+    latitude: item.latitude || 0,
+    longitude: item.longitude || 0,
+    place_id: item.place_id || '',
+    cid: item.cid || '',
+  };
 }
 
 // ─── Dashboard Page ───────────────────────────────────────────────────────────

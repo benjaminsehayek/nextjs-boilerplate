@@ -65,6 +65,10 @@ export async function createLocation(data: {
   state: string;
   zip?: string;
   phone?: string;
+  latitude?: number;
+  longitude?: number;
+  place_id?: string;
+  cid?: string;
 }): Promise<{ error: string | null }> {
   const supabase = await createClient();
 
@@ -81,8 +85,39 @@ export async function createLocation(data: {
       state: data.state,
       zip: data.zip || null,
       phone: data.phone || null,
+      latitude: data.latitude || null,
+      longitude: data.longitude || null,
+      place_id: data.place_id || null,
+      cid: data.cid || null,
       is_primary: true,
     });
+
+  return { error: error?.message ?? null };
+}
+
+// ─── Update Location Coordinates ─────────────────────────────────────────────
+
+export async function updateLocationCoords(data: {
+  location_id: string;
+  latitude: number;
+  longitude: number;
+  place_id?: string;
+  cid?: string;
+}): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+
+  const { data: { session }, error: authError } = await supabase.auth.getSession();
+  if (!session?.user || authError) return { error: 'Not authenticated' };
+
+  const { error } = await (supabase as any)
+    .from('business_locations')
+    .update({
+      latitude: data.latitude,
+      longitude: data.longitude,
+      place_id: data.place_id || null,
+      cid: data.cid || null,
+    })
+    .eq('id', data.location_id);
 
   return { error: error?.message ?? null };
 }

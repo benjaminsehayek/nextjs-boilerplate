@@ -1,23 +1,41 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
 import { LocationSelector } from '@/components/ui/LocationSelector';
-import { BusinessLookup } from '@/components/tools/LocalGrid/BusinessLookup';
 import { GridConfigurator } from '@/components/tools/LocalGrid/GridConfigurator';
 import { ScanProgress } from '@/components/tools/LocalGrid/ScanProgress';
 import { ResultsDashboard } from '@/components/tools/LocalGrid/ResultsDashboard';
-import { generateGridPoints, findBusinessRank, extractMapItems, calculateCost, getCachedResult, setCachedResult, clearScanCache } from '@/components/tools/LocalGrid/utils';
+import { generateGridPoints, findBusinessRank, extractMapItems, calculateCost, getCachedResult, setCachedResult, clearScanCache, detectInputType, parseGoogleMapsUrl } from '@/components/tools/LocalGrid/utils';
 import { dfsCall } from '@/lib/dataforseo';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/lib/hooks/useUser';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import { useLocations } from '@/lib/hooks/useLocations';
 import { useSubscription } from '@/lib/hooks/useSubscription';
+import { updateLocationCoords } from '@/app/actions/onboarding';
 import type { BusinessInfo, GridConfig, GridPoint, GridScanResult, HeatmapData, MapsSerpItem, RankData } from '@/components/tools/LocalGrid/types';
+import type { BusinessLocation, Business } from '@/types';
 
-type ScanState = 'setup' | 'configure' | 'scanning' | 'complete' | 'error';
+type ScanState = 'configure' | 'scanning' | 'complete' | 'error';
+
+function locationToBusinessInfo(loc: BusinessLocation, biz: Business): BusinessInfo {
+  return {
+    name: biz.name,
+    address: loc.address || '',
+    city: loc.city,
+    state: loc.state,
+    zipCode: loc.zip || '',
+    latitude: loc.latitude || 0,
+    longitude: loc.longitude || 0,
+    phone: loc.phone || biz.phone || undefined,
+    website: biz.domain ? `https://${biz.domain}` : undefined,
+    placeId: loc.place_id || undefined,
+    cid: loc.cid || undefined,
+    domain: biz.domain || undefined,
+  };
+}
 
 export default function LocalGridPage() {
   const { user } = useUser();
@@ -26,18 +44,23 @@ export default function LocalGridPage() {
   const { scansRemaining, profile } = useSubscription();
   const supabase = createClient();
 
-  const [scanState, setScanState] = useState<ScanState>('setup');
-  const [businessInfo, setBusinessInfo] = useState<BusinessInfo | null>(null);
+  const [scanState, setScanState] = useState<ScanState>('configure');
   const [currentScan, setCurrentScan] = useState<GridScanResult | null>(null);
   const [heatmapData, setHeatmapData] = useState<Record<string, HeatmapData>>({});
   const [error, setError] = useState<string | null>(null);
+
+  // Derive businessInfo from selected location
+  const businessInfo: BusinessInfo | null =
+    selectedLocation && business ? locationToBusinessInfo(selectedLocation, business) : null;
+
+  const locationNeedsCoords = selectedLocation && (!selectedLocation.latitude || !selectedLocation.longitude);
 
   // Load most recent scan on mount
   useEffect(() => {
     if (!business) return;
 
     async function loadRecentScan() {
-      if (!business) return; // Guard against race condition
+      if (!business) return;
 
       const { data } = await (supabase as any)
         .from('grid_scans')
@@ -51,7 +74,6 @@ export default function LocalGridPage() {
         setCurrentScan(data as GridScanResult);
         setHeatmapData(processHeatmapData(data));
         setScanState('complete');
-        setBusinessInfo(data.business_info);
       }
     }
 
@@ -92,15 +114,9 @@ export default function LocalGridPage() {
     };
   }, [currentScan, scanState, supabase]);
 
-  const handleBusinessFound = (business: BusinessInfo) => {
-    setBusinessInfo(business);
-    setScanState('configure');
-  };
-
   const handleStartScan = async (config: GridConfig) => {
     if (!businessInfo || !business) return;
 
-    // Check scan credits
     if (scansRemaining <= 0) {
       setError('No scan credits remaining. Please upgrade your plan.');
       setScanState('error');
@@ -110,14 +126,12 @@ export default function LocalGridPage() {
     setError(null);
 
     try {
-      // Generate grid points
       const gridPoints = generateGridPoints(
         { lat: businessInfo.latitude, lng: businessInfo.longitude },
         config.size,
         config.radius
       );
 
-      // Create scan record in database
       const { data: scan, error: dbError } = await (supabase as any)
         .from('grid_scans')
         .insert({
@@ -142,7 +156,6 @@ export default function LocalGridPage() {
       setCurrentScan(scan as GridScanResult);
       setScanState('scanning');
 
-      // Start background scan
       await runGridScan(scan.id, businessInfo, config, gridPoints, profile?.id);
     } catch (err) {
       console.error('Error starting scan:', err);
@@ -151,7 +164,7 @@ export default function LocalGridPage() {
     }
   };
 
-  const BATCH_SIZE = 5; // Concurrent API calls per batch
+  const BATCH_SIZE = 5;
 
   const runGridScan = async (
     scanId: string,
@@ -161,7 +174,6 @@ export default function LocalGridPage() {
     userId?: string
   ) => {
     try {
-      // Update status to scanning
       await (supabase as any)
         .from('grid_scans')
         .update({ status: 'scanning' })
@@ -170,11 +182,9 @@ export default function LocalGridPage() {
       const allRankData: RankData[] = [];
       let cacheHits = 0;
 
-      // Process each keyword
       for (let kIdx = 0; kIdx < config.keywords.length; kIdx++) {
         const keyword = config.keywords[kIdx];
 
-        // Update keyword-level progress
         await (supabase as any)
           .from('grid_scans')
           .update({
@@ -187,7 +197,6 @@ export default function LocalGridPage() {
           })
           .eq('id', scanId);
 
-        // Process grid points in concurrent batches
         for (let batchStart = 0; batchStart < gridPoints.length; batchStart += BATCH_SIZE) {
           const batch = gridPoints.slice(batchStart, batchStart + BATCH_SIZE);
 
@@ -195,14 +204,12 @@ export default function LocalGridPage() {
             batch.map(async (point, batchIdx) => {
               const pIdx = batchStart + batchIdx;
 
-              // Check localStorage cache first
               const cached = getCachedResult(keyword.text, point.lat, point.lng);
               if (cached) {
                 cacheHits++;
                 return { pIdx, point, data: cached, fromCache: true };
               }
 
-              // Call DataForSEO Maps SERP API via dfsCall helper
               const result = await dfsCall<any>('serp/google/maps/live/advanced', [
                 {
                   keyword: keyword.text,
@@ -216,7 +223,6 @@ export default function LocalGridPage() {
 
               const resultData = result.tasks?.[0]?.result?.[0] || null;
 
-              // Cache the result
               if (resultData) {
                 setCachedResult(keyword.text, point.lat, point.lng, resultData);
               }
@@ -225,7 +231,6 @@ export default function LocalGridPage() {
             })
           );
 
-          // Process batch results
           for (const settled of batchResults) {
             if (settled.status === 'rejected') {
               console.error('Batch point error:', settled.reason);
@@ -235,10 +240,7 @@ export default function LocalGridPage() {
             const { pIdx, point, data } = settled.value;
 
             if (data) {
-              // Extract map items (filters paid ads, handles response shape variants)
               const mapItems = extractMapItems(data);
-
-              // Find business rank using 6-level cascade
               const { rank, url, matchMethod } = findBusinessRank(mapItems, bizInfo);
 
               const rankData: RankData = {
@@ -257,14 +259,12 @@ export default function LocalGridPage() {
 
               allRankData.push(rankData);
 
-              // Update grid point with rank
               gridPoints[pIdx].rank = rank;
               gridPoints[pIdx].url = url;
               gridPoints[pIdx].matchMethod = matchMethod;
             }
           }
 
-          // Update progress after each batch (not every point)
           await (supabase as any)
             .from('grid_scans')
             .update({
@@ -277,18 +277,15 @@ export default function LocalGridPage() {
             })
             .eq('id', scanId);
 
-          // Small delay between batches to respect rate limits
           await new Promise((resolve) => setTimeout(resolve, 200));
         }
       }
 
-      // Calculate heatmap data per keyword
       const heatmap: Record<string, HeatmapData> = {};
       config.keywords.forEach((keyword) => {
         const keywordData = allRankData.filter((d) => d.keyword === keyword.text);
         const rankedPoints = keywordData.filter((d) => d.rank !== null);
 
-        // Build a lookup from point position → rank for this keyword
         const pointRankMap = new Map<number, number | null>();
         keywordData.forEach((d) => pointRankMap.set(d.point, d.rank));
 
@@ -312,7 +309,6 @@ export default function LocalGridPage() {
         };
       });
 
-      // Save final results
       await (supabase as any)
         .from('grid_scans')
         .update({
@@ -327,7 +323,6 @@ export default function LocalGridPage() {
         })
         .eq('id', scanId);
 
-      // Decrement scan credits
       if (userId) {
         await (supabase as any).rpc('decrement_scan_credits', {
           p_user_id: userId,
@@ -347,15 +342,10 @@ export default function LocalGridPage() {
   };
 
   const handleNewScan = () => {
-    setBusinessInfo(null);
     setCurrentScan(null);
     setHeatmapData({});
-    setScanState('setup');
+    setScanState('configure');
     clearScanCache();
-  };
-
-  const handleBackToBusiness = () => {
-    setScanState('setup');
   };
 
   return (
@@ -380,26 +370,30 @@ export default function LocalGridPage() {
           </div>
         )}
 
-        {scanState === 'setup' && (
-          <>
-            <LocationSelector
-              locations={locations}
-              selectedLocation={selectedLocation}
-              onSelectLocation={selectLocation}
-              showAllOption={true}
-            />
-            <BusinessLookup
-              onBusinessFound={handleBusinessFound}
-              initialBusiness={businessInfo || undefined}
-            />
-          </>
+        {/* Location selector (always visible when not scanning) */}
+        {scanState === 'configure' && (
+          <LocationSelector
+            locations={locations}
+            selectedLocation={selectedLocation}
+            onSelectLocation={selectLocation}
+            showAllOption={false}
+          />
         )}
 
-        {scanState === 'configure' && businessInfo && (
+        {/* Missing coordinates fallback */}
+        {scanState === 'configure' && locationNeedsCoords && selectedLocation && (
+          <LocationCoordsSetup
+            location={selectedLocation}
+            onUpdated={() => window.location.reload()}
+          />
+        )}
+
+        {/* Grid configurator (only if location has coordinates) */}
+        {scanState === 'configure' && businessInfo && !locationNeedsCoords && (
           <GridConfigurator
             business={businessInfo}
             onStartScan={handleStartScan}
-            onBack={handleBackToBusiness}
+            onBack={handleNewScan}
           />
         )}
 
@@ -419,7 +413,124 @@ export default function LocalGridPage() {
   );
 }
 
+// ── Inline lookup for locations missing coordinates ──────────────────
+
+function LocationCoordsSetup({ location, onUpdated }: { location: BusinessLocation; onUpdated: () => void }) {
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLookup = useCallback(async () => {
+    const trimmed = input.trim();
+    if (!trimmed) {
+      // Try geocoding from existing address
+      const query = `${location.address || ''}, ${location.city}, ${location.state} ${location.zip || ''}`.trim();
+      if (!query || query === ',') {
+        setError('Please enter a search term or add an address to this location');
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      try {
+        const resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`);
+        const data = await resp.json();
+        if (data.length === 0) { setError('Address not found'); return; }
+        const { error: saveErr } = await updateLocationCoords({
+          location_id: location.id,
+          latitude: parseFloat(data[0].lat),
+          longitude: parseFloat(data[0].lon),
+        });
+        if (saveErr) throw new Error(saveErr);
+        onUpdated();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to geocode');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const inputType = detectInputType(trimmed);
+      let lat = 0, lng = 0, placeId = '', cid = '';
+
+      if (inputType === 'mapsUrl') {
+        const parsed = parseGoogleMapsUrl(trimmed);
+        if (parsed.lat && parsed.lng) {
+          lat = parsed.lat;
+          lng = parsed.lng;
+          placeId = parsed.placeId || '';
+          cid = parsed.cid || '';
+        }
+      }
+
+      if (!lat || !lng) {
+        // Try name/domain lookup
+        const result = await dfsCall<any>('business_data/business_listings/search/live', [
+          { categories: [], filters: ['title', 'like', `%${trimmed}%`], language_code: 'en', limit: 1 },
+        ]);
+        const item = result.tasks?.[0]?.result?.[0]?.items?.[0];
+        if (item) {
+          lat = item.latitude || 0;
+          lng = item.longitude || 0;
+          placeId = item.place_id || '';
+          cid = item.cid || '';
+        }
+      }
+
+      if (!lat || !lng) {
+        setError('Could not find coordinates. Try a Google Maps URL or business name.');
+        return;
+      }
+
+      const { error: saveErr } = await updateLocationCoords({
+        location_id: location.id,
+        latitude: lat,
+        longitude: lng,
+        place_id: placeId || undefined,
+        cid: cid || undefined,
+      });
+      if (saveErr) throw new Error(saveErr);
+      onUpdated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update location');
+    } finally {
+      setLoading(false);
+    }
+  }, [input, location, onUpdated]);
+
+  return (
+    <div className="card p-6 mb-6 border border-yellow-500/20 bg-yellow-500/5">
+      <h3 className="font-display mb-2">Location needs coordinates</h3>
+      <p className="text-sm text-ash-300 mb-4">
+        "{location.location_name}" needs latitude/longitude coordinates for grid scanning.
+        Search to add them, or we can try geocoding the existing address.
+      </p>
+      <div className="flex gap-2 mb-2">
+        <input
+          type="text"
+          className="input flex-1"
+          placeholder="Business name, Google Maps URL, or leave empty to geocode address"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
+        />
+        <button
+          className="btn-primary"
+          onClick={handleLookup}
+          disabled={loading}
+        >
+          {loading ? 'Updating...' : input.trim() ? 'Lookup' : 'Geocode Address'}
+        </button>
+      </div>
+      {error && <p className="text-sm text-red-400">{error}</p>}
+    </div>
+  );
+}
+
 function processHeatmapData(scan: any): Record<string, HeatmapData> {
-  // Extract heatmap data from scan record
   return scan.heatmap_data || {};
 }
