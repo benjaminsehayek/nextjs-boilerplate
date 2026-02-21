@@ -1,6 +1,7 @@
 'use client';
 
 import { useSubscription } from '@/lib/hooks/useSubscription';
+import { useUser } from '@/lib/hooks/useUser';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
 import { CurrentPlanCard } from '@/components/billing/CurrentPlanCard';
 import { UsageCard } from '@/components/billing/UsageCard';
@@ -13,18 +14,20 @@ import { useState, useEffect } from 'react';
 
 export default function BillingPage() {
   const { profile, tier, loading } = useSubscription();
+  const { refreshProfile } = useUser();
   const [showSuccess, setShowSuccess] = useState(false);
   const [interval, setInterval] = useState<BillingInterval>('monthly');
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Check for success redirect from Stripe
+  // Check for success redirect from Stripe — refresh profile to pick up new tier/credits
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       if (params.get('session_id')) {
         setShowSuccess(true);
         window.history.replaceState({}, '', '/billing');
+        refreshProfile();
         setTimeout(() => setShowSuccess(false), 5000);
       }
     }

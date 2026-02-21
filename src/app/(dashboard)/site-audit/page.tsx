@@ -157,6 +157,7 @@ export default function SiteAuditPage() {
         .insert({
           business_id: business.id,
           location_id: selectedLocation?.id || null,
+          domain: cleanedDomain,
           status: 'pending',
           started_at: new Date().toISOString(),
           completed_tasks: [],
@@ -318,7 +319,7 @@ export default function SiteAuditPage() {
 
       // Deduct one scan credit on successful completion
       if (user?.id) {
-        await (supabase as any).rpc('increment_scan_credits', { p_user_id: user.id, p_amount: 1 });
+        await (supabase as any).rpc('decrement_scan_credits', { p_user_id: user.id, p_amount: 1 });
       }
 
       // Load results

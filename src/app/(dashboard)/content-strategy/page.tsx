@@ -296,7 +296,7 @@ export default function ContentStrategyPage() {
 
       // Deduct one scan credit on successful completion
       if (user?.id) {
-        await (supabase as any).rpc('increment_scan_credits', { p_user_id: user.id, p_amount: 1 });
+        await (supabase as any).rpc('decrement_scan_credits', { p_user_id: user.id, p_amount: 1 });
       }
 
       // Load results

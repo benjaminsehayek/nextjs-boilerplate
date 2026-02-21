@@ -240,7 +240,7 @@ export default function OffPageAuditPage() {
 
       // Deduct one scan credit on successful completion
       if (user?.id) {
-        await (supabase as any).rpc('increment_scan_credits', { p_user_id: user.id, p_amount: 1 });
+        await (supabase as any).rpc('decrement_scan_credits', { p_user_id: user.id, p_amount: 1 });
       }
 
       await loadAuditResults(id);
@@ -414,6 +414,7 @@ export default function OffPageAuditPage() {
               onStartScan={startAudit}
               isLoading={false}
               scansRemaining={scansRemaining}
+              defaultDomain={business?.domain || ''}
             />
           </>
         )}

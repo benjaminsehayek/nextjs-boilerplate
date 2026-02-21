@@ -35,15 +35,14 @@ export function ActionItems({ business }: ActionItemsProps) {
         // Get latest completed audit for recommendations
         const { data: latestAudit } = await (supabase as any)
           .from('site_audits')
-          .select('id, overall_score, mobile_score, speed_score')
+          .select('id, overall_score, category_scores, lighthouse_scores')
           .eq('business_id', business.id)
-          .eq('status', 'completed')
+          .eq('status', 'complete')
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
 
         if (latestAudit) {
-          // Generate recommendations based on scores
           if (latestAudit.overall_score < 70) {
             actionItems.push({
               id: 'seo-score-low',
@@ -56,7 +55,8 @@ export function ActionItems({ business }: ActionItemsProps) {
             });
           }
 
-          if (latestAudit.speed_score < 60) {
+          const performanceScore = latestAudit.lighthouse_scores?.performance ?? latestAudit.category_scores?.performance;
+          if (performanceScore != null && performanceScore < 60) {
             actionItems.push({
               id: 'speed-low',
               title: 'Optimize Page Speed',
@@ -68,7 +68,8 @@ export function ActionItems({ business }: ActionItemsProps) {
             });
           }
 
-          if (latestAudit.mobile_score < 70) {
+          const mobileScore = latestAudit.category_scores?.mobile ?? latestAudit.lighthouse_scores?.seo;
+          if (mobileScore != null && mobileScore < 70) {
             actionItems.push({
               id: 'mobile-low',
               title: 'Fix Mobile Issues',
@@ -83,15 +84,16 @@ export function ActionItems({ business }: ActionItemsProps) {
 
         // Check if content strategy needs attention
         const { count: contentCount } = await (supabase as any)
-          .from('content_articles')
+          .from('content_strategies')
           .select('*', { count: 'exact', head: true })
-          .eq('business_id', business.id);
+          .eq('business_id', business.id)
+          .eq('status', 'complete');
 
-        if (!contentCount || contentCount < 5) {
+        if (!contentCount) {
           actionItems.push({
             id: 'content-needed',
-            title: 'Create Content',
-            description: 'Build authority with SEO-optimized content.',
+            title: 'Run Content Strategy',
+            description: 'Discover keyword opportunities and plan your content.',
             priority: 'medium',
             tool: 'Content Strategy',
             link: '/content-strategy',

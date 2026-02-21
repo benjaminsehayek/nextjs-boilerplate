@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import type { DomainInputProps } from './types';
 
-export default function DomainInput({ onStartScan, isLoading, scansRemaining }: DomainInputProps) {
-  const [domain, setDomain] = useState('');
+export default function DomainInput({ onStartScan, isLoading, scansRemaining, defaultDomain }: DomainInputProps) {
+  const [domain, setDomain] = useState(defaultDomain || '');
   const [competitors, setCompetitors] = useState<string[]>(['', '', '']);
   const [showCompetitors, setShowCompetitors] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);

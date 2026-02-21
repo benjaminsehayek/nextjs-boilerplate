@@ -8,6 +8,7 @@ export interface DomainInputProps {
   onStartScan: (domain: string, competitors?: string[]) => void;
   isLoading: boolean;
   scansRemaining: number;
+  defaultDomain?: string;
 }
 
 export interface ProgressTrackerProps {

@@ -42,7 +42,7 @@ export function DashboardStats({ business }: DashboardStatsProps) {
           .from('site_audits')
           .select('overall_score')
           .eq('business_id', business.id)
-          .eq('status', 'completed')
+          .eq('status', 'complete')
           .order('created_at', { ascending: false })
           .limit(5);
 
