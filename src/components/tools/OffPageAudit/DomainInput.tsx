@@ -166,12 +166,14 @@ export default function DomainInput({ onStartScan, isLoading, scansRemaining, de
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {[
-              { icon: '🔗', text: 'Total backlinks & referring domains' },
-              { icon: '📊', text: 'Domain rating & quality score' },
-              { icon: '⚠️', text: 'Toxic backlink detection' },
-              { icon: '🎯', text: 'Anchor text distribution' },
-              { icon: '🏆', text: 'Competitor backlink comparison' },
-              { icon: '📈', text: 'Link growth & loss trends' },
+              { icon: '🔗', text: 'Backlinks, referring domains & authority scoring' },
+              { icon: '📋', text: 'Citation tracking across 45 directories' },
+              { icon: '⭐', text: 'GBP profile & review analysis with AI drafting' },
+              { icon: '📍', text: 'NAP consistency check across listings' },
+              { icon: '📈', text: 'Link velocity trends & growth tracking' },
+              { icon: '🏆', text: 'Competitor discovery & link gap analysis' },
+              { icon: '📱', text: 'Social presence detection (8 platforms)' },
+              { icon: '⚠️', text: 'Toxic backlink & spam detection' },
             ].map((item, i) => (
               <div key={i} className="flex items-center gap-2 text-sm text-ash-300">
                 <span>{item.icon}</span>

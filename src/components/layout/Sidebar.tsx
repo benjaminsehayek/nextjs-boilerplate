@@ -18,6 +18,7 @@ const navItems = [
     { href: '/off-page-audit', label: 'Off-Page Audit', icon: '🔗' },
     { href: '/lead-intelligence', label: 'Lead Intelligence', icon: '📡' },
     { href: '/lead-database', label: 'Lead Database', icon: '👥' },
+    { href: '/marketing', label: 'Marketing', icon: '📧' },
   ]},
   { section: 'Account', items: [
     { href: '/billing', label: 'Billing', icon: '💳' },

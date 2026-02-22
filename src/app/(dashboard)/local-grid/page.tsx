@@ -15,7 +15,7 @@ import { useBusiness } from '@/lib/hooks/useBusiness';
 import { useLocations } from '@/lib/hooks/useLocations';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { updateLocationCoords } from '@/app/actions/onboarding';
-import type { BusinessInfo, GridConfig, GridPoint, GridScanResult, HeatmapData, MapsSerpItem, RankData } from '@/components/tools/LocalGrid/types';
+import type { BusinessInfo, GridConfig, GridPoint, GridScanResult, HeatmapData, MapsSerpItem, RankData, ScanLogEntry } from '@/components/tools/LocalGrid/types';
 import type { BusinessLocation, Business } from '@/types';
 
 type ScanState = 'configure' | 'scanning' | 'complete' | 'error';
@@ -48,6 +48,11 @@ export default function LocalGridPage() {
   const [currentScan, setCurrentScan] = useState<GridScanResult | null>(null);
   const [heatmapData, setHeatmapData] = useState<Record<string, HeatmapData>>({});
   const [error, setError] = useState<string | null>(null);
+  const [scanLog, setScanLog] = useState<ScanLogEntry[]>([]);
+
+  const addLog = useCallback((message: string, type: ScanLogEntry['type'] = 'info') => {
+    setScanLog((prev) => [...prev, { message, type, timestamp: Date.now() }]);
+  }, []);
 
   // Derive businessInfo from selected location
   const businessInfo: BusinessInfo | null =
@@ -179,11 +184,16 @@ export default function LocalGridPage() {
         .update({ status: 'scanning' })
         .eq('id', scanId);
 
+      addLog(`Business: ${bizInfo.name}`, 'info');
+      addLog(`Grid: ${config.size}×${config.size}, Radius: ${config.radius} mi, Keywords: ${config.keywords.length}`, 'info');
+
       const allRankData: RankData[] = [];
       let cacheHits = 0;
+      let firstMatchLogged = false;
 
       for (let kIdx = 0; kIdx < config.keywords.length; kIdx++) {
         const keyword = config.keywords[kIdx];
+        addLog(`Scanning keyword: "${keyword.text}"...`, 'info');
 
         await (supabase as any)
           .from('grid_scans')
@@ -262,6 +272,15 @@ export default function LocalGridPage() {
               gridPoints[pIdx].rank = rank;
               gridPoints[pIdx].url = url;
               gridPoints[pIdx].matchMethod = matchMethod;
+              gridPoints[pIdx].competitors = mapItems.slice(0, 5).map((item: MapsSerpItem) => ({
+                name: item.title || 'Unknown',
+                rank: item.rank_group,
+              }));
+
+              if (rank !== null && !firstMatchLogged && matchMethod) {
+                addLog(`Matching by: ${matchMethod}`, 'success');
+                firstMatchLogged = true;
+              }
             }
           }
 
@@ -279,12 +298,18 @@ export default function LocalGridPage() {
 
           await new Promise((resolve) => setTimeout(resolve, 200));
         }
+
+        // Log keyword completion
+        const kwData = allRankData.filter((d) => d.keyword === keyword.text);
+        const kwFound = kwData.filter((d) => d.rank !== null).length;
+        addLog(`"${keyword.text}" complete — found at ${kwFound}/${gridPoints.length} points`, kwFound > 0 ? 'success' : 'warning');
       }
 
       const heatmap: Record<string, HeatmapData> = {};
       config.keywords.forEach((keyword) => {
         const keywordData = allRankData.filter((d) => d.keyword === keyword.text);
         const rankedPoints = keywordData.filter((d) => d.rank !== null);
+        const top3Points = rankedPoints.filter((d) => d.rank !== null && d.rank <= 3);
 
         const pointRankMap = new Map<number, number | null>();
         keywordData.forEach((d) => pointRankMap.set(d.point, d.rank));
@@ -306,6 +331,8 @@ export default function LocalGridPage() {
               : 0,
           pointsRanking: rankedPoints.length,
           notRanking: gridPoints.length - rankedPoints.length,
+          top3Count: top3Points.length,
+          visibilityScore: gridPoints.length > 0 ? (top3Points.length / gridPoints.length) * 100 : 0,
         };
       });
 
@@ -329,8 +356,9 @@ export default function LocalGridPage() {
         });
       }
 
+      addLog('Scan complete!', 'success');
       if (cacheHits > 0) {
-        console.log(`Scan complete: ${cacheHits} cache hits saved API calls`);
+        addLog(`${cacheHits} cached results used (saved API calls)`, 'info');
       }
     } catch (err) {
       console.error('Scan error:', err);
@@ -345,6 +373,7 @@ export default function LocalGridPage() {
     setCurrentScan(null);
     setHeatmapData({});
     setScanState('configure');
+    setScanLog([]);
     clearScanCache();
   };
 
@@ -398,7 +427,7 @@ export default function LocalGridPage() {
         )}
 
         {scanState === 'scanning' && currentScan && (
-          <ScanProgress scan={currentScan} />
+          <ScanProgress scan={currentScan} logEntries={scanLog} />
         )}
 
         {scanState === 'complete' && currentScan && (

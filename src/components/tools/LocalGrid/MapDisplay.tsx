@@ -2,15 +2,17 @@
 
 import { useEffect, useRef } from 'react';
 import type { BusinessInfo, GridPoint, HeatmapData } from './types';
+import { autoZoomForRadius } from './utils';
 
 interface MapDisplayProps {
   business: BusinessInfo;
   gridPoints: GridPoint[];
   heatmapData?: HeatmapData;
   showHeatmap?: boolean;
+  radiusMiles?: number; // Show radius preview circle when provided
 }
 
-export function MapDisplay({ business, gridPoints, heatmapData, showHeatmap = false }: MapDisplayProps) {
+export function MapDisplay({ business, gridPoints, heatmapData, showHeatmap = false, radiusMiles }: MapDisplayProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
 
@@ -27,21 +29,26 @@ export function MapDisplay({ business, gridPoints, heatmapData, showHeatmap = fa
         shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
       });
 
+      const zoom = radiusMiles ? autoZoomForRadius(radiusMiles) : 11;
+
       // Initialize map
       if (!mapInstanceRef.current && mapRef.current) {
         mapInstanceRef.current = L.map(mapRef.current).setView(
           [business.latitude, business.longitude],
-          11
+          zoom
         );
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '© OpenStreetMap contributors',
+        // Dark CARTO tiles to match dark app theme
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+          subdomains: 'abcd',
+          maxZoom: 20,
         }).addTo(mapInstanceRef.current);
       }
 
       // Clear existing layers except base layer
       mapInstanceRef.current.eachLayer((layer: any) => {
-        if (layer instanceof L.TileLayer) return; // Keep base map
+        if (layer instanceof L.TileLayer) return;
         mapInstanceRef.current.removeLayer(layer);
       });
 
@@ -57,28 +64,40 @@ export function MapDisplay({ business, gridPoints, heatmapData, showHeatmap = fa
         .addTo(mapInstanceRef.current)
         .bindPopup(`<strong>${business.name}</strong><br>${business.address}`);
 
+      // Radius preview circle
+      if (radiusMiles && !showHeatmap) {
+        const radiusMeters = radiusMiles * 1609.34;
+        L.circle([business.latitude, business.longitude], {
+          radius: radiusMeters,
+          color: '#FF5C1A',
+          fillColor: '#FF5C1A',
+          fillOpacity: 0.05,
+          weight: 1,
+          dashArray: '6 4',
+        }).addTo(mapInstanceRef.current);
+      }
+
       // Add grid points
       if (gridPoints.length > 0) {
         gridPoints.forEach((point) => {
           let color = '#94A3B8'; // Default gray
-          let size = showHeatmap ? 24 : 8;
+          let size = showHeatmap ? 28 : 8;
           let textColor = '#fff';
 
           if (showHeatmap && point.rank !== null) {
             if (point.rank <= 3) {
-              color = '#10B981'; // green
+              color = '#22c55e'; // green
             } else if (point.rank <= 10) {
-              color = '#FBBF24'; // yellow
+              color = '#f59e0b'; // amber
               textColor = '#1a1a1a';
             } else if (point.rank <= 20) {
-              color = '#FB923C'; // orange
-              textColor = '#1a1a1a';
+              color = '#ef4444'; // red
             } else {
-              color = '#EF4444'; // red
+              color = '#6b7280'; // gray
             }
           } else if (point.rank === null && showHeatmap) {
-            color = '#64748B'; // Not ranking - dark gray
-            size = 20;
+            color = '#6b7280';
+            size = 24;
           }
 
           const label = showHeatmap
@@ -103,17 +122,29 @@ export function MapDisplay({ business, gridPoints, heatmapData, showHeatmap = fa
             mapInstanceRef.current
           );
 
-          // Add popup with ranking info + match method
+          // Popup with ranking info + competitors
           if (showHeatmap) {
             const matchLabel = point.matchMethod
               ? `<br><span style="font-size:10px;opacity:0.7">Matched by: ${point.matchMethod}</span>`
               : '';
+
+            let competitorsHtml = '';
+            if (point.competitors && point.competitors.length > 0) {
+              const compList = point.competitors
+                .map((c) => {
+                  const isYou = point.rank !== null && c.rank === point.rank;
+                  return `<div style="font-size:10px;${isYou ? 'color:#FF5C1A;font-weight:700;' : 'opacity:0.8;'}">#${c.rank} ${c.name}${isYou ? ' ← You' : ''}</div>`;
+                })
+                .join('');
+              competitorsHtml = `<div style="border-top:1px solid rgba(255,255,255,0.15);margin-top:6px;padding-top:6px;">${compList}</div>`;
+            }
+
             const popupContent = point.rank
-              ? `<strong>Rank: #${point.rank}</strong>${matchLabel}<br>Distance: ${point.distance.toFixed(2)}km<br>Point ${point.position}`
-              : `<strong>Not Ranking</strong><br>Distance: ${point.distance.toFixed(2)}km<br>Point ${point.position}`;
+              ? `<strong>Rank: #${point.rank}</strong>${matchLabel}<br>Distance: ${point.distance.toFixed(2)} mi${competitorsHtml}`
+              : `<strong>Not Ranking</strong><br>Distance: ${point.distance.toFixed(2)} mi${competitorsHtml}`;
             marker.bindPopup(popupContent);
           } else {
-            marker.bindPopup(`Point ${point.position}<br>Distance: ${point.distance.toFixed(2)}km`);
+            marker.bindPopup(`Point ${point.position}<br>Distance: ${point.distance.toFixed(2)} mi`);
           }
         });
 
@@ -133,7 +164,7 @@ export function MapDisplay({ business, gridPoints, heatmapData, showHeatmap = fa
         mapInstanceRef.current = null;
       }
     };
-  }, [business, gridPoints, heatmapData, showHeatmap]);
+  }, [business, gridPoints, heatmapData, showHeatmap, radiusMiles]);
 
   return (
     <div className="relative">
@@ -152,23 +183,19 @@ export function MapDisplay({ business, gridPoints, heatmapData, showHeatmap = fa
           <h4 className="text-sm font-display mb-2">Ranking Legend</h4>
           <div className="space-y-1 text-xs">
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-green-500"></div>
+              <div className="w-3 h-3 rounded-full" style={{ background: '#22c55e' }}></div>
               <span>Top 3</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+              <div className="w-3 h-3 rounded-full" style={{ background: '#f59e0b' }}></div>
               <span>4-10</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-orange-500"></div>
+              <div className="w-3 h-3 rounded-full" style={{ background: '#ef4444' }}></div>
               <span>11-20</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-red-500"></div>
-              <span>20+</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-slate-600"></div>
+              <div className="w-3 h-3 rounded-full" style={{ background: '#6b7280' }}></div>
               <span>Not Ranking</span>
             </div>
             <div className="flex items-center gap-2 mt-2 pt-2 border-t border-ash-700">

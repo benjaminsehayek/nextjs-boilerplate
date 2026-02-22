@@ -1,4 +1,4 @@
-import type { BusinessInfo, GridPoint, GridSize, HeatmapData, MapsSerpItem, MatchMethod, RankData } from './types';
+import type { BusinessInfo, GridPoint, GridSize, HeatmapData, IndustryPreset, MapsSerpItem, MatchMethod, RankData } from './types';
 
 // ── Stopwords for significant-word matching ──────────────────────────
 
@@ -10,27 +10,38 @@ const STOPWORDS = new Set([
   'centre', 'shop', 'store', 'studio', 'agency', 'firm',
 ]);
 
-// ── Grid generation ──────────────────────────────────────────────────
+// ── Industry presets ─────────────────────────────────────────────────
+
+export const INDUSTRY_PRESETS: IndustryPreset[] = [
+  { id: 'electrician', label: 'Electrician', icon: '⚡', keywords: ['electrician', 'electrical repair', 'emergency electrician', 'electrical contractor'] },
+  { id: 'plumber', label: 'Plumber', icon: '🔧', keywords: ['plumber', 'plumbing repair', 'emergency plumber', 'drain cleaning'] },
+  { id: 'hvac', label: 'HVAC', icon: '❄️', keywords: ['hvac', 'air conditioning repair', 'heating repair', 'ac installation'] },
+  { id: 'roofing', label: 'Roofing', icon: '🏠', keywords: ['roofing contractor', 'roof repair', 'roof replacement', 'roofing company'] },
+  { id: 'autobody', label: 'Auto Body', icon: '🚗', keywords: ['auto body shop', 'collision repair', 'auto painting', 'dent repair'] },
+  { id: 'painter', label: 'Painter', icon: '🎨', keywords: ['painter', 'house painting', 'interior painting', 'painting contractor'] },
+];
+
+// ── Grid generation (miles) ──────────────────────────────────────────
 
 export function generateGridPoints(
   center: { lat: number; lng: number },
   gridSize: GridSize,
-  radiusKm: number
+  radiusMiles: number
 ): GridPoint[] {
   const points: GridPoint[] = [];
 
-  const totalDistanceKm = radiusKm * 2;
-  const stepKm = totalDistanceKm / (gridSize - 1 || 1);
+  const totalDistanceMiles = radiusMiles * 2;
+  const stepMiles = totalDistanceMiles / (gridSize - 1 || 1);
 
-  const latOffsetPerKm = 1 / 111;
-  const lngOffsetPerKm = 1 / (111 * Math.cos((center.lat * Math.PI) / 180));
+  const latOffsetPerMile = 1 / 69;
+  const lngOffsetPerMile = 1 / (69 * Math.cos((center.lat * Math.PI) / 180));
 
   let pointId = 1;
 
   for (let row = 0; row < gridSize; row++) {
     for (let col = 0; col < gridSize; col++) {
-      const latOffset = (row - (gridSize - 1) / 2) * stepKm * latOffsetPerKm;
-      const lngOffset = (col - (gridSize - 1) / 2) * stepKm * lngOffsetPerKm;
+      const latOffset = (row - (gridSize - 1) / 2) * stepMiles * latOffsetPerMile;
+      const lngOffset = (col - (gridSize - 1) / 2) * stepMiles * lngOffsetPerMile;
 
       const lat = center.lat + latOffset;
       const lng = center.lng + lngOffset;
@@ -54,7 +65,7 @@ export function generateGridPoints(
 }
 
 function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371;
+  const R = 3959; // Earth radius in miles
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
 
@@ -71,6 +82,18 @@ function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: numbe
 
 function toRad(degrees: number): number {
   return (degrees * Math.PI) / 180;
+}
+
+// ── Auto-zoom based on radius ────────────────────────────────────────
+
+export function autoZoomForRadius(radiusMiles: number): number {
+  if (radiusMiles <= 0.5) return 15;
+  if (radiusMiles <= 1) return 14;
+  if (radiusMiles <= 2) return 13;
+  if (radiusMiles <= 5) return 12;
+  if (radiusMiles <= 10) return 11;
+  if (radiusMiles <= 15) return 10;
+  return 9;
 }
 
 // ── Name matching helpers ────────────────────────────────────────────
@@ -375,12 +398,16 @@ export function processRankData(rankData: RankData[], gridSize: number): Heatmap
       ? rankedPoints.reduce((sum, d) => sum + (d.rank || 0), 0) / rankedPoints.length
       : 0;
 
+  const top3Count = rankData.filter((d) => d.rank !== null && d.rank <= 3).length;
+
   return {
     keyword,
     points,
     averageRank: avgRank,
     pointsRanking: rankedPoints.length,
     notRanking: totalPoints - rankedPoints.length,
+    top3Count,
+    visibilityScore: totalPoints > 0 ? (top3Count / totalPoints) * 100 : 0,
   };
 }
 
@@ -406,5 +433,5 @@ export function estimateScanTime(totalChecks: number): { min: number; max: numbe
 }
 
 export function calculateCost(totalChecks: number): number {
-  return totalChecks * 0.003;
+  return totalChecks * 0.002;
 }

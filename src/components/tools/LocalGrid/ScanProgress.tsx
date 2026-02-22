@@ -1,15 +1,32 @@
 'use client';
 
-import type { GridScanResult } from './types';
+import { useEffect, useRef } from 'react';
+import type { GridScanResult, ScanLogEntry } from './types';
 
 interface ScanProgressProps {
   scan: GridScanResult;
+  logEntries?: ScanLogEntry[];
 }
 
-export function ScanProgress({ scan }: ScanProgressProps) {
+export function ScanProgress({ scan, logEntries = [] }: ScanProgressProps) {
   const { progress, config, business_info } = scan;
   const progressPercent = progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
   const totalChecks = config.size * config.size * config.keywords.length;
+  const logEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll log to bottom
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logEntries.length]);
+
+  const logTypeColor = (type: ScanLogEntry['type']) => {
+    switch (type) {
+      case 'success': return 'text-green-400';
+      case 'warning': return 'text-yellow-400';
+      case 'error': return 'text-red-400';
+      default: return 'text-ash-400';
+    }
+  };
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -35,7 +52,7 @@ export function ScanProgress({ scan }: ScanProgressProps) {
 
         <div className="flex items-center justify-between text-sm">
           <span className="text-ash-300">
-            {progress.current} of {progress.total} complete
+            Keyword {progress.current + 1} of {progress.total}
           </span>
           <span className="font-display text-heat-400">{progressPercent.toFixed(0)}%</span>
         </div>
@@ -45,11 +62,29 @@ export function ScanProgress({ scan }: ScanProgressProps) {
           <div className="mt-4 p-3 bg-char-900/50 rounded-lg">
             <div className="text-xs text-ash-400 mb-1">Currently scanning</div>
             <div className="text-sm font-medium">
-              "{progress.currentKeyword}" - Point {progress.currentPoint} of {config.size * config.size}
+              &quot;{progress.currentKeyword}&quot; — Point {progress.currentPoint || 0} of {config.size * config.size}
             </div>
           </div>
         )}
       </div>
+
+      {/* Activity Log */}
+      {logEntries.length > 0 && (
+        <div className="card p-6">
+          <h3 className="text-lg font-display mb-3">Activity Log</h3>
+          <div className="max-h-48 overflow-y-auto bg-char-900/50 rounded-lg p-3 space-y-1">
+            {logEntries.map((entry, i) => (
+              <div key={i} className={`text-xs ${logTypeColor(entry.type)}`}>
+                <span className="text-ash-500 mr-2">
+                  {new Date(entry.timestamp).toLocaleTimeString()}
+                </span>
+                {entry.message}
+              </div>
+            ))}
+            <div ref={logEndRef} />
+          </div>
+        </div>
+      )}
 
       {/* Scan Details */}
       <div className="card p-6">
@@ -62,7 +97,7 @@ export function ScanProgress({ scan }: ScanProgressProps) {
           </div>
 
           <div className="text-center p-4 bg-char-900/30 rounded-lg">
-            <div className="text-2xl font-display text-ash-100">{config.radius}km</div>
+            <div className="text-2xl font-display text-ash-100">{config.radius} mi</div>
             <div className="text-xs text-ash-400 mt-1">Radius</div>
           </div>
 
@@ -101,7 +136,7 @@ export function ScanProgress({ scan }: ScanProgressProps) {
               to complete. The page will automatically update when finished.
             </p>
             <p className="text-xs text-ash-400 mt-2">
-              You can safely leave this page and return later - your scan will continue in the background.
+              You can safely leave this page and return later — your scan will continue in the background.
             </p>
           </div>
         </div>

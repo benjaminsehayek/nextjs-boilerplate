@@ -2,6 +2,24 @@
 
 export type GridSize = 3 | 5 | 7 | 9;
 
+export interface Competitor {
+  name: string;
+  rank: number;
+}
+
+export interface ScanLogEntry {
+  message: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  timestamp: number;
+}
+
+export interface IndustryPreset {
+  id: string;
+  label: string;
+  icon: string;
+  keywords: string[];
+}
+
 export interface BusinessInfo {
   name: string;
   address: string;
@@ -47,7 +65,8 @@ export interface GridPoint {
   rank: number | null;
   url: string | null;
   matchMethod?: MatchMethod;
-  distance: number; // km from center
+  distance: number; // miles from center
+  competitors?: Competitor[];
 }
 
 export interface Keyword {
@@ -58,7 +77,7 @@ export interface Keyword {
 
 export interface GridConfig {
   size: GridSize;
-  radius: number; // km
+  radius: number; // miles
   keywords: Keyword[];
 }
 
@@ -104,4 +123,6 @@ export interface HeatmapData {
   averageRank: number;
   pointsRanking: number; // count of points where business appears
   notRanking: number; // count of points where business doesn't appear
+  top3Count: number; // count of points with rank 1-3
+  visibilityScore: number; // (top3Count / totalPoints) * 100
 }

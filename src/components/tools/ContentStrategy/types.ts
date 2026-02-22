@@ -141,6 +141,141 @@ export interface TabDefinition {
   badge?: number;
 }
 
+// ── Enhanced Types (new) ──────────────────────────────────────────
+
+// Service with economics
+export interface Service {
+  name: string;
+  profit: number;  // profit per job ($)
+  close: number;   // close rate (%)
+  enabled: boolean;
+}
+
+// Crawled page from DataForSEO on_page
+export interface CrawledPage {
+  url: string;
+  path: string;
+  title: string;
+  h1: string;
+  desc: string;
+  wordCount: number;
+  internalLinks: number;
+  type: 'homepage' | 'blog' | 'service' | 'location' | 'other';
+}
+
+// Enhanced keyword with ROI
+export interface EnhancedKeyword extends KeywordData {
+  funnel: 'bottom' | 'middle' | 'top';
+  pageType: 'service' | 'location' | 'blog';
+  cluster: number;
+  status: 'existing' | 'gap' | 'cannibalized';
+  serviceName: string;
+  convMultiplier: number;
+  profitPerJob: number;
+  closeRate: number;
+  monthlyVisitors: number;
+  monthlyLeads: number;
+  monthlyClosed: number;
+  roi: number;
+  assignedPage: string | null;
+  sources: string[];
+}
+
+// Content map item
+export interface ContentMapItem {
+  type: 'service' | 'location' | 'blog';
+  status: 'existing' | 'gap' | 'cannibalized';
+  url: string;
+  path: string;
+  title: string;
+  keywords: string[];
+  primaryKeyword: string;
+  totalVolume: number;
+  totalRoi: number;
+  wordCount: number;
+  clusterId: number;
+}
+
+// Calendar phases
+export type CalendarPhase = 'Foundation' | 'Geographic' | 'Authority' | 'Ongoing';
+export type CalendarPriority = 'high' | 'medium' | 'ongoing';
+
+export interface EnhancedCalendarItem {
+  id: string;
+  week: number;
+  phase: CalendarPhase;
+  calendarPriority: CalendarPriority;
+  pageType: 'service' | 'location' | 'blog' | 'gbp';
+  title: string;
+  primaryKeyword: string;
+  keywords: string[];
+  url: string;
+  totalVolume: number;
+  totalRoi: number;
+  status: 'planned' | 'in-progress' | 'published';
+  clusterId: number;
+}
+
+// Enhanced config with services + locations
+export interface EnhancedConfig extends ContentStrategyConfig {
+  services: Service[];
+  locations: string[];
+  country: number;  // location code
+  language: string;
+  brand: string;
+}
+
+// Enhanced results
+export interface EnhancedStrategyResults extends ContentStrategyResults {
+  services?: Service[];
+  locations?: string[];
+  crawledPages?: CrawledPage[];
+  enhancedKeywords?: EnhancedKeyword[];
+  contentMap?: ContentMapItem[];
+  enhancedCalendar?: EnhancedCalendarItem[];
+  totalRoi?: number;
+  totalLeads?: number;
+  contentGaps?: number;
+}
+
+// Updated tab IDs
+export type EnhancedTabId = 'overview' | 'keywords' | 'content-map' | 'calendar' | 'generate' | 'cannibalization';
+
+// Enhanced component props
+export interface EnhancedConfigFormProps {
+  onStartAnalysis: (config: EnhancedConfig) => void;
+  isLoading: boolean;
+  scansRemaining: number;
+  defaultDomain?: string;
+  defaultIndustry?: string;
+}
+
+export interface EnhancedDashboardProps {
+  results: EnhancedStrategyResults;
+  activeTab: EnhancedTabId;
+  onTabChange: (tab: EnhancedTabId) => void;
+}
+
+export interface KeywordTableProps {
+  keywords: EnhancedKeyword[];
+}
+
+export interface ContentMapProps {
+  items: ContentMapItem[];
+  onSelectItem?: (item: ContentMapItem) => void;
+}
+
+export interface ContentGeneratorProps {
+  items: ContentMapItem[];
+  domain: string;
+  industry?: string;
+}
+
+export interface EnhancedCalendarProps {
+  items: EnhancedCalendarItem[];
+  onItemUpdate?: (id: string, updates: Partial<EnhancedCalendarItem>) => void;
+}
+
 // DataForSEO API response types
 export interface DFSKeywordData {
   keyword: string;

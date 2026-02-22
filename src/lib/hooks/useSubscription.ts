@@ -10,6 +10,7 @@ const TOOL_ACCESS: Record<string, SubscriptionTier[]> = {
   'off-page-audit':    ['free', 'analysis', 'marketing', 'growth'],
   'lead-intelligence': ['free', 'analysis', 'marketing', 'growth'],
   'lead-database':     ['free', 'analysis', 'marketing', 'growth'],
+  'marketing':         ['marketing', 'growth'],
 };
 
 const FEATURE_ACCESS: Record<string, SubscriptionTier[]> = {

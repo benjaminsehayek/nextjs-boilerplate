@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { MapDisplay } from './MapDisplay';
 import type { GridScanResult, HeatmapData } from './types';
 
@@ -14,10 +14,36 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
   const [selectedKeyword, setSelectedKeyword] = useState(
     scan.config.keywords[0]?.text || ''
   );
+  const exportRef = useRef<HTMLDivElement>(null);
 
   const currentHeatmap = heatmapData[selectedKeyword];
   const totalPoints = scan.config.size * scan.config.size;
-  const overallStats = calculateOverallStats(heatmapData);
+  const overallStats = calculateOverallStats(heatmapData, totalPoints);
+
+  const handleExportPng = useCallback(async () => {
+    if (!exportRef.current) return;
+    try {
+      const html2canvas = (await import('html2canvas')).default;
+      const canvas = await html2canvas(exportRef.current, {
+        backgroundColor: '#0f1115',
+        scale: 2,
+      });
+      const link = document.createElement('a');
+      const safeName = scan.business_info.name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+      const safeKw = selectedKeyword.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+      link.download = `${safeName}-${safeKw}-grid.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch {
+      // html2canvas not available or failed
+    }
+  }, [scan.business_info.name, selectedKeyword]);
+
+  const visibilityColor = (score: number) => {
+    if (score >= 50) return 'text-green-400';
+    if (score >= 20) return 'text-yellow-400';
+    return 'text-red-400';
+  };
 
   return (
     <div className="space-y-6">
@@ -27,13 +53,18 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
           <h2 className="text-2xl font-display mb-1">Grid Scan Results</h2>
           <p className="text-sm text-ash-300">{scan.business_info.name}</p>
         </div>
-        <button onClick={onNewScan} className="btn-primary">
-          New Scan
-        </button>
+        <div className="flex gap-2">
+          <button onClick={handleExportPng} className="btn-ghost text-sm">
+            📄 Export PNG
+          </button>
+          <button onClick={onNewScan} className="btn-primary">
+            New Scan
+          </button>
+        </div>
       </div>
 
       {/* Overall Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="card p-6 text-center">
           <div className="text-3xl font-display text-heat-400 mb-1">
             {overallStats.avgRank > 0 ? `#${overallStats.avgRank.toFixed(1)}` : 'N/A'}
@@ -42,10 +73,17 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
         </div>
 
         <div className="card p-6 text-center">
+          <div className={`text-3xl font-display mb-1 ${visibilityColor(overallStats.top3Visibility)}`}>
+            {overallStats.top3Visibility.toFixed(0)}%
+          </div>
+          <div className="text-sm text-ash-400">Top 3 Visibility</div>
+        </div>
+
+        <div className="card p-6 text-center">
           <div className="text-3xl font-display text-green-400 mb-1">
             {overallStats.visibility.toFixed(0)}%
           </div>
-          <div className="text-sm text-ash-400">Visibility</div>
+          <div className="text-sm text-ash-400">Coverage</div>
         </div>
 
         <div className="card p-6 text-center">
@@ -70,6 +108,7 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
           {scan.config.keywords.map((keyword) => {
             const data = heatmapData[keyword.text];
             const isSelected = selectedKeyword === keyword.text;
+            const kwVisibility = data ? data.visibilityScore : 0;
 
             return (
               <button
@@ -83,9 +122,11 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
               >
                 <div className="font-medium">{keyword.text}</div>
                 {data && (
-                  <div className="text-xs mt-1 opacity-80">
-                    {data.pointsRanking}/{totalPoints} points •{' '}
-                    {data.averageRank > 0 ? `#${data.averageRank.toFixed(1)}` : 'N/A'}
+                  <div className="flex items-center gap-2 text-xs mt-1 opacity-80">
+                    <span>{data.pointsRanking}/{totalPoints} pts</span>
+                    <span className={isSelected ? '' : visibilityColor(kwVisibility)}>
+                      {kwVisibility.toFixed(0)}% top 3
+                    </span>
                   </div>
                 )}
               </button>
@@ -94,37 +135,49 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
         </div>
       </div>
 
-      {/* Map */}
-      {currentHeatmap && (
-        <div className="card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-display">Ranking Heatmap</h3>
-            <div className="text-sm text-ash-300">
-              Showing results for "{selectedKeyword}"
+      {/* Map (wrapped in export ref) */}
+      <div ref={exportRef}>
+        {currentHeatmap && (
+          <div className="card p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-display">Ranking Heatmap</h3>
+              <div className="text-sm text-ash-300">
+                Showing results for &quot;{selectedKeyword}&quot;
+              </div>
             </div>
-          </div>
 
-          <MapDisplay
-            business={scan.business_info}
-            gridPoints={scan.points}
-            heatmapData={currentHeatmap}
-            showHeatmap={true}
-          />
-        </div>
-      )}
+            <MapDisplay
+              business={scan.business_info}
+              gridPoints={scan.points}
+              heatmapData={currentHeatmap}
+              showHeatmap={true}
+            />
+          </div>
+        )}
+      </div>
 
       {/* Keyword Stats */}
       {currentHeatmap && (
         <div className="card p-6">
           <h3 className="text-lg font-display mb-4">Keyword Performance</h3>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="p-4 bg-char-900/30 rounded-lg">
               <div className="text-xs text-ash-400 mb-1">Average Rank</div>
               <div className="text-2xl font-display text-heat-400">
                 {currentHeatmap.averageRank > 0
                   ? `#${currentHeatmap.averageRank.toFixed(1)}`
                   : 'Not Ranking'}
+              </div>
+            </div>
+
+            <div className="p-4 bg-char-900/30 rounded-lg">
+              <div className="text-xs text-ash-400 mb-1">Top 3 Visibility</div>
+              <div className={`text-2xl font-display ${visibilityColor(currentHeatmap.visibilityScore)}`}>
+                {currentHeatmap.visibilityScore.toFixed(0)}%
+              </div>
+              <div className="text-xs text-ash-400 mt-1">
+                {currentHeatmap.top3Count} of {totalPoints} points
               </div>
             </div>
 
@@ -193,9 +246,14 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
               <div key={keyword.id} className="p-4 bg-char-900/30 rounded-lg">
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-medium">{keyword.text}</span>
-                  <span className="text-sm text-ash-400">
-                    {data.averageRank > 0 ? `Avg #${data.averageRank.toFixed(1)}` : 'Not Ranking'}
-                  </span>
+                  <div className="flex items-center gap-3 text-sm">
+                    <span className={visibilityColor(data.visibilityScore)}>
+                      {data.visibilityScore.toFixed(0)}% top 3
+                    </span>
+                    <span className="text-ash-400">
+                      {data.averageRank > 0 ? `Avg #${data.averageRank.toFixed(1)}` : 'Not Ranking'}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="relative h-2 bg-char-900 rounded-full overflow-hidden">
@@ -222,32 +280,35 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
         <div className="flex items-center justify-between text-sm text-ash-400">
           <span>Scan Date: {new Date(scan.scan_date).toLocaleString()}</span>
           <span>Grid: {scan.config.size}×{scan.config.size}</span>
-          <span>Radius: {scan.config.radius}km</span>
+          <span>Radius: {scan.config.radius} mi</span>
         </div>
       </div>
     </div>
   );
 }
 
-function calculateOverallStats(heatmapData: Record<string, HeatmapData>) {
+function calculateOverallStats(heatmapData: Record<string, HeatmapData>, totalPoints: number) {
   const keywords = Object.values(heatmapData);
 
   if (keywords.length === 0) {
-    return { avgRank: 0, visibility: 0, rankingPoints: 0 };
+    return { avgRank: 0, visibility: 0, top3Visibility: 0, rankingPoints: 0 };
   }
 
   const totalRanks = keywords.reduce((sum, kw) => sum + kw.averageRank, 0);
   const avgRank = totalRanks / keywords.length;
 
-  const totalPoints = keywords[0]?.points.length || 0;
   const totalRankingPoints = keywords.reduce((sum, kw) => sum + kw.pointsRanking, 0);
   const maxPossible = totalPoints * keywords.length;
 
   const visibility = maxPossible > 0 ? (totalRankingPoints / maxPossible) * 100 : 0;
 
+  const totalTop3 = keywords.reduce((sum, kw) => sum + (kw.top3Count || 0), 0);
+  const top3Visibility = maxPossible > 0 ? (totalTop3 / maxPossible) * 100 : 0;
+
   return {
     avgRank,
     visibility,
+    top3Visibility,
     rankingPoints: totalRankingPoints,
   };
 }

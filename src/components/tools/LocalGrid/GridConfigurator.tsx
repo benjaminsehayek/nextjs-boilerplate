@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { GridSize, GridConfig, Keyword, BusinessInfo } from './types';
+import { KeywordPresets } from './KeywordPresets';
 
 interface GridConfiguratorProps {
   business: BusinessInfo;
@@ -18,15 +19,19 @@ const GRID_SIZES: { size: GridSize; points: number; description: string }[] = [
 
 export function GridConfigurator({ business, onStartScan, onBack }: GridConfiguratorProps) {
   const [gridSize, setGridSize] = useState<GridSize>(5);
-  const [radius, setRadius] = useState(10); // km
-  const [keywords, setKeywords] = useState<Keyword[]>([
-    { id: '1', text: '', active: true },
-  ]);
+  const [radius, setRadius] = useState(2); // miles
+  const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [keywordInput, setKeywordInput] = useState('');
 
+  const RADIUS_CHIPS = [0.5, 1, 2, 3, 5, 10];
   const selectedGrid = GRID_SIZES.find((g) => g.size === gridSize)!;
-  const totalChecks = selectedGrid.points * keywords.filter((k) => k.active).length;
-  const estimatedCost = (totalChecks * 0.003).toFixed(2); // $0.003 per check
+  const activeKeywords = keywords.filter((k) => k.active && k.text.trim());
+  const totalChecks = selectedGrid.points * activeKeywords.length;
+  const estimatedCost = (totalChecks * 0.002).toFixed(2);
+  const spacing = gridSize > 1 ? (radius * 2) / (gridSize - 1) : radius * 2;
+  const spacingDisplay = spacing < 0.1
+    ? `${(spacing * 5280).toFixed(0)} ft`
+    : `${spacing.toFixed(2)} mi`;
 
   const addKeyword = () => {
     if (!keywordInput.trim()) return;
@@ -109,34 +114,56 @@ export function GridConfigurator({ business, onStartScan, onBack }: GridConfigur
           ))}
         </div>
 
-        <label className="block text-sm mb-2">Coverage Radius (km)</label>
+        <label className="block text-sm mb-2">Coverage Radius (miles)</label>
         <div className="flex items-center gap-4 mb-2">
           <input
-            type="range"
-            min="1"
-            max="50"
-            value={radius}
-            onChange={(e) => setRadius(parseInt(e.target.value))}
-            className="flex-1"
-          />
-          <input
             type="number"
-            min="1"
-            max="50"
+            min="0.25"
+            max="25"
+            step="0.25"
             value={radius}
-            onChange={(e) => setRadius(parseInt(e.target.value))}
-            className="input w-20 text-center"
+            onChange={(e) => setRadius(parseFloat(e.target.value) || 0.25)}
+            className="input w-24 text-center"
           />
-          <span className="text-sm text-ash-300">km</span>
+          <span className="text-sm text-ash-300">miles</span>
+        </div>
+        <div className="flex flex-wrap gap-2 mb-3">
+          {RADIUS_CHIPS.map((r) => (
+            <button
+              key={r}
+              onClick={() => setRadius(r)}
+              className={`px-3 py-1 text-xs rounded-lg border transition-all ${
+                radius === r
+                  ? 'border-flame-500 bg-flame-500/10 text-flame-400'
+                  : 'border-char-700 hover:border-ash-500'
+              }`}
+            >
+              {r} mi
+            </button>
+          ))}
         </div>
         <p className="text-xs text-ash-400">
-          Grid will cover {radius * 2}km × {radius * 2}km area around your business
+          Grid will cover {(radius * 2).toFixed(1)} mi × {(radius * 2).toFixed(1)} mi area · Points {spacingDisplay} apart
         </p>
       </div>
 
       {/* Keyword Management */}
       <div className="card p-6">
         <h3 className="text-lg font-display mb-4">Search Keywords</h3>
+
+        <div className="mb-4">
+          <KeywordPresets
+            onSelectPreset={(presetKeywords) => {
+              setKeywords(
+                presetKeywords.map((text, i) => ({
+                  id: `preset-${Date.now()}-${i}`,
+                  text,
+                  active: true,
+                }))
+              );
+            }}
+          />
+        </div>
 
         <div className="flex gap-2 mb-4">
           <input
@@ -202,7 +229,7 @@ export function GridConfigurator({ business, onStartScan, onBack }: GridConfigur
           </div>
           <div>
             <div className="text-2xl font-display text-ash-100">
-              {keywords.filter((k) => k.active).length}
+              {activeKeywords.length}
             </div>
             <div className="text-xs text-ash-400">Keywords</div>
           </div>
@@ -213,7 +240,7 @@ export function GridConfigurator({ business, onStartScan, onBack }: GridConfigur
         </div>
 
         <p className="text-xs text-ash-400 mt-4 text-center">
-          Estimated DataForSEO API cost: ${estimatedCost} ({totalChecks} checks × $0.003)
+          {selectedGrid.points} pts × {activeKeywords.length} kw = {totalChecks} checks · ${estimatedCost} estimated
         </p>
       </div>
 
@@ -221,7 +248,7 @@ export function GridConfigurator({ business, onStartScan, onBack }: GridConfigur
       <button
         onClick={handleStartScan}
         className="btn-primary w-full text-lg py-4"
-        disabled={keywords.filter((k) => k.active).length === 0}
+        disabled={activeKeywords.length === 0}
       >
         Start Grid Scan
       </button>
