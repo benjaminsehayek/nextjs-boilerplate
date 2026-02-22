@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { signOut as serverSignOut } from '@/app/actions/auth';
 import type { User } from '@supabase/supabase-js';
@@ -41,6 +41,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [loading, setLoading] = useState(true);
   const supabase = createClient(); // singleton — same instance every call
+  // Prevents the safety-net effect from re-retrying on every render after a failure.
+  // Reset to false on sign-out so the next sign-in gets a fresh retry budget.
+  const profileRetried = useRef(false);
 
   useEffect(() => {
     // Track whether INITIAL_SESSION has been processed so we only
@@ -85,9 +88,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 .select(BUSINESS_SELECT)
                 .eq('user_id', session.user.id),
             ]);
-            if (profileResult.error) console.error('Profile query error:', profileResult.error);
+
+            // If the profile query failed (e.g. session not yet fully set in the
+            // @supabase/ssr client, or a transient DB cold-start), retry once
+            // after a short delay rather than silently falling back to free tier.
+            let profileData = profileResult.data as Profile | null;
+            if (profileResult.error || !profileData) {
+              console.warn('Profile fetch failed, retrying in 500ms:', profileResult.error);
+              await new Promise(r => setTimeout(r, 500));
+              const retry = await (supabase as any)
+                .from('profiles')
+                .select(PROFILE_SELECT)
+                .eq('id', session.user.id)
+                .single();
+              if (retry.error) console.error('Profile retry failed:', retry.error);
+              else profileData = retry.data as Profile;
+            }
+
             if (businessResult.error) console.error('Business query error:', businessResult.error);
-            setProfile(profileResult.data as Profile | null);
+            setProfile(profileData);
             const bizList: Business[] = businessResult.data || [];
             setBusinesses(bizList);
             setBusiness(bizList[0] || null);
@@ -98,6 +117,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setProfile(null);
           setBusiness(null);
           setBusinesses([]);
+          profileRetried.current = false; // allow retry on next sign-in
         }
 
         // Clear safety timer HERE (after data loaded), not at callback start —
@@ -122,6 +142,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       subscription.unsubscribe();
     };
   }, []);
+
+  // Safety net: if auth finished loading but we have a user with no profile,
+  // the initial fetch silently failed — try once more automatically.
+  useEffect(() => {
+    if (!loading && user && !profile && !profileRetried.current) {
+      profileRetried.current = true;
+      refreshProfile();
+    }
+  // refreshProfile is stable (only uses supabase singleton + user state)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user, profile]);
 
   const signOut = async () => {
     try {
