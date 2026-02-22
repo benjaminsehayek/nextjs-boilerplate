@@ -792,6 +792,8 @@ function SettingsPageContent() {
           onClose={() => setShowMarketModal(false)}
           market={editingMarket}
           businessId={business.id}
+          businessName={business.name}
+          businessDomain={business.domain}
           onSave={() => {
             setShowMarketModal(false);
             window.location.reload();

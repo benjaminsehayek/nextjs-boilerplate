@@ -18,20 +18,28 @@ export function MarketsList({ markets, onEdit, onDelete }: MarketsListProps) {
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {markets.map((market) => (
         <div key={market.id} className="card p-4">
-          <div className="flex items-start justify-between mb-2">
-            <h3 className="font-display text-lg">{market.name}</h3>
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <h3 className="font-medium">{market.name}</h3>
+              {market.is_primary && (
+                <span className="text-xs text-flame-400 font-medium">Primary</span>
+              )}
+            </div>
           </div>
 
-          <div className="space-y-1 text-sm">
-            {market.cities && (
-              <p className="text-ash-300">
-                <span className="text-ash-500">Cities:</span> {market.cities}
+          <div className="space-y-1 text-xs text-ash-500">
+            {market.address && <p>{market.address}</p>}
+            {market.phone && <p>{market.phone}</p>}
+            {market.area_codes?.length > 0 && (
+              <p>Area codes: {market.area_codes.join(', ')}</p>
+            )}
+            {market.latitude && market.longitude && (
+              <p className="font-mono">
+                {Number(market.latitude).toFixed(4)}, {Number(market.longitude).toFixed(4)}
               </p>
             )}
-            {market.area_codes && (
-              <p className="text-ash-300">
-                <span className="text-ash-500">Area Codes:</span> {market.area_codes}
-              </p>
+            {market.place_id && (
+              <p className="truncate font-mono text-ash-700">{market.place_id}</p>
             )}
           </div>
 
