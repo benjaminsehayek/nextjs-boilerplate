@@ -6,10 +6,6 @@ import { signOut as serverSignOut } from '@/app/actions/auth';
 import type { User } from '@supabase/supabase-js';
 import type { Profile, Business } from '@/types';
 
-const PROFILE_SELECT = '*';
-
-const BUSINESS_SELECT = '*';
-
 interface AuthContextValue {
   user: User | null;
   profile: Profile | null;
@@ -34,6 +30,31 @@ const AuthContext = createContext<AuthContextValue>({
   switchBusiness: () => {},
 });
 
+// ---------------------------------------------------------------------------
+// Authenticated fetch helpers
+// These use the Supabase REST API with an explicit Authorization header rather
+// than relying on @supabase/ssr's cookie session state. Large JWTs are chunked
+// across multiple cookies and can fail to reassemble, causing queries to go out
+// unauthenticated → RLS blocks them → 0 rows → null profile → free-tier UI.
+// ---------------------------------------------------------------------------
+const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+async function restFetch(path: string, jwt: string): Promise<any> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+      apikey: SUPABASE_ANON,
+      Accept: 'application/json',
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Supabase REST ${res.status}: ${body}`);
+  }
+  return res.json();
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -41,9 +62,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [loading, setLoading] = useState(true);
   const supabase = createClient(); // singleton — same instance every call
+
   // Prevents the safety-net effect from re-retrying on every render after a failure.
   // Reset to false on sign-out so the next sign-in gets a fresh retry budget.
   const profileRetried = useRef(false);
+  // Holds the latest access_token so refreshProfile() can use it without
+  // calling getSession() (which would be an extra round-trip).
+  const accessTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     // Track whether INITIAL_SESSION has been processed so we only
@@ -69,6 +94,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(session?.user ?? null);
 
         if (session?.user) {
+          // Keep the latest JWT available for refreshProfile()
+          accessTokenRef.current = session.access_token ?? null;
+
           // If SIGNED_IN fires after a null INITIAL_SESSION (i.e., the user
           // just logged in from the login page), re-enter loading while we
           // fetch the profile — otherwise the dashboard renders with
@@ -76,44 +104,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (initialized && _event === 'SIGNED_IN') {
             setLoading(true);
           }
+
           try {
-            const [profileResult, businessResult] = await Promise.all([
-              (supabase as any)
-                .from('profiles')
-                .select(PROFILE_SELECT)
-                .eq('id', session.user.id)
-                .single(),
-              (supabase as any)
-                .from('businesses')
-                .select(BUSINESS_SELECT)
-                .eq('user_id', session.user.id),
+            const jwt = session.access_token as string;
+            const uid = session.user.id as string;
+
+            const [profileArr, bizArr] = await Promise.all([
+              restFetch(`profiles?id=eq.${uid}&select=*&limit=1`, jwt),
+              restFetch(`businesses?user_id=eq.${uid}&select=*`, jwt),
             ]);
 
-            // If the profile query failed (e.g. session not yet fully set in the
-            // @supabase/ssr client, or a transient DB cold-start), retry once
-            // after a short delay rather than silently falling back to free tier.
-            let profileData = profileResult.data as Profile | null;
-            if (profileResult.error || !profileData) {
-              console.warn('Profile fetch failed, retrying in 500ms:', profileResult.error);
-              await new Promise(r => setTimeout(r, 500));
-              const retry = await (supabase as any)
-                .from('profiles')
-                .select(PROFILE_SELECT)
-                .eq('id', session.user.id)
-                .single();
-              if (retry.error) console.error('Profile retry failed:', retry.error);
-              else profileData = retry.data as Profile;
-            }
+            const profileData = (profileArr[0] as Profile) ?? null;
+            const bizList: Business[] = Array.isArray(bizArr) ? bizArr : [];
 
-            if (businessResult.error) console.error('Business query error:', businessResult.error);
             setProfile(profileData);
-            const bizList: Business[] = businessResult.data || [];
             setBusinesses(bizList);
             setBusiness(bizList[0] || null);
           } catch (error) {
             console.error('Error loading profile/business:', error);
           }
         } else {
+          accessTokenRef.current = null;
           setProfile(null);
           setBusiness(null);
           setBusinesses([]);
@@ -150,7 +161,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       profileRetried.current = true;
       refreshProfile();
     }
-  // refreshProfile is stable (only uses supabase singleton + user state)
+  // refreshProfile is stable (only uses refs + user state)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, user, profile]);
 
@@ -167,13 +178,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshProfile = async () => {
     if (!user) return;
+    const jwt = accessTokenRef.current;
+    if (!jwt) return;
     try {
-      const { data } = await (supabase as any)
-        .from('profiles')
-        .select(PROFILE_SELECT)
-        .eq('id', user.id)
-        .single();
-      setProfile(data as Profile | null);
+      const profileArr = await restFetch(
+        `profiles?id=eq.${user.id}&select=*&limit=1`,
+        jwt
+      );
+      setProfile((profileArr[0] as Profile) ?? null);
     } catch (error) {
       console.error('Error refreshing profile:', error);
     }
@@ -181,13 +193,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshBusiness = async () => {
     if (!user) return;
+    const jwt = accessTokenRef.current;
+    if (!jwt) return;
     try {
-      const { data, error } = await (supabase as any)
-        .from('businesses')
-        .select(BUSINESS_SELECT)
-        .eq('user_id', user.id);
-      if (error) console.error('refreshBusiness query error:', error);
-      const bizList: Business[] = data || [];
+      const bizArr = await restFetch(
+        `businesses?user_id=eq.${user.id}&select=*`,
+        jwt
+      );
+      const bizList: Business[] = Array.isArray(bizArr) ? bizArr : [];
       setBusinesses(bizList);
       setBusiness(bizList[0] || null);
     } catch (error) {
