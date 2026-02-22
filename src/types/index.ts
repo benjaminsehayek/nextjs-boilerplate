@@ -76,6 +76,13 @@ export interface Market {
   cities: string[];
   area_codes: string[];
   is_primary: boolean;
+  place_id: string | null;
+  cid: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  address: string | null;
+  phone: string | null;
+  state: string | null;
   created_at: string;
 }
 

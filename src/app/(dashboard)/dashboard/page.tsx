@@ -70,10 +70,18 @@ interface ServiceForm {
   close_rate: string;
 }
 
-interface MarketForm {
-  name: string;
-  cities: string;
-  area_codes: string;
+interface DiscoveredLocation {
+  id: string;
+  city: string;
+  state: string; // full state name from GBP (e.g. "Oregon") or 2-letter for manual/SERP
+  address?: string;
+  phone?: string;
+  area_codes?: string[]; // derived from phone, or empty
+  place_id?: string;
+  cid?: string;
+  latitude?: number;
+  longitude?: number;
+  source: 'gbp' | 'serp' | 'manual';
 }
 
 function OnboardingWizard() {
@@ -144,9 +152,13 @@ function OnboardingWizard() {
     { name: '', profit_per_job: '', close_rate: '30' },
   ]);
 
-  const [markets, setMarkets] = useState<MarketForm[]>([
-    { name: 'Primary Market', cities: '', area_codes: '' },
-  ]);
+  // Markets discovery state
+  const [discoveredLocations, setDiscoveredLocations] = useState<DiscoveredLocation[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [marketsDiscovering, setMarketsDiscovering] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [manualCity, setManualCity] = useState('');
+  const [manualState, setManualState] = useState('');
 
   const handleSmartLookup = useCallback(async () => {
     const trimmed = lookupInput.trim();
@@ -340,6 +352,202 @@ function OnboardingWizard() {
     }
   };
 
+  // ─── Location Discovery ───────────────────────────────────────────────────
+
+  const discoverLocations = useCallback(async () => {
+    if (!businessData.domain && !businessData.name) return;
+    setMarketsDiscovering(true);
+    setDiscoveryError(null);
+
+    const US_STATES = new Set([
+      'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
+      'KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ',
+      'NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT',
+      'VA','WA','WV','WI','WY','DC',
+    ]);
+
+    // Derive US area code from a phone string (e.g. "(503) 555-1234" → ["503"])
+    const deriveAreaCodes = (phone: string): string[] => {
+      const digits = phone.replace(/\D/g, '');
+      if (digits.length === 10) return [digits.slice(0, 3)];
+      if (digits.length === 11 && digits[0] === '1') return [digits.slice(1, 4)];
+      return [];
+    };
+
+    // Extract full location data from a GBP listing item
+    const itemToLocation = (item: any): DiscoveredLocation | null => {
+      const city = item.address_info?.city || '';
+      const state = item.address_info?.region || '';
+      if (!city || !state) return null;
+      const phone = item.phone || '';
+      return {
+        id: crypto.randomUUID(),
+        city: city.trim(),
+        state: state.trim(),
+        address: item.address || undefined,
+        phone: phone || undefined,
+        area_codes: phone ? deriveAreaCodes(phone) : [],
+        place_id: item.place_id || undefined,
+        cid: item.cid || undefined,
+        latitude: item.latitude || undefined,
+        longitude: item.longitude || undefined,
+        source: 'gbp',
+      };
+    };
+
+    // Extract city+state mentions from a SERP snippet or URL
+    const extractCitiesFromSerp = (items: any[]): DiscoveredLocation[] => {
+      const found: DiscoveredLocation[] = [];
+      const cityStateRe = /\b([A-Z][a-zA-Z\s]{1,20}),\s*([A-Z]{2})\b/g;
+
+      for (const item of items) {
+        const text = `${item.description || ''} ${item.url || ''}`;
+        let match;
+        cityStateRe.lastIndex = 0;
+        while ((match = cityStateRe.exec(text)) !== null) {
+          const city = match[1].trim();
+          const state = match[2].trim();
+          if (!US_STATES.has(state)) continue;
+          found.push({
+            id: crypto.randomUUID(),
+            city,
+            state,
+            source: 'serp',
+          });
+        }
+
+        // Also parse URL slugs like /service-areas/portland-or/ → Portland, OR
+        try {
+          const url = new URL(item.url || '');
+          const segments = url.pathname.split('/').filter(Boolean);
+          for (const seg of segments) {
+            const slugMatch = seg.match(/^([a-z](?:[a-z-]*[a-z]))-([a-z]{2})$/);
+            if (slugMatch) {
+              const stateCandidate = slugMatch[2].toUpperCase();
+              if (US_STATES.has(stateCandidate)) {
+                found.push({
+                  id: crypto.randomUUID(),
+                  city: slugMatch[1].replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+                  state: stateCandidate,
+                  source: 'serp',
+                });
+              }
+            }
+          }
+        } catch {
+          // ignore invalid URLs
+        }
+      }
+      return found;
+    };
+
+    const results = await Promise.allSettled([
+      // 1. GBP listings by domain
+      businessData.domain
+        ? dfsCall<any>('business_data/business_listings/search/live', [
+            { categories: [], filters: ['domain', '=', businessData.domain], language_code: 'en', limit: 20 },
+          ])
+        : Promise.resolve(null),
+
+      // 2. GBP listings by name
+      businessData.name
+        ? dfsCall<any>('business_data/business_listings/search/live', [
+            { categories: [], filters: ['title', 'like', `%${businessData.name}%`], language_code: 'en', limit: 20 },
+          ])
+        : Promise.resolve(null),
+
+      // 3. Google SERP for service areas
+      businessData.name
+        ? dfsCall<any>('serp/google/organic/live/advanced', [
+            {
+              keyword: `"${businessData.name}" service area${businessData.state ? ' ' + businessData.state : ''}`,
+              language_code: 'en',
+              location_name: 'United States',
+              depth: 10,
+            },
+          ])
+        : Promise.resolve(null),
+    ]);
+
+    const raw: DiscoveredLocation[] = [];
+
+    // Process GBP-by-domain
+    if (results[0].status === 'fulfilled' && results[0].value) {
+      const items = results[0].value.tasks?.[0]?.result?.[0]?.items || [];
+      for (const item of items) {
+        const loc = itemToLocation(item);
+        if (loc) raw.push(loc);
+      }
+    }
+
+    // Process GBP-by-name (dedupe against domain results)
+    if (results[1].status === 'fulfilled' && results[1].value) {
+      const items = results[1].value.tasks?.[0]?.result?.[0]?.items || [];
+      for (const item of items) {
+        const loc = itemToLocation(item);
+        if (loc) raw.push(loc);
+      }
+    }
+
+    // Process SERP results
+    if (results[2].status === 'fulfilled' && results[2].value) {
+      const items = results[2].value.tasks?.[0]?.result?.[0]?.items || [];
+      raw.push(...extractCitiesFromSerp(items));
+    }
+
+    // Deduplicate by city+state (case-insensitive), prefer GBP entries over SERP
+    const seen = new Map<string, DiscoveredLocation>();
+    for (const loc of raw) {
+      if (!loc.city || !loc.state) continue;
+      const key = `${loc.city.toLowerCase()}|${loc.state.toLowerCase()}`;
+      if (!seen.has(key) || loc.source === 'gbp') {
+        seen.set(key, loc);
+      }
+    }
+
+    const deduped = Array.from(seen.values());
+    setDiscoveredLocations(deduped);
+    setSelectedIds(new Set(deduped.map((l) => l.id)));
+    setMarketsDiscovering(false);
+  }, [businessData.domain, businessData.name, businessData.state]);
+
+  // Trigger discovery when entering the markets step
+  useEffect(() => {
+    if (currentStep === 'markets' && discoveredLocations.length === 0 && !marketsDiscovering) {
+      discoverLocations();
+    }
+  }, [currentStep, discoveredLocations.length, marketsDiscovering, discoverLocations]);
+
+  const toggleLocation = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const addManualLocation = () => {
+    const city = manualCity.trim();
+    const state = manualState.trim().toUpperCase();
+    if (!city || !state) return;
+    const loc: DiscoveredLocation = {
+      id: crypto.randomUUID(),
+      city,
+      state,
+      source: 'manual',
+    };
+    setDiscoveredLocations((prev) => [...prev, loc]);
+    setSelectedIds((prev) => new Set([...prev, loc.id]));
+    setManualCity('');
+    setManualState('');
+  };
+
+  const removeDiscoveredLocation = (id: string) => {
+    setDiscoveredLocations((prev) => prev.filter((l) => l.id !== id));
+    setSelectedIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
+  };
+
   const handleMarketsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -348,16 +556,23 @@ function OnboardingWizard() {
     try {
       if (!businessId) throw new Error('Business not found');
 
-      const validMarkets = markets.filter((m) => m.name.trim() && m.cities.trim());
-      if (validMarkets.length === 0) throw new Error('Please add at least one market');
+      const selected = discoveredLocations.filter((l) => selectedIds.has(l.id));
+      if (selected.length === 0) throw new Error('Select at least one market to continue');
 
       const { error } = await createMarkets(
         businessId,
-        validMarkets.map((market, index) => ({
-          name: market.name,
-          cities: market.cities.split(',').map((c) => c.trim()).filter(Boolean),
-          area_codes: market.area_codes.split(',').map((a) => a.trim()).filter(Boolean),
+        selected.map((loc, index) => ({
+          name: `${loc.city}, ${loc.state}`,
+          cities: [loc.city],
+          area_codes: loc.area_codes ?? [],
           is_primary: index === 0,
+          place_id: loc.place_id ?? null,
+          cid: loc.cid ?? null,
+          latitude: loc.latitude ?? null,
+          longitude: loc.longitude ?? null,
+          address: loc.address ?? null,
+          phone: loc.phone ?? null,
+          state: loc.state ?? null,
         }))
       );
       if (error) throw new Error(error);
@@ -378,16 +593,6 @@ function OnboardingWizard() {
     const updated = [...services];
     updated[index] = { ...updated[index], [field]: value };
     setServices(updated);
-  };
-
-  const addMarket = () =>
-    setMarkets([...markets, { name: '', cities: '', area_codes: '' }]);
-  const removeMarket = (index: number) =>
-    setMarkets(markets.filter((_, i) => i !== index));
-  const updateMarket = (index: number, field: keyof MarketForm, value: string) => {
-    const updated = [...markets];
-    updated[index] = { ...updated[index], [field]: value };
-    setMarkets(updated);
   };
 
   const steps = [
@@ -837,83 +1042,145 @@ function OnboardingWizard() {
         </div>
       )}
 
-      {/* Step 4: Markets */}
+      {/* Step 4: Target Markets */}
       {currentStep === 'markets' && (
         <div className="card p-8">
-          <h2 className="text-2xl font-display mb-2 text-center">Service Areas</h2>
+          <h2 className="text-2xl font-display mb-2 text-center">Target Markets</h2>
           <p className="text-ash-400 text-center mb-6">
-            Define your service area markets (for lead attribution)
+            Define the markets you serve
           </p>
 
-          <form onSubmit={handleMarketsSubmit} className="space-y-4">
-            {markets.map((market, index) => (
-              <div key={index} className="card-interactive p-4">
-                <div className="flex items-start gap-4">
-                  <div className="flex-1 space-y-3">
-                    <div>
-                      <label className="input-label text-xs">Market Name *</label>
-                      <input
-                        type="text"
-                        value={market.name}
-                        onChange={(e) => updateMarket(index, 'name', e.target.value)}
-                        className="input"
-                        placeholder="e.g., Portland Metro, SW Washington"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="input-label text-xs">Cities (comma-separated) *</label>
-                      <input
-                        type="text"
-                        value={market.cities}
-                        onChange={(e) => updateMarket(index, 'cities', e.target.value)}
-                        className="input"
-                        placeholder="Portland, Beaverton, Hillsboro"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="input-label text-xs">Area Codes (comma-separated)</label>
-                      <input
-                        type="text"
-                        value={market.area_codes}
-                        onChange={(e) => updateMarket(index, 'area_codes', e.target.value)}
-                        className="input"
-                        placeholder="503, 971"
-                      />
-                    </div>
-                  </div>
-                  {markets.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeMarket(index)}
-                      className="btn-ghost text-danger px-3"
-                    >
-                      ✕
-                    </button>
-                  )}
+          {/* Discovery loading */}
+          {marketsDiscovering && (
+            <div className="flex flex-col items-center gap-3 py-10">
+              <div className="animate-spin h-8 w-8 border-4 border-flame-500 border-t-transparent rounded-full" />
+              <p className="text-ash-400 text-sm">Discovering your service locations...</p>
+            </div>
+          )}
+
+          {!marketsDiscovering && (
+            <form onSubmit={handleMarketsSubmit} className="space-y-4">
+
+              {/* No results notice */}
+              {discoveredLocations.length === 0 && (
+                <div className="text-center py-4 text-ash-500 text-sm">
+                  No locations found automatically — add them manually below.
+                </div>
+              )}
+
+              {/* Discovered location cards */}
+              {discoveredLocations.length > 0 && (
+                <div className="space-y-2">
+                  {discoveredLocations.map((loc) => {
+                    const isSelected = selectedIds.has(loc.id);
+                    return (
+                      <div
+                        key={loc.id}
+                        className={`flex items-center gap-3 p-3 rounded-btn border transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'border-flame-500/40 bg-flame-500/5'
+                            : 'border-char-700 bg-char-800 opacity-50'
+                        }`}
+                        onClick={() => toggleLocation(loc.id)}
+                      >
+                        <div
+                          className={`w-5 h-5 rounded flex-shrink-0 border-2 flex items-center justify-center ${
+                            isSelected ? 'border-flame-500 bg-flame-500' : 'border-ash-600 bg-transparent'
+                          }`}
+                        >
+                          {isSelected && (
+                            <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+                              <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className="font-medium text-sm">
+                            {loc.city}, {loc.state}
+                          </span>
+                          {(loc.address || loc.phone) && (
+                            <div className="text-ash-500 text-xs mt-0.5 truncate">
+                              {loc.address && <span>{loc.address}</span>}
+                              {loc.address && loc.phone && <span className="mx-1">·</span>}
+                              {loc.phone && <span>{loc.phone}</span>}
+                            </div>
+                          )}
+                        </div>
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            loc.source === 'gbp'
+                              ? 'bg-emerald-500/15 text-emerald-400'
+                              : loc.source === 'serp'
+                              ? 'bg-blue-500/15 text-blue-400'
+                              : 'bg-ash-600/30 text-ash-400'
+                          }`}
+                        >
+                          {loc.source === 'gbp' ? 'GBP' : loc.source === 'serp' ? 'Web' : 'Manual'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); removeDiscoveredLocation(loc.id); }}
+                          className="text-ash-600 hover:text-danger text-lg leading-none flex-shrink-0 px-1"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Manual addition */}
+              <div className="pt-2">
+                <p className="input-label text-xs mb-2">Add a location manually</p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={manualCity}
+                    onChange={(e) => setManualCity(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addManualLocation())}
+                    className="input flex-1"
+                    placeholder="City"
+                  />
+                  <input
+                    type="text"
+                    value={manualState}
+                    onChange={(e) => setManualState(e.target.value.toUpperCase().slice(0, 2))}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addManualLocation())}
+                    className="input w-20 uppercase"
+                    placeholder="ST"
+                    maxLength={2}
+                  />
+                  <button
+                    type="button"
+                    onClick={addManualLocation}
+                    className="btn-secondary px-4 flex-shrink-0"
+                    disabled={!manualCity.trim() || !manualState.trim()}
+                  >
+                    + Add
+                  </button>
                 </div>
               </div>
-            ))}
 
-            <button type="button" onClick={addMarket} className="btn-secondary w-full">
-              + Add Another Market
-            </button>
+              {discoveryError && (
+                <p className="text-danger text-sm">{discoveryError}</p>
+              )}
 
-            <div className="flex justify-between gap-3 pt-4">
-              <button
-                type="button"
-                onClick={() => setCurrentStep('services')}
-                className="btn-ghost"
-                disabled={loading}
-              >
-                Back
-              </button>
-              <button type="submit" className="btn-primary" disabled={loading}>
-                Complete Setup
-              </button>
-            </div>
-          </form>
+              <div className="flex justify-between gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep('services')}
+                  className="btn-ghost"
+                  disabled={loading}
+                >
+                  Back
+                </button>
+                <button type="submit" className="btn-primary" disabled={loading || selectedIds.size === 0}>
+                  {loading ? 'Saving...' : 'Complete Setup'}
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       )}
 
