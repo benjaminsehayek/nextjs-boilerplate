@@ -480,6 +480,48 @@ function LocationStep({
   loading: boolean;
   onSelect: (loc: BusinessLocation) => void;
 }) {
+  const [geocodingId, setGeocodingId] = useState<string | null>(null);
+  const [geocodeErrors, setGeocodeErrors] = useState<Record<string, string>>({});
+
+  const handleClick = async (loc: BusinessLocation) => {
+    if (loc.latitude && loc.longitude) {
+      onSelect(loc);
+      return;
+    }
+
+    // Auto-attempt geocoding from existing address fields
+    const query = [loc.address, loc.city, loc.state, loc.zip].filter(Boolean).join(', ');
+    if (!query) {
+      onSelect(loc); // no address at all — let LocationCoordsSetup handle it
+      return;
+    }
+
+    setGeocodingId(loc.id);
+    setGeocodeErrors((prev) => ({ ...prev, [loc.id]: '' }));
+
+    try {
+      const resp = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`
+      );
+      const data = await resp.json();
+      if (data.length > 0) {
+        const lat = parseFloat(data[0].lat);
+        const lng = parseFloat(data[0].lon);
+        const { error } = await updateLocationCoords({ location_id: loc.id, latitude: lat, longitude: lng });
+        if (!error) {
+          onSelect({ ...loc, latitude: lat, longitude: lng });
+          return;
+        }
+      }
+      // Geocoding returned nothing — fall through to LocationCoordsSetup
+      onSelect(loc);
+    } catch {
+      setGeocodeErrors((prev) => ({ ...prev, [loc.id]: 'Auto-geocode failed — try manual setup' }));
+    } finally {
+      setGeocodingId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="space-y-3">
@@ -520,16 +562,14 @@ function LocationStep({
       <div className="space-y-3">
         {locations.map((loc) => {
           const hasCoords = !!(loc.latitude && loc.longitude);
+          const isGeocoding = geocodingId === loc.id;
+          const geocodeError = geocodeErrors[loc.id];
           return (
             <button
               key={loc.id}
-              onClick={() => onSelect(loc)}
-              disabled={!hasCoords}
-              className={`card w-full text-left p-5 transition-all ${
-                hasCoords
-                  ? 'card-interactive hover:border-flame-500/50'
-                  : 'opacity-50 cursor-not-allowed'
-              }`}
+              onClick={() => handleClick(loc)}
+              disabled={isGeocoding}
+              className="card card-interactive w-full text-left p-5 transition-all hover:border-flame-500/50"
             >
               <div className="flex items-center justify-between">
                 <div>
@@ -544,13 +584,22 @@ function LocationStep({
                   <p className="text-sm text-ash-300">
                     {[loc.address, loc.city, loc.state, loc.zip].filter(Boolean).join(', ')}
                   </p>
-                  {!hasCoords && (
-                    <p className="text-xs text-amber-400 mt-1">Missing coordinates — set up first</p>
+                  {isGeocoding && (
+                    <p className="text-xs text-ash-400 mt-1">Finding coordinates...</p>
+                  )}
+                  {!hasCoords && !isGeocoding && (
+                    <p className="text-xs text-amber-400 mt-1">
+                      {geocodeError || 'Click to set up coordinates'}
+                    </p>
                   )}
                 </div>
-                {hasCoords && (
-                  <div className="text-ash-400 text-lg">→</div>
-                )}
+                <div className="text-ash-400 text-lg flex-shrink-0">
+                  {isGeocoding ? (
+                    <span className="inline-block w-5 h-5 border-2 border-ash-600 border-t-flame-500 rounded-full animate-spin" />
+                  ) : (
+                    '→'
+                  )}
+                </div>
               </div>
             </button>
           );
