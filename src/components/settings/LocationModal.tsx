@@ -20,7 +20,6 @@ export function LocationModal({ isOpen, onClose, location, businessId, onSave }:
     state: '',
     zip: '',
     phone: '',
-    is_primary: false,
   });
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -38,7 +37,6 @@ export function LocationModal({ isOpen, onClose, location, businessId, onSave }:
         state: location.state || '',
         zip: location.zip || '',
         phone: location.phone || '',
-        is_primary: location.is_primary || false,
       });
     } else {
       setFormData({
@@ -48,7 +46,6 @@ export function LocationModal({ isOpen, onClose, location, businessId, onSave }:
         state: '',
         zip: '',
         phone: '',
-        is_primary: false,
       });
     }
   }, [location]);
@@ -92,41 +89,21 @@ export function LocationModal({ isOpen, onClose, location, businessId, onSave }:
         state: formData.state.toUpperCase(),
         zip: formData.zip || null,
         phone: formData.phone || null,
-        is_primary: formData.is_primary,
       };
 
       if (isEditMode && location) {
-        // Update existing location
         const { error } = await (supabase as any)
           .from('business_locations')
           .update(locationData)
           .eq('id', location.id);
 
         if (error) throw error;
-
-        // If marking as primary, unset other primary locations
-        if (formData.is_primary) {
-          await (supabase as any)
-            .from('business_locations')
-            .update({ is_primary: false })
-            .eq('business_id', businessId)
-            .neq('id', location.id);
-        }
       } else {
-        // Create new location
         const { error } = await (supabase as any)
           .from('business_locations')
-          .insert(locationData);
+          .insert({ ...locationData, is_primary: false });
 
         if (error) throw error;
-
-        // If marking as primary, unset other primary locations
-        if (formData.is_primary) {
-          await (supabase as any)
-            .from('business_locations')
-            .update({ is_primary: false })
-            .eq('business_id', businessId);
-        }
       }
 
       onSave();
@@ -265,24 +242,6 @@ export function LocationModal({ isOpen, onClose, location, businessId, onSave }:
               </div>
             </div>
 
-            {/* Primary Location Toggle */}
-            <div className="p-4 bg-char-700 rounded-btn">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={formData.is_primary}
-                  onChange={(e) => setFormData({ ...formData, is_primary: e.target.checked })}
-                  className="mt-1"
-                  disabled={saving}
-                />
-                <div className="flex-1">
-                  <div className="font-semibold text-ash-100">Mark as Primary Location</div>
-                  <p className="text-sm text-ash-400 mt-1">
-                    Primary location is used as the default for scans and reports. Only one location can be primary.
-                  </p>
-                </div>
-              </label>
-            </div>
           </div>
         </form>
 

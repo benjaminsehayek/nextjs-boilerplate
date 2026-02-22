@@ -6,9 +6,10 @@ interface LocationsListProps {
   locations: BusinessLocation[];
   onEdit: (location: BusinessLocation) => void;
   onDelete: (id: string) => void;
+  onSetPrimary: (id: string) => void;
 }
 
-export function LocationsList({ locations, onEdit, onDelete }: LocationsListProps) {
+export function LocationsList({ locations, onEdit, onDelete, onSetPrimary }: LocationsListProps) {
   if (locations.length === 0) {
     return (
       <div className="text-center py-12 bg-char-700/50 rounded-btn">
@@ -45,6 +46,15 @@ export function LocationsList({ locations, onEdit, onDelete }: LocationsListProp
           </div>
 
           <div className="flex gap-2 pt-3 border-t border-char-700">
+            {!location.is_primary && (
+              <button
+                onClick={() => onSetPrimary(location.id)}
+                className="btn-secondary text-sm flex-1"
+                title="Make this the primary location"
+              >
+                Set as Primary
+              </button>
+            )}
             <button
               onClick={() => onEdit(location)}
               className="btn-secondary text-sm flex-1"
@@ -54,10 +64,18 @@ export function LocationsList({ locations, onEdit, onDelete }: LocationsListProp
             <button
               onClick={() => onDelete(location.id)}
               className={`btn-ghost text-sm flex-1 ${
-                locations.length === 1 ? 'opacity-50 cursor-not-allowed' : 'text-danger hover:bg-danger/10'
+                location.is_primary || locations.length === 1
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'text-danger hover:bg-danger/10'
               }`}
-              disabled={locations.length === 1}
-              title={locations.length === 1 ? 'Cannot delete the only location' : 'Delete location'}
+              disabled={location.is_primary || locations.length === 1}
+              title={
+                location.is_primary
+                  ? 'Set another location as primary before deleting'
+                  : locations.length === 1
+                  ? 'Cannot delete the only location'
+                  : 'Delete location'
+              }
             >
               Delete
             </button>

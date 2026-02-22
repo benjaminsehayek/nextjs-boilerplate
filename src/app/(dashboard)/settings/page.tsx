@@ -279,6 +279,24 @@ function SettingsPageContent() {
     }
   };
 
+  const handleSetPrimaryLocation = async (id: string) => {
+    if (!business) return;
+    try {
+      await (supabase as any)
+        .from('business_locations')
+        .update({ is_primary: false })
+        .eq('business_id', business.id);
+      await (supabase as any)
+        .from('business_locations')
+        .update({ is_primary: true })
+        .eq('id', id);
+      window.location.reload();
+    } catch (error) {
+      console.error('Error setting primary location:', error);
+      alert('Failed to set primary location');
+    }
+  };
+
   // Service handlers
   const openAddServiceModal = () => {
     setEditingService(null);
@@ -676,6 +694,7 @@ function SettingsPageContent() {
                   locations={locations}
                   onEdit={openEditLocationModal}
                   onDelete={handleDeleteLocation}
+                  onSetPrimary={handleSetPrimaryLocation}
                 />
                 {tier === 'free' && locations.length >= 1 && (
                   <div className="mt-6">
