@@ -56,7 +56,7 @@ export function RecentActivity({ business }: RecentActivityProps) {
         // Get recent leads
         const { data: leads } = await (supabase as any)
           .from('leads')
-          .select('id, company_name, created_at')
+          .select('id, company, created_at')
           .eq('business_id', business.id)
           .order('created_at', { ascending: false })
           .limit(3);
@@ -66,7 +66,7 @@ export function RecentActivity({ business }: RecentActivityProps) {
             id: lead.id,
             type: 'lead',
             title: 'New Lead',
-            description: `${lead.company_name} added to database`,
+            description: `${lead.company} added to database`,
             timestamp: lead.created_at,
             link: '/lead-database',
             icon: '👥',

@@ -73,7 +73,7 @@ export default function LocalGridPage() {
         .eq('business_id', business.id)
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (data && data.status === 'complete') {
         setCurrentScan(data as GridScanResult);

@@ -151,7 +151,7 @@ export default function OffPageAuditPage() {
         .in('status', ['pending', 'analyzing'])
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (existingAudit) {
         setAuditId(existingAudit.id);

@@ -40,7 +40,7 @@ export function ActionItems({ business }: ActionItemsProps) {
           .eq('status', 'complete')
           .order('created_at', { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
 
         if (latestAudit) {
           if (latestAudit.overall_score < 70) {
