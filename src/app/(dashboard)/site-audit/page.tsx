@@ -284,9 +284,17 @@ export default function SiteAuditPage() {
       setPhase('crawling');
       log('Waiting for crawl to complete...');
 
+      const MAX_POLL_MS = 15 * 60 * 1000; // 15 minutes
+      const pollStart = Date.now();
+
       await new Promise<void>((resolve, reject) => {
+        let lastProgress = '';
         const poll = async () => {
           if (abortRef.current) { reject(new Error('Aborted')); return; }
+          if (Date.now() - pollStart > MAX_POLL_MS) {
+            reject(new Error('Crawl timed out after 15 minutes. DataForSEO may be busy — please try again shortly.'));
+            return;
+          }
           try {
             const status = await pollCrawlStatus(taskId);
             setProgress((prev) => ({
@@ -294,6 +302,16 @@ export default function SiteAuditPage() {
               pagesCrawled: status.pagesCrawled,
               pagesInQueue: status.pagesInQueue,
             }));
+
+            // Log meaningful state transitions
+            if (status.progress !== lastProgress) {
+              if (status.progress === 'in_queue') {
+                log('Task queued — waiting for DataForSEO crawler to pick it up...');
+              } else if (status.progress === 'working') {
+                log('Crawler started!', 'success');
+              }
+              lastProgress = status.progress;
+            }
 
             if (status.finished) {
               completeTask('Crawling pages');
