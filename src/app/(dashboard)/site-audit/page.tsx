@@ -126,7 +126,7 @@ export default function SiteAuditPage() {
         .in('status', ['complete'])
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (existingAudit?.status === 'complete') {
         loadAuditResults(existingAudit);
