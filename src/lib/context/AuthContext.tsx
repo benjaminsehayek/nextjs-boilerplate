@@ -66,6 +66,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(session?.user ?? null);
 
         if (session?.user) {
+          // If SIGNED_IN fires after a null INITIAL_SESSION (i.e., the user
+          // just logged in from the login page), re-enter loading while we
+          // fetch the profile — otherwise the dashboard renders with
+          // profile=null (free tier) for ~150ms before the fetch completes.
+          if (initialized && _event === 'SIGNED_IN') {
+            setLoading(true);
+          }
           try {
             const [profileResult, businessResult] = await Promise.all([
               (supabase as any)
@@ -93,16 +100,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setBusinesses([]);
         }
 
-        // Only flip loading→false on the very first event (INITIAL_SESSION).
-        // Subsequent events (TOKEN_REFRESHED, SIGNED_OUT, etc.) update state
-        // but don't re-trigger the loading skeleton.
         // Clear safety timer HERE (after data loaded), not at callback start —
         // if Promise.all hangs, the safety timer still fires as a fallback.
         clearTimeout(safetyTimer);
         if (!initialized) {
+          // First auth event: flip loading→false unconditionally.
           initialized = true;
           setLoading(false);
+        } else if (_event === 'SIGNED_IN') {
+          // SIGNED_IN after a null INITIAL_SESSION: we re-entered loading above,
+          // so we need to exit it now that the profile is loaded.
+          setLoading(false);
         }
+        // TOKEN_REFRESHED / SIGNED_OUT / USER_UPDATED: state updated silently,
+        // no loading state change needed.
       }
     );
 
