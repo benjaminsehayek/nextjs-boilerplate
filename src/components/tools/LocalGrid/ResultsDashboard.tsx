@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
+import Link from 'next/link';
 import { MapDisplay } from './MapDisplay';
 import type { GridScanResult, HeatmapData } from './types';
 
@@ -57,6 +58,9 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
           <button onClick={handleExportPng} className="btn-ghost text-sm">
             📄 Export PNG
           </button>
+          <Link href="/local-grid/reports" className="btn-secondary text-sm">
+            Saved Reports
+          </Link>
           <button onClick={onNewScan} className="btn-primary">
             New Scan
           </button>

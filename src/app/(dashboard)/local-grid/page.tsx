@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
-import { LocationSelector } from '@/components/ui/LocationSelector';
 import { GridConfigurator } from '@/components/tools/LocalGrid/GridConfigurator';
 import { ScanProgress } from '@/components/tools/LocalGrid/ScanProgress';
 import { ResultsDashboard } from '@/components/tools/LocalGrid/ResultsDashboard';
@@ -18,7 +19,7 @@ import { updateLocationCoords } from '@/app/actions/onboarding';
 import type { BusinessInfo, GridConfig, GridPoint, GridScanResult, HeatmapData, MapsSerpItem, RankData, ScanLogEntry } from '@/components/tools/LocalGrid/types';
 import type { BusinessLocation, Business } from '@/types';
 
-type ScanState = 'configure' | 'scanning' | 'complete' | 'error';
+type ScanState = 'location' | 'configure' | 'scanning' | 'complete' | 'error';
 
 function locationToBusinessInfo(loc: BusinessLocation, biz: Business): BusinessInfo {
   return {
@@ -38,41 +39,40 @@ function locationToBusinessInfo(loc: BusinessLocation, biz: Business): BusinessI
 }
 
 export default function LocalGridPage() {
+  const searchParams = useSearchParams();
   const { user } = useUser();
   const { business } = useBusiness();
-  const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
+  const { locations, selectedLocation, selectLocation, loading: locationsLoading } = useLocations(business?.id);
   const { scansRemaining, profile } = useSubscription();
   const supabase = createClient();
 
-  const [scanState, setScanState] = useState<ScanState>('configure');
+  const [scanState, setScanState] = useState<ScanState>('location');
   const [currentScan, setCurrentScan] = useState<GridScanResult | null>(null);
   const [heatmapData, setHeatmapData] = useState<Record<string, HeatmapData>>({});
   const [error, setError] = useState<string | null>(null);
   const [scanLog, setScanLog] = useState<ScanLogEntry[]>([]);
+  const [scanCenter, setScanCenter] = useState<{ lat: number; lng: number } | null>(null);
 
   const addLog = useCallback((message: string, type: ScanLogEntry['type'] = 'info') => {
     setScanLog((prev) => [...prev, { message, type, timestamp: Date.now() }]);
   }, []);
 
-  // Derive businessInfo from selected location
   const businessInfo: BusinessInfo | null =
     selectedLocation && business ? locationToBusinessInfo(selectedLocation, business) : null;
 
   const locationNeedsCoords = selectedLocation && (!selectedLocation.latitude || !selectedLocation.longitude);
 
-  // Load most recent scan on mount
+  // Load a specific scan by ?scanId= query param (from reports page)
   useEffect(() => {
     if (!business) return;
+    const scanId = searchParams?.get('scanId');
 
-    async function loadRecentScan() {
-      if (!business) return;
-
+    async function loadScan(id: string) {
       const { data } = await (supabase as any)
         .from('grid_scans')
         .select('*')
-        .eq('business_id', business.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
+        .eq('id', id)
+        .eq('business_id', business!.id)
         .maybeSingle();
 
       if (data && data.status === 'complete') {
@@ -82,10 +82,12 @@ export default function LocalGridPage() {
       }
     }
 
-    loadRecentScan();
-  }, [business, supabase]);
+    if (scanId) {
+      loadScan(scanId);
+    }
+  }, [business, searchParams, supabase]);
 
-  // Subscribe to scan updates
+  // Subscribe to scan updates during scanning
   useEffect(() => {
     if (!currentScan || scanState !== 'scanning') return;
 
@@ -119,8 +121,14 @@ export default function LocalGridPage() {
     };
   }, [currentScan, scanState, supabase]);
 
+  const handleSelectLocation = (loc: BusinessLocation) => {
+    selectLocation(loc.id);
+    setScanCenter({ lat: loc.latitude || 0, lng: loc.longitude || 0 });
+    setScanState('configure');
+  };
+
   const handleStartScan = async (config: GridConfig) => {
-    if (!businessInfo || !business) return;
+    if (!businessInfo || !business || !scanCenter) return;
 
     if (scansRemaining <= 0) {
       setError('No scan credits remaining. Please upgrade your plan.');
@@ -130,9 +138,16 @@ export default function LocalGridPage() {
 
     setError(null);
 
+    // Build businessInfo with the potentially-adjusted scanCenter
+    const effectiveBizInfo: BusinessInfo = {
+      ...businessInfo,
+      latitude: scanCenter.lat,
+      longitude: scanCenter.lng,
+    };
+
     try {
       const gridPoints = generateGridPoints(
-        { lat: businessInfo.latitude, lng: businessInfo.longitude },
+        { lat: scanCenter.lat, lng: scanCenter.lng },
         config.size,
         config.radius
       );
@@ -142,7 +157,7 @@ export default function LocalGridPage() {
         .insert({
           business_id: business.id,
           location_id: selectedLocation?.id || null,
-          business_info: businessInfo,
+          business_info: effectiveBizInfo,
           config,
           points: gridPoints,
           status: 'pending',
@@ -161,7 +176,7 @@ export default function LocalGridPage() {
       setCurrentScan(scan as GridScanResult);
       setScanState('scanning');
 
-      await runGridScan(scan.id, businessInfo, config, gridPoints, profile?.id);
+      await runGridScan(scan.id, effectiveBizInfo, config, gridPoints, profile?.id);
     } catch (err) {
       console.error('Error starting scan:', err);
       setError(err instanceof Error ? err.message : 'Failed to start scan');
@@ -299,7 +314,6 @@ export default function LocalGridPage() {
           await new Promise((resolve) => setTimeout(resolve, 200));
         }
 
-        // Log keyword completion
         const kwData = allRankData.filter((d) => d.keyword === keyword.text);
         const kwFound = kwData.filter((d) => d.rank !== null).length;
         addLog(`"${keyword.text}" complete — found at ${kwFound}/${gridPoints.length} points`, kwFound > 0 ? 'success' : 'warning');
@@ -372,8 +386,9 @@ export default function LocalGridPage() {
   const handleNewScan = () => {
     setCurrentScan(null);
     setHeatmapData({});
-    setScanState('configure');
+    setScanState('location');
     setScanLog([]);
+    setScanCenter(null);
     clearScanCache();
   };
 
@@ -384,6 +399,7 @@ export default function LocalGridPage() {
         name="Local Grid"
         description="Maps ranking heat map across your service area"
       >
+        {/* Error state */}
         {error && scanState === 'error' && (
           <div className="card p-6 bg-red-500/10 border border-red-500/20 mb-6">
             <div className="flex items-start gap-3">
@@ -399,13 +415,12 @@ export default function LocalGridPage() {
           </div>
         )}
 
-        {/* Location selector (always visible when not scanning) */}
-        {scanState === 'configure' && (
-          <LocationSelector
+        {/* Step 1: Location picker */}
+        {scanState === 'location' && (
+          <LocationStep
             locations={locations}
-            selectedLocation={selectedLocation}
-            onSelectLocation={selectLocation}
-            showAllOption={false}
+            loading={locationsLoading}
+            onSelect={handleSelectLocation}
           />
         )}
 
@@ -417,19 +432,23 @@ export default function LocalGridPage() {
           />
         )}
 
-        {/* Grid configurator (only if location has coordinates) */}
-        {scanState === 'configure' && businessInfo && !locationNeedsCoords && (
+        {/* Step 2: Configure (only if location has coords) */}
+        {scanState === 'configure' && businessInfo && !locationNeedsCoords && scanCenter && (
           <GridConfigurator
             business={businessInfo}
+            scanCenter={scanCenter}
+            onCenterChange={(lat, lng) => setScanCenter({ lat, lng })}
             onStartScan={handleStartScan}
             onBack={handleNewScan}
           />
         )}
 
+        {/* Step 3: Scanning */}
         {scanState === 'scanning' && currentScan && (
           <ScanProgress scan={currentScan} logEntries={scanLog} />
         )}
 
+        {/* Step 4: Results */}
         {scanState === 'complete' && currentScan && (
           <ResultsDashboard
             scan={currentScan}
@@ -442,7 +461,98 @@ export default function LocalGridPage() {
   );
 }
 
-// ── Inline lookup for locations missing coordinates ──────────────────
+// ── Location picker step ────────────────────────────────────────────────
+
+function LocationStep({
+  locations,
+  loading,
+  onSelect,
+}: {
+  locations: BusinessLocation[];
+  loading: boolean;
+  onSelect: (loc: BusinessLocation) => void;
+}) {
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        {[1, 2].map((i) => (
+          <div key={i} className="card p-5 animate-pulse">
+            <div className="h-4 w-48 bg-char-800 rounded mb-2" />
+            <div className="h-3 w-64 bg-char-800 rounded" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (locations.length === 0) {
+    return (
+      <div className="card p-8 text-center">
+        <div className="text-3xl mb-3">📍</div>
+        <h3 className="font-display text-lg mb-2">No locations found</h3>
+        <p className="text-sm text-ash-400">
+          Add a business location during onboarding to use Local Grid.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-display">Select a Location</h2>
+          <p className="text-sm text-ash-400 mt-1">Choose which location to analyze</p>
+        </div>
+        <Link href="/local-grid/reports" className="btn-ghost text-sm">
+          View Saved Reports →
+        </Link>
+      </div>
+
+      <div className="space-y-3">
+        {locations.map((loc) => {
+          const hasCoords = !!(loc.latitude && loc.longitude);
+          return (
+            <button
+              key={loc.id}
+              onClick={() => onSelect(loc)}
+              disabled={!hasCoords}
+              className={`card w-full text-left p-5 transition-all ${
+                hasCoords
+                  ? 'card-interactive hover:border-flame-500/50'
+                  : 'opacity-50 cursor-not-allowed'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-display">{loc.location_name}</span>
+                    {loc.is_primary && (
+                      <span className="text-xs bg-flame-500/20 text-flame-400 px-2 py-0.5 rounded-full">
+                        Primary
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-ash-300">
+                    {[loc.address, loc.city, loc.state, loc.zip].filter(Boolean).join(', ')}
+                  </p>
+                  {!hasCoords && (
+                    <p className="text-xs text-amber-400 mt-1">Missing coordinates — set up first</p>
+                  )}
+                </div>
+                {hasCoords && (
+                  <div className="text-ash-400 text-lg">→</div>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Inline lookup for locations missing coordinates ───────────────────
 
 function LocationCoordsSetup({ location, onUpdated }: { location: BusinessLocation; onUpdated: () => void }) {
   const [input, setInput] = useState('');
@@ -452,7 +562,6 @@ function LocationCoordsSetup({ location, onUpdated }: { location: BusinessLocati
   const handleLookup = useCallback(async () => {
     const trimmed = input.trim();
     if (!trimmed) {
-      // Try geocoding from existing address
       const query = `${location.address || ''}, ${location.city}, ${location.state} ${location.zip || ''}`.trim();
       if (!query || query === ',') {
         setError('Please enter a search term or add an address to this location');
@@ -497,7 +606,6 @@ function LocationCoordsSetup({ location, onUpdated }: { location: BusinessLocati
       }
 
       if (!lat || !lng) {
-        // Try name/domain lookup
         const result = await dfsCall<any>('business_data/business_listings/search/live', [
           { categories: [], filters: ['title', 'like', `%${trimmed}%`], language_code: 'en', limit: 1 },
         ]);
