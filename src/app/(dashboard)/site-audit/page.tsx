@@ -206,6 +206,14 @@ export default function SiteAuditPage() {
     setScanState('scanning');
 
     try {
+      // Mark any stale in-progress audits as failed before starting a new one.
+      // This prevents orphaned DataForSEO tasks from consuming concurrency slots.
+      await (supabase as any)
+        .from('site_audits')
+        .update({ status: 'failed' })
+        .eq('business_id', business.id)
+        .in('status', ['pending', 'crawling']);
+
       // Create audit record in Supabase
       const { data: audit, error: insertError } = await (supabase as any)
         .from('site_audits')

@@ -45,7 +45,13 @@ export async function dfsGet<T = unknown>(endpoint: string): Promise<T> {
     throw new Error(error.error || `API error ${response.status}`);
   }
 
-  return (await response.json()) as T;
+  const data = await response.json();
+
+  if (data.status_code && data.status_code !== 20000) {
+    throw new Error(data.status_message || 'DataForSEO error');
+  }
+
+  return data as T;
 }
 
 export function cleanDomain(input: string): string {

@@ -37,7 +37,6 @@ export async function submitCrawlTask(
       max_crawl_pages: maxPages,
       load_resources: true,
       enable_javascript: true,
-      enable_browser_rendering: true,
       enable_www_redirect_check: true,
       enable_sitemap: true,
     },
@@ -119,14 +118,29 @@ export async function pollCrawlStatus(taskId: string): Promise<PollResult> {
     throw new Error('Poll error: ' + (data.status_message || 'unknown'));
   }
 
-  const result = data.tasks?.[0]?.result?.[0];
+  const task = data.tasks?.[0];
+  const taskStatusCode = task?.status_code;
+
+  // 20100 = Task In Queue — DataForSEO hasn't started crawling yet, result is null
+  if (!task || taskStatusCode === 20100) {
+    return {
+      finished: false,
+      pagesCrawled: 0,
+      pagesInQueue: 0,
+      maxCrawlPages: 0,
+      progress: 'in_queue',
+      summary: null,
+    };
+  }
+
+  const result = task.result?.[0];
   if (!result) {
     return {
       finished: false,
       pagesCrawled: 0,
       pagesInQueue: 0,
       maxCrawlPages: 0,
-      progress: 'unknown',
+      progress: 'in_queue',
       summary: null,
     };
   }
