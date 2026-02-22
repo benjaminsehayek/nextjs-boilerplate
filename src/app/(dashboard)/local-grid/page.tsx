@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { ToolGate } from '@/components/ui/ToolGate';
@@ -39,6 +39,14 @@ function locationToBusinessInfo(loc: BusinessLocation, biz: Business): BusinessI
 }
 
 export default function LocalGridPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center min-h-[400px]"><div className="spinner" /></div>}>
+      <LocalGridInner />
+    </Suspense>
+  );
+}
+
+function LocalGridInner() {
   const searchParams = useSearchParams();
   const { user } = useUser();
   const { business } = useBusiness();
