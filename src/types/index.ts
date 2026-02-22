@@ -82,6 +82,7 @@ export interface Market {
 export interface SiteAudit {
   id: string;
   business_id: string;
+  domain: string | null;
   status: 'pending' | 'crawling' | 'analyzing' | 'complete' | 'failed';
   overall_score: number | null;
   category_scores: Record<string, number> | null;

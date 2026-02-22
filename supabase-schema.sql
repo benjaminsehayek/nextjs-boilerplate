@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS public.site_audits (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
   location_id UUID REFERENCES public.business_locations(id) ON DELETE CASCADE,
+  domain TEXT,
 
   -- Scan status
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'crawling', 'analyzing', 'complete', 'failed')),

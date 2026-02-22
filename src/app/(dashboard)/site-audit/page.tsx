@@ -225,7 +225,8 @@ export default function SiteAuditPage() {
         .single();
 
       if (insertError || !audit) {
-        throw new Error('Failed to create audit record');
+        console.error('Supabase insert error:', insertError);
+        throw new Error(insertError?.message || 'Failed to create audit record');
       }
 
       setAuditId(audit.id);
