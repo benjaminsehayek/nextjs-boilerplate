@@ -196,6 +196,13 @@ export function findBusinessRank(
 ): { rank: number | null; url: string | null; matchMethod: MatchMethod } {
   if (!mapItems.length) return { rank: null, url: null, matchMethod: null };
 
+  // Sort by rank_group so array order is correct after paid-item removal.
+  // Then use array index + 1 as the organic rank — this corrects for PPC ads
+  // and LSAs that inflate rank_group values (e.g. 2 PPC ads → organic #1 has
+  // rank_group=3, but its true organic position is 1).
+  const sorted = [...mapItems].sort((a, b) => a.rank_group - b.rank_group);
+  const organicRank = (item: MapsSerpItem) => sorted.indexOf(item) + 1;
+
   const bizCid = business.cid || null;
   const bizPlaceId = business.placeId || null;
   const bizFeatureId = business.featureId || null;
@@ -203,38 +210,38 @@ export function findBusinessRank(
   const bizDomain = business.domain ? normalizeDomain(business.domain) : (business.website ? normalizeDomain(business.website) : null);
   const bizWords = getSignificantWords(business.name);
 
-  for (const item of mapItems) {
+  for (const item of sorted) {
     // 1. CID match (strongest)
     if (bizCid && item.cid && item.cid === bizCid) {
-      return { rank: item.rank_group, url: item.url, matchMethod: 'cid' };
+      return { rank: organicRank(item), url: item.url, matchMethod: 'cid' };
     }
 
     // 2. Place ID match
     if (bizPlaceId && item.place_id && item.place_id === bizPlaceId) {
-      return { rank: item.rank_group, url: item.url, matchMethod: 'placeId' };
+      return { rank: organicRank(item), url: item.url, matchMethod: 'placeId' };
     }
 
     // 3. Feature ID match
     if (bizFeatureId && item.feature_id && item.feature_id === bizFeatureId) {
-      return { rank: item.rank_group, url: item.url, matchMethod: 'placeId' };
+      return { rank: organicRank(item), url: item.url, matchMethod: 'placeId' };
     }
   }
 
   // 4. Exact name match (normalized)
-  for (const item of mapItems) {
+  for (const item of sorted) {
     const itemName = normalizeName(item.title || '');
     if (itemName && bizName && itemName === bizName) {
-      return { rank: item.rank_group, url: item.url, matchMethod: 'exactName' };
+      return { rank: organicRank(item), url: item.url, matchMethod: 'exactName' };
     }
   }
 
   // 5a. All significant words match
   if (bizWords.length >= 2) {
-    for (const item of mapItems) {
+    for (const item of sorted) {
       const itemTitle = normalizeName(item.title || '');
       const allMatch = bizWords.every((word) => itemTitle.includes(word));
       if (allMatch) {
-        return { rank: item.rank_group, url: item.url, matchMethod: 'significantWords' };
+        return { rank: organicRank(item), url: item.url, matchMethod: 'significantWords' };
       }
     }
   }
@@ -245,7 +252,7 @@ export function findBusinessRank(
     let bestItem: MapsSerpItem | null = null;
     let bestCount = 0;
 
-    for (const item of mapItems) {
+    for (const item of sorted) {
       const itemTitle = normalizeName(item.title || '');
       const matchCount = bizWords.filter((word) => itemTitle.includes(word)).length;
       if (matchCount >= threshold && matchCount > bestCount) {
@@ -255,16 +262,16 @@ export function findBusinessRank(
     }
 
     if (bestItem) {
-      return { rank: bestItem.rank_group, url: bestItem.url, matchMethod: 'significantWords' };
+      return { rank: organicRank(bestItem), url: bestItem.url, matchMethod: 'significantWords' };
     }
   }
 
   // 6. Domain match (weakest)
   if (bizDomain) {
-    for (const item of mapItems) {
+    for (const item of sorted) {
       const itemDomain = item.domain ? normalizeDomain(item.domain) : null;
       if (itemDomain && itemDomain === bizDomain) {
-        return { rank: item.rank_group, url: item.url, matchMethod: 'domain' };
+        return { rank: organicRank(item), url: item.url, matchMethod: 'domain' };
       }
     }
   }

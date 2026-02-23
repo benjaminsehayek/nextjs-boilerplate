@@ -319,12 +319,16 @@ function LocalGridInner() {
                 rank,
                 url,
                 matchMethod,
-                topResults: mapItems.slice(0, 5).map((item: MapsSerpItem) => ({
-                  position: item.rank_group,
-                  title: item.title || '',
-                  domain: item.domain || '',
-                  url: item.url || '',
-                })),
+                topResults: mapItems
+                  .slice()
+                  .sort((a: MapsSerpItem, b: MapsSerpItem) => a.rank_group - b.rank_group)
+                  .slice(0, 5)
+                  .map((item: MapsSerpItem, idx: number) => ({
+                    position: idx + 1, // organic position, not raw rank_group
+                    title: item.title || '',
+                    domain: item.domain || '',
+                    url: item.url || '',
+                  })),
               };
 
               allRankData.push(rankData);
