@@ -18,31 +18,6 @@ import { StatGrid } from './shared/StatGrid';
 
 // ─── Shared Sub-components ──────────────────────────────────────────
 
-function SeverityBadge({ severity }: { severity: 'critical' | 'high' | 'medium' }) {
-  const styles = {
-    critical: 'bg-danger/20 text-danger border border-danger/30',
-    high: 'bg-warning/20 text-warning border border-warning/30',
-    medium: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
-  };
-  return (
-    <span className={`text-[10px] font-display uppercase px-2 py-0.5 rounded-full ${styles[severity]}`}>
-      {severity}
-    </span>
-  );
-}
-
-function RiskBadge({ risk }: { risk: 'high' | 'medium' | 'low' }) {
-  const styles = {
-    high: 'bg-warning/20 text-warning border border-warning/30',
-    medium: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
-    low: 'bg-char-700 text-ash-400 border border-char-600',
-  };
-  return (
-    <span className={`text-[10px] font-display uppercase px-2 py-0.5 rounded-full ${styles[risk]}`}>
-      {risk} risk
-    </span>
-  );
-}
 
 function IntentBadge({ intent }: { intent: KeywordIntent }) {
   const info = INTENT_LABELS[intent];
@@ -90,101 +65,132 @@ function SectionHeader({
   );
 }
 
+// ─── Specific Fix Generators (contextual advice using actual page paths) ────
+
+function generateSpecificSerpFix(conflict: CannibalizationConflict): string {
+  const kw = conflict.keyword;
+  const primaryPath = conflict.primary.path || '/';
+  const competitorPath = conflict.competitors[0]?.path || '/';
+  const primaryLabel = PAGE_TYPE_LABELS[conflict.primaryType].label.toLowerCase();
+  const competitorLabel = PAGE_TYPE_LABELS[conflict.competitorType].label.toLowerCase();
+
+  if (conflict.wrongPageWinning) {
+    return `1. Strengthen ${competitorPath} (your ${competitorLabel}) with more specific content about "${kw}", a prominent phone number, and photos of your work.\n2. Add a clear internal link from ${primaryPath} to ${competitorPath} using "${kw}" as the link text.\n3. Remove or reduce "${kw}"-specific content from ${primaryPath} — keep it broad so Google stops ranking it for this specific search.`;
+  }
+  return `For "${kw}", Google shows both ${primaryPath} (#${conflict.primary.position}) and ${competitorPath} (#${conflict.competitors[0]?.position}) — splitting traffic between two pages instead of concentrating it on one.\n\n${conflict.conflictFix}`;
+}
+
+function generateSpecificWrongPageFix(item: WrongPageRanking): string {
+  const idealLabel = PAGE_TYPE_LABELS[item.idealPageType].label.toLowerCase();
+  const pageLabel = PAGE_TYPE_LABELS[item.pageType].label.toLowerCase();
+  const firstWords = item.keyword.split(' ').slice(0, 3).join(' ');
+
+  if (item.pageType === 'blog') {
+    return `1. Create a dedicated ${idealLabel} for "${item.keyword}" — put your phone number at the top, describe what you offer, and include your service area.\n2. Rewrite ${item.path} to answer a specific question instead (like "how much does ${firstWords} cost?" or "what to look for in a ${firstWords} company"). Keep it informational, not sales-focused.\n3. Add a link from the blog post to the new service page so visitors who are ready to hire can find it easily.`;
+  }
+  if (item.pageType === 'homepage') {
+    return `1. Create or strengthen a dedicated ${idealLabel} for "${item.keyword}" with specific service information and a visible phone number.\n2. Add a link from your homepage to that ${idealLabel} using "${item.keyword}" as the link text (in your services section or navigation).\n3. Reduce how often "${item.keyword}" appears word-for-word on your homepage — mention the service, but don't optimize the homepage for this exact search phrase.`;
+  }
+  return `1. Create a dedicated ${idealLabel} for "${item.keyword}" with clear service information, your service area, and a prominent phone number / call-to-action.\n2. Link to it from ${item.path} using "${item.keyword}" as the anchor text.\n3. This tells Google which page you actually want to rank for this search.`;
+}
+
+function generateSpecificNgramFix(item: NgramOverlapConflict): string {
+  const phrases = item.sharedPhrases.slice(0, 2).map(p => `"${p}"`).join(' and ');
+  const stronger = item.pageA.etv >= item.pageB.etv ? item.pageA : item.pageB;
+  const weaker = stronger === item.pageA ? item.pageB : item.pageA;
+
+  return `1. Choose ${stronger.path} as the main page for ${phrases} — it currently has stronger traffic. Improve it with more content, photos, and internal links pointing to it.\n2. Update ${weaker.path} to target a related but distinct angle: change its title and H1 so it clearly covers something different. This gives Google a reason to rank both pages instead of choosing one.\n3. Add an internal link from ${weaker.path} to ${stronger.path} for the shared keyword phrases.`;
+}
+
+function generateSpecificContentFix(group: ContentOverlapGroup): string {
+  const topic = group.sharedPhrases[0] || 'this topic';
+  const servicePages = group.pages.filter(p => p.urlType === 'service');
+  const locationPages = group.pages.filter(p => p.urlType === 'location');
+  const blogPages = group.pages.filter(p => p.urlType === 'blog');
+
+  if (servicePages.length > 0 && locationPages.length > 0) {
+    const sp = servicePages[0];
+    const locPaths = locationPages.map(p => p.path).join(', ');
+    return `1. Keep ${sp.path} as your main "${topic}" page — it covers the service broadly for any visitor.\n2. For each city page (${locPaths}): rewrite the opening paragraph to lead with that specific city. Mention the city in the first sentence, add the local address, and include something unique to that location (a landmark, local customer review, or city-specific detail).\n3. Once each city page is genuinely different, Google will rank all of them — the main page for general searches, each city page for city-specific searches like "${topic} Chehalis WA".`;
+  }
+  if (locationPages.length >= 2 && servicePages.length === 0) {
+    return `Fix each page individually:\n1. Move the city name into the very first sentence (not just the title).\n2. Add that location's physical address, parking info, and a photo specific to that location.\n3. If you have reviews from customers in that city, add them to that city's page only.\nOnce each page has content that only makes sense for one specific city, they stop competing with each other.`;
+  }
+  if (blogPages.length > 0 && servicePages.length > 0) {
+    const bp = blogPages[0];
+    const sp = servicePages[0];
+    return `1. Make ${sp.path} the definitive page for "${topic}" — add more content, photos of your work, and a clear call-to-action with your phone number.\n2. Rewrite ${bp.path} to answer a specific question about "${topic}" (like "how much does it cost?" or "how long does it take?") — keep it informational, not a sales page.\n3. Add a prominent link from the blog post to the service page so readers who are ready to hire can find it easily.`;
+  }
+  const paths = group.pages.map(p => p.path).join(', ');
+  return `1. Pick ONE page as your primary "${topic}" page — usually the one with the cleanest, most relevant URL.\n2. Strengthen it: update the title and H1 to clearly match what people search for, add more unique content, and point internal links to it from other pages.\n3. Rewrite the other pages (${paths}) to cover related but distinct topics so each page is clearly about something different. Google will then rank each for its own unique angle instead of making them fight each other.`;
+}
+
 // ─── Tier 1: SERP-Verified Conflict Card ────────────────────────────
 
 function SerpConflictCard({ conflict }: { conflict: CannibalizationConflict }) {
-  const [expanded, setExpanded] = useState(false);
   const marketLabel = conflict.market.split(',')[0] || conflict.market;
+  const specificFix = generateSpecificSerpFix(conflict);
 
   return (
     <div className="card p-0 overflow-hidden">
-      <div className="flex items-start gap-3 p-4">
-        <div className="text-2xl shrink-0 mt-0.5">{conflict.conflictIcon}</div>
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-center gap-2 mb-1">
-            <SeverityBadge severity={conflict.severity} />
-            <IntentBadge intent={conflict.intent} />
-            {marketLabel && (
-              <span className="text-[10px] text-ash-500 bg-char-700 px-2 py-0.5 rounded-full">
-                📍 {marketLabel}
-              </span>
-            )}
-          </div>
-          <div className="flex flex-wrap items-baseline gap-3">
-            <span className="font-display text-ash-100 text-base">{conflict.keyword}</span>
-            {conflict.volume > 0 && (
-              <span className="text-xs text-ash-500">{conflict.volume.toLocaleString()} searches/mo</span>
-            )}
-            {conflict.cpc > 0 && (
-              <span className="text-xs text-ash-500">CPC ${conflict.cpc.toFixed(2)}</span>
-            )}
-          </div>
-          <div className="text-xs text-ash-500 mt-0.5">{conflict.conflictType}</div>
-        </div>
-      </div>
-
-      <div className="px-4 pb-3 space-y-2">
-        <div className="rounded bg-char-800 border border-char-600 p-3">
-          <div className="flex items-center justify-between gap-2 mb-1">
-            <span className="text-[10px] text-success uppercase font-display">Ranking #{conflict.primary.position}</span>
-            <PageTypeChip type={conflict.primary.pageType} />
-          </div>
-          <div className="font-mono text-xs text-ash-300 truncate" title={conflict.primary.url}>
-            {conflict.primary.path || '/'}
-          </div>
-          {conflict.primary.title && (
-            <div className="text-[11px] text-ash-500 mt-0.5 truncate">{conflict.primary.title}</div>
+      {/* Header */}
+      <div className="p-4 border-b border-char-700">
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <span className="text-base">{conflict.conflictIcon}</span>
+          <span className="text-sm font-display text-ash-200">{conflict.conflictType}</span>
+          {conflict.severity === 'critical' && (
+            <span className="text-[10px] bg-danger/20 text-danger border border-danger/30 px-2 py-0.5 rounded-full font-display uppercase">Urgent</span>
+          )}
+          {marketLabel && (
+            <span className="text-[10px] text-ash-500 bg-char-700 px-2 py-0.5 rounded-full">📍 {marketLabel}</span>
           )}
         </div>
+        <div className="flex flex-wrap items-baseline gap-2 mb-1">
+          <span className="font-display text-ash-100">"{conflict.keyword}"</span>
+          {conflict.volume > 0 && (
+            <span className="text-xs text-ash-500">{conflict.volume.toLocaleString()} searches/month</span>
+          )}
+        </div>
+        <p className="text-xs text-ash-400">
+          Google is showing <strong className="text-ash-200">{conflict.competitors.length + 1} of your pages</strong> for this search — your pages are competing against each other instead of working together.
+        </p>
+      </div>
 
+      {/* Competing pages */}
+      <div className="px-4 py-3 space-y-2">
+        <div className="text-[10px] text-ash-500 uppercase font-display">Your pages showing in this search</div>
+        <div className="rounded bg-char-800 border border-char-600 p-3">
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <span className="text-[10px] text-success font-display">Position #{conflict.primary.position}</span>
+            <PageTypeChip type={conflict.primary.pageType} />
+          </div>
+          <div className="font-mono text-xs text-ash-200">{conflict.primary.path || '/'}</div>
+          {conflict.primary.title && <div className="text-xs text-ash-500 mt-0.5">{conflict.primary.title}</div>}
+        </div>
         {conflict.competitors.map((comp, idx) => (
-          <div key={idx} className="rounded bg-char-800 border border-warning/20 p-3">
-            <div className="flex items-center justify-between gap-2 mb-1">
-              <span className="text-[10px] text-warning uppercase font-display">Competing #{comp.position}</span>
+          <div key={idx} className="rounded bg-char-800 border border-warning/30 p-3">
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <span className="text-[10px] text-warning font-display">Also showing — position #{comp.position}</span>
               <PageTypeChip type={comp.pageType} />
             </div>
-            <div className="font-mono text-xs text-ash-300 truncate" title={comp.url}>
-              {comp.path || '/'}
-            </div>
-            {comp.title && (
-              <div className="text-[11px] text-ash-500 mt-0.5 truncate">{comp.title}</div>
-            )}
+            <div className="font-mono text-xs text-ash-200">{comp.path || '/'}</div>
+            {comp.title && <div className="text-xs text-ash-500 mt-0.5">{comp.title}</div>}
           </div>
         ))}
-
         {conflict.wrongPageWinning && (
-          <div className="flex items-start gap-2 rounded bg-danger/10 border border-danger/20 p-2.5">
-            <span className="text-danger text-sm shrink-0">⚠️</span>
+          <div className="flex items-start gap-2 rounded bg-danger/10 border border-danger/20 p-2.5 mt-1">
+            <span className="shrink-0 text-sm">⚠️</span>
             <span className="text-xs text-danger">
-              Wrong page winning — a{' '}
-              <strong>{PAGE_TYPE_LABELS[conflict.competitorType].label.toLowerCase()}</strong>{' '}
-              should rank here instead of the{' '}
-              <strong>{PAGE_TYPE_LABELS[conflict.primaryType].label.toLowerCase()}</strong>
+              The wrong page is winning — your <strong>{PAGE_TYPE_LABELS[conflict.competitorType].label.toLowerCase()}</strong> should rank here, not your <strong>{PAGE_TYPE_LABELS[conflict.primaryType].label.toLowerCase()}</strong>. This means ready-to-hire visitors are landing on the wrong page.
             </span>
           </div>
         )}
       </div>
 
-      <div className="border-t border-char-700">
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          className="w-full px-4 py-2.5 flex items-center justify-between text-xs text-ash-400 hover:text-ash-200 transition-colors"
-        >
-          <span className="font-display">Why this matters + how to fix it</span>
-          <span className="text-ash-500">{expanded ? '▲' : '▼'}</span>
-        </button>
-        {expanded && (
-          <div className="px-4 pb-4 space-y-3">
-            <div>
-              <div className="text-[11px] text-ash-500 uppercase font-display mb-1">Why This Matters</div>
-              <p className="text-sm text-ash-300 leading-relaxed">{conflict.conflictDescription}</p>
-            </div>
-            <div>
-              <div className="text-[11px] text-ash-500 uppercase font-display mb-1">How to Fix</div>
-              <p className="text-sm text-ash-200 leading-relaxed">{conflict.conflictFix}</p>
-            </div>
-          </div>
-        )}
+      {/* Fix — always visible */}
+      <div className="px-4 pb-4 pt-3 border-t border-char-700 bg-char-800/40">
+        <div className="text-[10px] text-ash-500 uppercase font-display mb-2">What to do</div>
+        <p className="text-xs text-ash-300 leading-relaxed whitespace-pre-line">{specificFix}</p>
       </div>
     </div>
   );
@@ -193,71 +199,54 @@ function SerpConflictCard({ conflict }: { conflict: CannibalizationConflict }) {
 // ─── Tier 2: Wrong Page Ranking Card ────────────────────────────────
 
 function WrongPageCard({ item }: { item: WrongPageRanking }) {
-  const [expanded, setExpanded] = useState(false);
   const marketLabel = item.market.split(',')[0] || item.market;
+  const specificFix = generateSpecificWrongPageFix(item);
+  const pageLabel = PAGE_TYPE_LABELS[item.pageType].label.toLowerCase();
+  const idealLabel = PAGE_TYPE_LABELS[item.idealPageType].label.toLowerCase();
+
+  const problemStatement = item.pageType === 'blog'
+    ? `A blog post is ranking for "${item.keyword}" — but people searching that are ready to hire, not looking to read an article. They're likely leaving without calling.`
+    : item.pageType === 'homepage'
+    ? `Your homepage is ranking for "${item.keyword}" instead of a dedicated service page. Homepages are too general to convert service-intent visitors effectively.`
+    : `A ${pageLabel} is showing up for "${item.keyword}" when a ${idealLabel} would convert this traffic much better.`;
 
   return (
     <div className="card p-0 overflow-hidden">
-      <div className="p-4">
+      {/* Header */}
+      <div className="p-4 border-b border-char-700">
         <div className="flex flex-wrap items-center gap-2 mb-2">
-          <SeverityBadge severity={item.severity} />
+          {item.severity === 'high' && (
+            <span className="text-[10px] bg-warning/20 text-warning border border-warning/30 px-2 py-0.5 rounded-full font-display uppercase">High Priority</span>
+          )}
           <IntentBadge intent={item.intent} />
           {marketLabel && (
-            <span className="text-[10px] text-ash-500 bg-char-700 px-2 py-0.5 rounded-full">
-              📍 {marketLabel}
-            </span>
+            <span className="text-[10px] text-ash-500 bg-char-700 px-2 py-0.5 rounded-full">📍 {marketLabel}</span>
           )}
-        </div>
-        <div className="flex flex-wrap items-baseline gap-3">
-          <span className="font-display text-ash-100 text-base">{item.keyword}</span>
           {item.volume > 0 && (
-            <span className="text-xs text-ash-500">{item.volume.toLocaleString()} searches/mo</span>
+            <span className="text-[10px] text-ash-500 bg-char-700 px-2 py-0.5 rounded-full">{item.volume.toLocaleString()} searches/month</span>
           )}
         </div>
+        <p className="text-sm text-ash-200">{problemStatement}</p>
+      </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <div className="rounded bg-char-800 border border-warning/20 p-3">
-            <div className="text-[10px] text-warning uppercase font-display mb-1">Currently Ranking #{item.position}</div>
-            <div className="font-mono text-xs text-ash-300 truncate" title={item.url}>
-              {item.path || '/'}
-            </div>
-            <div className="mt-1.5"><PageTypeChip type={item.pageType} /></div>
-          </div>
-          <div className="rounded bg-char-800 border border-success/20 p-3">
-            <div className="text-[10px] text-success uppercase font-display mb-1">Should Be Ranking</div>
-            <div className="text-xs text-ash-400 italic mb-1.5">No dedicated page exists</div>
-            <PageTypeChip type={item.idealPageType} />
-          </div>
+      {/* Current vs ideal */}
+      <div className="px-4 py-3 grid grid-cols-2 gap-2">
+        <div className="rounded bg-char-800 border border-warning/30 p-3">
+          <div className="text-[10px] text-warning font-display mb-1.5">Currently ranking at #{item.position}</div>
+          <div className="font-mono text-xs text-ash-200 break-all">{item.path || '/'}</div>
+          <div className="mt-2"><PageTypeChip type={item.pageType} /></div>
+        </div>
+        <div className="rounded bg-char-800 border border-success/30 p-3">
+          <div className="text-[10px] text-success font-display mb-1.5">Should be ranking instead</div>
+          <div className="text-xs text-ash-400 italic mb-2">No dedicated page exists yet</div>
+          <PageTypeChip type={item.idealPageType} />
         </div>
       </div>
 
-      <div className="border-t border-char-700">
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          className="w-full px-4 py-2.5 flex items-center justify-between text-xs text-ash-400 hover:text-ash-200 transition-colors"
-        >
-          <span className="font-display">Why this matters + how to fix it</span>
-          <span className="text-ash-500">{expanded ? '▲' : '▼'}</span>
-        </button>
-        {expanded && (
-          <div className="px-4 pb-4 space-y-3">
-            <div>
-              <div className="text-[11px] text-ash-500 uppercase font-display mb-1">Why This Matters</div>
-              <p className="text-sm text-ash-300 leading-relaxed">{item.reason}</p>
-            </div>
-            <div>
-              <div className="text-[11px] text-ash-500 uppercase font-display mb-1">How to Fix</div>
-              <p className="text-sm text-ash-200 leading-relaxed">
-                Create a dedicated{' '}
-                <strong>{PAGE_TYPE_LABELS[item.idealPageType].label.toLowerCase()}</strong> targeting
-                "{item.keyword}" with conversion-focused content, a clear CTA, and strong on-page
-                optimization. Once it ranks, the current{' '}
-                <strong>{PAGE_TYPE_LABELS[item.pageType].label.toLowerCase()}</strong> can be re-angled
-                toward a different, intent-appropriate keyword.
-              </p>
-            </div>
-          </div>
-        )}
+      {/* Fix — always visible */}
+      <div className="px-4 pb-4 pt-3 border-t border-char-700 bg-char-800/40">
+        <div className="text-[10px] text-ash-500 uppercase font-display mb-2">What to do</div>
+        <p className="text-xs text-ash-300 leading-relaxed whitespace-pre-line">{specificFix}</p>
       </div>
     </div>
   );
@@ -266,70 +255,52 @@ function WrongPageCard({ item }: { item: WrongPageRanking }) {
 // ─── Tier 3: N-gram Overlap Card ────────────────────────────────────
 
 function NgramCard({ item }: { item: NgramOverlapConflict }) {
-  const [expanded, setExpanded] = useState(false);
+  const specificFix = generateSpecificNgramFix(item);
+  const sharedPhrases = item.sharedPhrases.slice(0, 4);
 
   return (
     <div className="card p-0 overflow-hidden">
-      <div className="p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <RiskBadge risk={item.risk} />
-          <span className="text-xs text-ash-500">{item.overlapPct}% keyword overlap</span>
-          {item.sharedVolume > 0 && (
-            <span className="text-xs text-ash-500">{item.sharedVolume.toLocaleString()} combined volume</span>
+      {/* Header */}
+      <div className="p-4 border-b border-char-700">
+        <p className="text-sm text-ash-200 mb-2">
+          These 2 pages both rank for searches containing the same keywords — Google is splitting traffic between them instead of sending it all to the stronger page.
+        </p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] text-ash-500">Overlapping keywords:</span>
+          {sharedPhrases.map((phrase) => (
+            <span key={phrase} className="text-[11px] bg-warning/10 text-warning border border-warning/20 px-2 py-0.5 rounded-full font-mono">
+              {phrase}
+            </span>
+          ))}
+          {item.overlapPct > 0 && (
+            <span className="text-[10px] text-ash-500 ml-1">{item.overlapPct}% overlap</span>
           )}
         </div>
-
-        <div className="grid grid-cols-2 gap-2">
-          {[item.pageA, item.pageB].map((page, idx) => (
-            <div key={idx} className="rounded bg-char-800 border border-char-600 p-3">
-              <div className="flex items-center justify-between gap-1 mb-1">
-                <PageTypeChip type={page.urlType} size="xs" />
-                {page.topPosition < 999 && (
-                  <span className="text-[10px] text-ash-500">#{page.topPosition}</span>
-                )}
-              </div>
-              <div className="font-mono text-xs text-ash-300 truncate" title={page.url}>
-                {page.path || '/'}
-              </div>
-              <div className="text-[10px] text-ash-500 mt-1">
-                {page.kwCount} keyword{page.kwCount !== 1 ? 's' : ''}
-                {page.etv > 0 && ` · ${Math.round(page.etv)} ETV`}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {item.sharedPhrases.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            <span className="text-[10px] text-ash-500 self-center">Shared phrases:</span>
-            {item.sharedPhrases.map((phrase) => (
-              <span key={phrase} className="text-[10px] bg-char-700 text-ash-300 px-2 py-0.5 rounded-full font-mono">
-                {phrase}
-              </span>
-            ))}
-          </div>
-        )}
       </div>
 
-      <div className="border-t border-char-700">
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          className="w-full px-4 py-2.5 flex items-center justify-between text-xs text-ash-400 hover:text-ash-200 transition-colors"
-        >
-          <span className="font-display">How to fix this</span>
-          <span className="text-ash-500">{expanded ? '▲' : '▼'}</span>
-        </button>
-        {expanded && (
-          <div className="px-4 pb-4">
-            <p className="text-sm text-ash-200 leading-relaxed">
-              These two pages are competing for the same keyword themes (shared phrases: {item.sharedPhrases.join(', ')}).
-              Google may split ranking authority between them. Differentiate each page by targeting a distinct
-              keyword cluster — update titles, H1s, and content so each page addresses a unique user intent.
-              Use a canonical tag on the weaker page pointing to the stronger one if they&apos;re truly duplicative.
-              Strengthen internal links to the page you want to rank for each shared phrase.
-            </p>
+      {/* Page pair */}
+      <div className="px-4 py-3 grid grid-cols-2 gap-2">
+        {[item.pageA, item.pageB].map((page, idx) => (
+          <div key={idx} className="rounded bg-char-800 border border-char-600 p-3">
+            <div className="flex items-center justify-between gap-1 mb-2">
+              <PageTypeChip type={page.urlType} size="xs" />
+              {page.topPosition < 999 && (
+                <span className="text-[10px] text-ash-500">Best: #{page.topPosition}</span>
+              )}
+            </div>
+            <div className="font-mono text-xs text-ash-200">{page.path || '/'}</div>
+            <div className="text-[10px] text-ash-500 mt-1.5">
+              {page.kwCount} keyword{page.kwCount !== 1 ? 's' : ''}
+              {page.etv > 0 && ` · ${Math.round(page.etv)} est. monthly visits`}
+            </div>
           </div>
-        )}
+        ))}
+      </div>
+
+      {/* Fix — always visible */}
+      <div className="px-4 pb-4 pt-3 border-t border-char-700 bg-char-800/40">
+        <div className="text-[10px] text-ash-500 uppercase font-display mb-2">What to do</div>
+        <p className="text-xs text-ash-300 leading-relaxed whitespace-pre-line">{specificFix}</p>
       </div>
     </div>
   );
@@ -338,59 +309,62 @@ function NgramCard({ item }: { item: NgramOverlapConflict }) {
 // ─── Tier 4: Content Overlap Card ───────────────────────────────────
 
 function ContentOverlapCard({ group }: { group: ContentOverlapGroup }) {
-  const [expanded, setExpanded] = useState(false);
+  const topic = group.sharedPhrases[0] || 'this topic';
+  const n = group.pages.length;
+  const specificFix = generateSpecificContentFix(group);
+  const servicePages = group.pages.filter(p => p.urlType === 'service');
+  const locationPages = group.pages.filter(p => p.urlType === 'location');
+
+  let problemStatement: string;
+  if (servicePages.length > 0 && locationPages.length > 0) {
+    problemStatement = `Your main service page and ${locationPages.length} city page${locationPages.length > 1 ? 's' : ''} all target "${topic}" — they're competing against each other. Google will pick one to rank and mostly ignore the others.`;
+  } else if (locationPages.length >= 3) {
+    problemStatement = `${n} location pages cover "${topic}" with nearly identical content. Google treats them as duplicates and ranks only the strongest one — leaving the others invisible.`;
+  } else {
+    problemStatement = `${n} pages on your site all target "${topic}". Google will pick one to rank and mostly ignore the rest — you're splitting your chances unnecessarily.`;
+  }
 
   return (
     <div className="card p-0 overflow-hidden">
-      <div className="p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <RiskBadge risk={group.risk} />
-          <span className="text-xs text-ash-500">{group.pages.length} pages targeting same topic</span>
-        </div>
-
-        <div className="text-xs font-display text-ash-300 mb-2">{group.conflictType}</div>
-
+      {/* Header */}
+      <div className="p-4 border-b border-char-700">
+        <p className="text-sm text-ash-200 leading-snug mb-2">{problemStatement}</p>
         {group.sharedPhrases.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-3">
-            <span className="text-[10px] text-ash-500 self-center">Shared topic:</span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] text-ash-500">These pages all contain:</span>
             {group.sharedPhrases.map((phrase) => (
-              <span key={phrase} className="text-[10px] bg-warning/10 text-warning border border-warning/20 px-2 py-0.5 rounded-full font-mono">
+              <span key={phrase} className="text-[11px] bg-warning/10 text-warning border border-warning/20 px-2 py-0.5 rounded-full font-mono">
                 {phrase}
               </span>
             ))}
           </div>
         )}
+      </div>
 
-        <div className="space-y-1.5">
+      {/* Page list — full title visible */}
+      <div className="px-4 py-3">
+        <div className="text-[10px] text-ash-500 uppercase font-display mb-2">Pages competing against each other</div>
+        <div className="space-y-2">
           {group.pages.map((page, idx) => (
-            <div key={idx} className="flex items-center gap-3 rounded bg-char-800 px-3 py-2">
-              <PageTypeChip type={page.urlType} size="xs" />
-              <span className="font-mono text-xs text-ash-300 truncate flex-1" title={page.url}>
-                {page.path || '/'}
-              </span>
+            <div key={idx} className="rounded bg-char-800 border border-char-600 p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <PageTypeChip type={page.urlType} size="xs" />
+                <span className="font-mono text-xs text-ash-200">{page.path || '/'}</span>
+              </div>
               {(page.h1 || page.title) && (
-                <span className="text-[10px] text-ash-500 truncate max-w-[200px]" title={page.h1 || page.title}>
+                <div className="text-xs text-ash-400 leading-snug">
                   {page.h1 || page.title}
-                </span>
+                </div>
               )}
             </div>
           ))}
         </div>
       </div>
 
-      <div className="border-t border-char-700">
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          className="w-full px-4 py-2.5 flex items-center justify-between text-xs text-ash-400 hover:text-ash-200 transition-colors"
-        >
-          <span className="font-display">How to fix this</span>
-          <span className="text-ash-500">{expanded ? '▲' : '▼'}</span>
-        </button>
-        {expanded && (
-          <div className="px-4 pb-4">
-            <p className="text-sm text-ash-200 leading-relaxed">{group.conflictFix}</p>
-          </div>
-        )}
+      {/* Fix — always visible */}
+      <div className="px-4 pb-4 pt-3 border-t border-char-700 bg-char-800/40">
+        <div className="text-[10px] text-ash-500 uppercase font-display mb-2">What to do</div>
+        <p className="text-xs text-ash-300 leading-relaxed whitespace-pre-line">{specificFix}</p>
       </div>
     </div>
   );
@@ -567,11 +541,11 @@ export default function CannibalizationTab({ results }: TabProps) {
     return (
       <div className="card p-12 text-center">
         <div className="text-4xl mb-4">✅</div>
-        <h3 className="text-xl font-display text-ash-300 mb-2">No Cannibalization Detected</h3>
+        <h3 className="text-xl font-display text-ash-300 mb-2">No Competing Pages Found</h3>
         <p className="text-ash-400 text-sm max-w-lg mx-auto">
           {hasKeywordData
-            ? 'No keyword conflicts, wrong-page rankings, or overlapping content found. Your page targeting looks clean.'
-            : 'Pages have been analyzed for content overlap. No duplicate targeting detected across crawled pages.'}
+            ? 'Each page on this site appears to target a distinct topic. No pages are competing against each other for the same searches.'
+            : 'Pages have been checked for overlapping content. No pages are targeting the same topic with duplicate titles or headings.'}
         </p>
       </div>
     );
@@ -579,12 +553,12 @@ export default function CannibalizationTab({ results }: TabProps) {
 
   const sections: Array<{ id: ActiveSection; label: string; count: number; title: string }> = [
     { id: 'all', label: 'All Issues', count: totalIssues, title: '' },
-    { id: 'serp', label: '🎯 SERP Conflicts', count: serpConflicts.length, title: 'SERP-Verified' },
-    { id: 'wrongpage', label: '🔄 Wrong Page', count: wrongPageRankings.length, title: 'Wrong Page Ranking' },
-    { id: 'ngram', label: '📊 Keyword Overlap', count: ngramOverlaps.length, title: 'N-gram' },
-    { id: 'content', label: '📄 Content Overlap', count: contentOverlaps.length, title: 'Content' },
+    { id: 'serp', label: '✅ Confirmed Conflicts', count: serpConflicts.length, title: 'Confirmed Conflicts' },
+    { id: 'wrongpage', label: '🎯 Wrong Page Showing Up', count: wrongPageRankings.length, title: 'Wrong Page Ranking' },
+    { id: 'ngram', label: '⚔ Competing Pages', count: ngramOverlaps.length, title: 'Competing Pages' },
+    { id: 'content', label: '📄 Duplicate Content', count: contentOverlaps.length, title: 'Duplicate Content' },
     ...(rankingPages.length > 0
-      ? [{ id: 'rankings' as ActiveSection, label: '📈 Ranking Pages', count: rankingPages.length, title: 'Ranking Pages' }]
+      ? [{ id: 'rankings' as ActiveSection, label: '📈 All Rankings', count: rankingPages.length, title: 'All Rankings' }]
       : []),
   ].filter((s) => s.id === 'all' || s.id === 'rankings' || s.count > 0) as Array<{ id: ActiveSection; label: string; count: number; title: string }>;
 
@@ -600,22 +574,21 @@ export default function CannibalizationTab({ results }: TabProps) {
 
       {/* Summary */}
       <div>
-        <h3 className="font-display text-lg mb-1">Keyword Cannibalization</h3>
+        <h3 className="font-display text-lg mb-1">Page Competition Analysis</h3>
         <p className="text-xs text-ash-500 mb-4">
-          Multi-tier analysis: SERP-verified conflicts, wrong page type rankings, keyword theme overlaps,
-          and content-based duplicate detection for unranked pages.
+          When multiple pages on your site target the same keywords, they compete against each other — Google picks one winner and the rest get less traffic. Each issue below tells you exactly which pages are fighting each other and what to do about it.
         </p>
         <StatGrid
           stats={[
-            { value: totalIssues, label: 'Total Issues', isWarning: totalIssues > 0 },
+            { value: totalIssues, label: 'Total Issues Found', isWarning: totalIssues > 0 },
             { value: criticalCount, label: 'High Priority', isWarning: criticalCount > 0 },
-            { value: serpConflicts.length, label: 'SERP Conflicts', isWarning: serpConflicts.length > 0 },
+            { value: serpConflicts.length, label: 'Confirmed by Google', isWarning: serpConflicts.length > 0 },
             { value: wrongPageRankings.length, label: 'Wrong Page Ranking', isWarning: wrongPageRankings.length > 0 },
-            { value: ngramOverlaps.length, label: 'Keyword Overlaps' },
-            { value: contentOverlaps.length, label: 'Content Overlaps', isWarning: contentOverlaps.length > 0 },
+            { value: ngramOverlaps.length, label: 'Pages Competing' },
+            { value: contentOverlaps.length, label: 'Duplicate Content Groups', isWarning: contentOverlaps.length > 0 },
             {
               value: totalVolume > 0 ? totalVolume.toLocaleString() : '0',
-              label: 'Monthly Searches at Risk',
+              label: 'Searches Affected / Month',
               isWarning: totalVolume > 0,
             },
           ]}
@@ -641,14 +614,14 @@ export default function CannibalizationTab({ results }: TabProps) {
         ))}
       </div>
 
-      {/* ── Tier 1: SERP-Verified ── */}
+      {/* ── Confirmed Conflicts (SERP-verified) ── */}
       {(activeSection === 'all' || activeSection === 'serp') && serpConflicts.length > 0 && (
         <div>
           <SectionHeader
-            title="SERP-Verified Conflicts"
+            title="Confirmed: Multiple Pages in the Same Search Results"
             count={serpConflicts.length}
-            badge="Definitive"
-            description="Google is currently showing multiple pages from your site for the same search query. This definitively confirms cannibalization — your pages are splitting ranking authority right now."
+            badge="Verified by Google"
+            description="Google is currently showing more than one of your pages when someone searches these keywords. This is confirmed — your pages are actively splitting traffic and rankings right now."
           />
           <div className="space-y-4">
             {serpConflicts.map((c, idx) => (
@@ -658,13 +631,13 @@ export default function CannibalizationTab({ results }: TabProps) {
         </div>
       )}
 
-      {/* ── Tier 2: Wrong Page Ranking ── */}
+      {/* ── Wrong Page Ranking ── */}
       {(activeSection === 'all' || activeSection === 'wrongpage') && wrongPageRankings.length > 0 && (
         <div>
           <SectionHeader
-            title="Wrong Page Type Ranking"
+            title="Wrong Type of Page Showing Up in Search"
             count={wrongPageRankings.length}
-            description="Keywords where the ranking page type doesn't match the search intent. A blog post ranking for a commercial keyword, for example, sends ready-to-hire visitors to an article instead of a service page — losing conversions even if the ranking looks good."
+            description="These searches are ranking with a page that won't convert visitors into customers. Someone searching 'auto body shop near me' wants to call a business — not read a blog post. Even if the ranking looks good, visitors leave without calling."
           />
           <div className="space-y-4">
             {wrongPageRankings.map((item, idx) => (
@@ -674,13 +647,13 @@ export default function CannibalizationTab({ results }: TabProps) {
         </div>
       )}
 
-      {/* ── Tier 3: N-gram Keyword Overlap ── */}
+      {/* ── Competing Pages (N-gram overlap) ── */}
       {(activeSection === 'all' || activeSection === 'ngram') && ngramOverlaps.length > 0 && (
         <div>
           <SectionHeader
-            title="Keyword Theme Overlap"
+            title="Pages Competing Against Each Other for Rankings"
             count={ngramOverlaps.length}
-            description="Page pairs that rank for overlapping keyword themes — they're not in the same SERP but both rank for semantically related queries. As your site grows, these pages will increasingly compete against each other, diluting authority for both."
+            description="These pairs of pages both rank for overlapping keyword searches. Google sees them as targeting the same thing and splits traffic between them — neither page gets the full benefit. The fix is to make each page clearly cover a different topic."
           />
           <div className="space-y-4">
             {ngramOverlaps.map((item, idx) => (
@@ -690,13 +663,13 @@ export default function CannibalizationTab({ results }: TabProps) {
         </div>
       )}
 
-      {/* ── Tier 4: Content/Title Overlap ── */}
+      {/* ── Duplicate Content ── */}
       {(activeSection === 'all' || activeSection === 'content') && contentOverlaps.length > 0 && (
         <div>
           <SectionHeader
-            title="Content Theme Overlap"
+            title="Multiple Pages Targeting the Same Topic"
             count={contentOverlaps.length}
-            description="Pages with titles and H1s targeting the same keyword theme — detected from your crawled content, not SERP data. This catches AI-generated or templated content where multiple pages cover the same topic before rankings are even established."
+            description="These pages have titles and headings covering the same subject — a common result of AI-generated or templated content. Google will pick one page to rank and treat the others as near-duplicates, even if you created each page to serve a different city or service."
           />
           <div className="space-y-4">
             {contentOverlaps.map((group, idx) => (
@@ -706,20 +679,20 @@ export default function CannibalizationTab({ results }: TabProps) {
         </div>
       )}
 
-      {/* ── Ranking Pages by Keyword ── */}
+      {/* ── All Ranking Pages ── */}
       {activeSection === 'rankings' && rankingPages.length > 0 && (
         <div>
           <SectionHeader
-            title="Ranking Pages by Keyword"
+            title="All Your Ranking Pages — Keyword Breakdown"
             count={rankingPages.length}
-            description={`All ${rankingPages.length} domain pages with active rankings, sorted by traffic value. Keywords marked ⚔ cannibalized appear on multiple pages simultaneously — those are your direct cannibalization conflicts.`}
+            description={`Every page on your site that currently ranks in Google, with the keywords each page ranks for. Keywords marked ⚔ appear on multiple pages — those are your active conflicts.`}
           />
           {competingKeywords.size > 0 && (
             <div className="mb-4 flex items-start gap-2 rounded bg-warning/10 border border-warning/20 p-3">
               <span className="text-warning shrink-0">⚠️</span>
               <p className="text-xs text-warning">
-                <strong>{competingKeywords.size} keyword{competingKeywords.size !== 1 ? 's' : ''}</strong> appear on multiple pages simultaneously.
-                Expand each page below to see exactly which keywords are being split.
+                <strong>{competingKeywords.size} keyword{competingKeywords.size !== 1 ? 's' : ''}</strong> are being ranked by multiple pages at the same time.
+                Expand each page below to see which keywords are being split.
               </p>
             </div>
           )}
