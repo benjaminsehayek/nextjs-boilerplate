@@ -60,15 +60,21 @@ function LocalGridInner() {
   const [error, setError] = useState<string | null>(null);
   const [scanLog, setScanLog] = useState<ScanLogEntry[]>([]);
   const [scanCenter, setScanCenter] = useState<{ lat: number; lng: number } | null>(null);
+  // pendingLocation holds the loc object passed to handleSelectLocation (may have fresher coords
+  // than the hook's selectedLocation if auto-geocoding happened in LocationStep)
+  const [pendingLocation, setPendingLocation] = useState<BusinessLocation | null>(null);
 
   const addLog = useCallback((message: string, type: ScanLogEntry['type'] = 'info') => {
     setScanLog((prev) => [...prev, { message, type, timestamp: Date.now() }]);
   }, []);
 
-  const businessInfo: BusinessInfo | null =
-    selectedLocation && business ? locationToBusinessInfo(selectedLocation, business) : null;
+  // In configure state, prefer pendingLocation (has fresh coords) over selectedLocation (may be stale)
+  const activeLocation = (scanState === 'configure' && pendingLocation) ? pendingLocation : selectedLocation;
 
-  const locationNeedsCoords = selectedLocation && (!selectedLocation.latitude || !selectedLocation.longitude);
+  const businessInfo: BusinessInfo | null =
+    activeLocation && business ? locationToBusinessInfo(activeLocation, business) : null;
+
+  const locationNeedsCoords = activeLocation && (!activeLocation.latitude || !activeLocation.longitude);
 
   // Load a specific scan by ?scanId= query param (from reports page)
   useEffect(() => {
@@ -131,6 +137,7 @@ function LocalGridInner() {
 
   const handleSelectLocation = (loc: BusinessLocation) => {
     selectLocation(loc.id);
+    setPendingLocation(loc); // store with potentially updated coords from auto-geocoding
     setScanCenter({ lat: loc.latitude || 0, lng: loc.longitude || 0 });
     setScanState('configure');
   };
@@ -164,7 +171,7 @@ function LocalGridInner() {
         .from('grid_scans')
         .insert({
           business_id: business.id,
-          location_id: selectedLocation?.id || null,
+          location_id: activeLocation?.id || null,
           business_info: effectiveBizInfo,
           config,
           points: gridPoints,
@@ -213,6 +220,7 @@ function LocalGridInner() {
       const allRankData: RankData[] = [];
       let cacheHits = 0;
       let firstMatchLogged = false;
+      let firstResultLogged = false; // one-time debug dump
 
       for (let kIdx = 0; kIdx < config.keywords.length; kIdx++) {
         const keyword = config.keywords[kIdx];
@@ -255,6 +263,21 @@ function LocalGridInner() {
               ]);
 
               const resultData = result.tasks?.[0]?.result?.[0] || null;
+
+              // One-time debug: log raw response shape to browser console
+              if (!firstResultLogged) {
+                firstResultLogged = true;
+                const raw = result.tasks?.[0]?.result?.[0];
+                const items = raw?.items || [];
+                console.log('[LocalGrid DEBUG] First API response:', {
+                  taskStatus: result.tasks?.[0]?.status_message,
+                  resultItems: items.length,
+                  itemTypes: items.slice(0, 5).map((i: any) => ({ type: i.type, title: i.title, rank_group: i.rank_group })),
+                  bizName: bizInfo.name,
+                  bizCid: bizInfo.cid,
+                  bizPlaceId: bizInfo.placeId,
+                });
+              }
 
               if (resultData) {
                 setCachedResult(keyword.text, point.lat, point.lng, resultData);
@@ -397,6 +420,7 @@ function LocalGridInner() {
     setScanState('location');
     setScanLog([]);
     setScanCenter(null);
+    setPendingLocation(null);
     clearScanCache();
   };
 
@@ -433,9 +457,9 @@ function LocalGridInner() {
         )}
 
         {/* Missing coordinates fallback */}
-        {scanState === 'configure' && locationNeedsCoords && selectedLocation && (
+        {scanState === 'configure' && locationNeedsCoords && activeLocation && (
           <LocationCoordsSetup
-            location={selectedLocation}
+            location={activeLocation}
             onUpdated={() => window.location.reload()}
           />
         )}

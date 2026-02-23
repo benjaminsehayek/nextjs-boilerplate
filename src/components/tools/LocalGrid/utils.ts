@@ -130,13 +130,14 @@ export function extractMapItems(resultData: any): MapsSerpItem[] {
     (item: any) => item.type === 'maps_search'
   );
 
-  // Fallback: look for local_pack / maps_pack containers
+  // Fallback 1: local_pack / maps_pack / similar containers
   if (mapItems.length === 0) {
     for (const item of items) {
       if (
         item.type === 'local_pack' ||
         item.type === 'maps_pack' ||
-        item.type === 'local_results'
+        item.type === 'local_results' ||
+        item.type === 'maps_local_pack'
       ) {
         const nested = item.items || item.results || [];
         mapItems = nested.filter((n: any) => n.type !== 'maps_paid_item');
@@ -145,11 +146,36 @@ export function extractMapItems(resultData: any): MapsSerpItem[] {
     }
   }
 
-  // Exclude paid ads
+  // Fallback 2: items nested inside any container
+  if (mapItems.length === 0) {
+    for (const item of items) {
+      if (Array.isArray(item.items) && item.items.length > 0) {
+        const nested = item.items.filter((n: any) => n.type !== 'maps_paid_item' && !n.is_paid);
+        if (nested.length > 0) { mapItems = nested; break; }
+      }
+    }
+  }
+
+  // Fallback 3: any item that has a title + rank_group (broadest possible catch)
+  if (mapItems.length === 0 && items.length > 0) {
+    mapItems = items.filter(
+      (item: any) => item.title && item.rank_group !== undefined && !item.is_paid
+    );
+  }
+
   return mapItems.filter((item: any) => item.type !== 'maps_paid_item' && !item.is_paid);
 }
 
 // ── Business rank matching (6-level cascade) ─────────────────────────
+
+/** Normalize a name for comparison: lowercase, strip punctuation/extra spaces */
+function normalizeName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 export function findBusinessRank(
   mapItems: MapsSerpItem[],
@@ -160,7 +186,7 @@ export function findBusinessRank(
   const bizCid = business.cid || null;
   const bizPlaceId = business.placeId || null;
   const bizFeatureId = business.featureId || null;
-  const bizName = business.name.toLowerCase().trim();
+  const bizName = normalizeName(business.name);
   const bizDomain = business.domain ? normalizeDomain(business.domain) : (business.website ? normalizeDomain(business.website) : null);
   const bizWords = getSignificantWords(business.name);
 
@@ -181,22 +207,42 @@ export function findBusinessRank(
     }
   }
 
-  // 4. Exact name match
+  // 4. Exact name match (normalized)
   for (const item of mapItems) {
-    const itemName = (item.title || '').toLowerCase().trim();
+    const itemName = normalizeName(item.title || '');
     if (itemName && bizName && itemName === bizName) {
       return { rank: item.rank_group, url: item.url, matchMethod: 'exactName' };
     }
   }
 
-  // 5. Significant words match (need ≥2 words, all must appear in title)
+  // 5a. All significant words match
   if (bizWords.length >= 2) {
     for (const item of mapItems) {
-      const itemTitle = (item.title || '').toLowerCase();
+      const itemTitle = normalizeName(item.title || '');
       const allMatch = bizWords.every((word) => itemTitle.includes(word));
       if (allMatch) {
         return { rank: item.rank_group, url: item.url, matchMethod: 'significantWords' };
       }
+    }
+  }
+
+  // 5b. Majority significant words match (≥75%) — handles slight name variations
+  if (bizWords.length >= 2) {
+    const threshold = Math.ceil(bizWords.length * 0.75);
+    let bestItem: MapsSerpItem | null = null;
+    let bestCount = 0;
+
+    for (const item of mapItems) {
+      const itemTitle = normalizeName(item.title || '');
+      const matchCount = bizWords.filter((word) => itemTitle.includes(word)).length;
+      if (matchCount >= threshold && matchCount > bestCount) {
+        bestCount = matchCount;
+        bestItem = item;
+      }
+    }
+
+    if (bestItem) {
+      return { rank: bestItem.rank_group, url: bestItem.url, matchMethod: 'significantWords' };
     }
   }
 
