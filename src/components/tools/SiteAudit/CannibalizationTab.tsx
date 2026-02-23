@@ -6,12 +6,12 @@ import { PAGE_TYPE_LABELS, INTENT_LABELS } from './types';
 import {
   detectCannibalizationConflicts,
   detectWrongPageRankings,
-  detectExactKeywordConflicts,
-  detectContentOverlaps,
+  detectMarketKeywordConflicts,
+  detectTitleConflicts,
   buildRankingPageMap,
   type WrongPageRanking,
-  type ExactKeywordConflict,
-  type ContentOverlapGroup,
+  type MarketKeywordConflict,
+  type TitleConflict,
   type RankingPage,
 } from '@/lib/siteAudit/cannibalizationDetection';
 import { StatGrid } from './shared/StatGrid';
@@ -94,41 +94,49 @@ function generateSpecificWrongPageFix(item: WrongPageRanking): string {
   return `1. Create a dedicated ${idealLabel} for "${item.keyword}" with clear service information, your service area, and a prominent phone number / call-to-action.\n2. Link to it from ${item.path} using "${item.keyword}" as the anchor text.\n3. This tells Google which page you actually want to rank for this search.`;
 }
 
-function generateSpecificExactConflictFix(item: ExactKeywordConflict): string {
-  const n = item.sharedKeywords.length;
-  const topKw = item.sharedKeywords[0].keyword;
-  const stronger = item.pageA.bestPosition <= item.pageB.bestPosition ? item.pageA : item.pageB;
-  const weaker = stronger === item.pageA ? item.pageB : item.pageA;
-  const typeA = PAGE_TYPE_LABELS[item.pageA.urlType].label.toLowerCase();
-  const typeB = PAGE_TYPE_LABELS[item.pageB.urlType].label.toLowerCase();
+function generateMarketConflictFix(item: MarketKeywordConflict): string {
+  const city = item.marketLabel.split(',')[0].trim();
 
-  if (item.pageA.urlType === 'service' && item.pageB.urlType === 'location') {
-    const sp = item.pageA;
-    const lp = item.pageB;
-    return `1. Keep ${sp.path} (your ${typeA}) as the main page for "${topKw}" — it covers the service broadly.\n2. Update ${lp.path} (your ${typeB}) to lead with its specific city in the first sentence, add the local address, and include city-specific details. This makes it clearly different from the service page.\n3. Once each page covers something distinct, Google can rank both — the service page for general searches and the city page for local ones.`;
-  }
-  if (item.pageA.urlType === 'location' && item.pageB.urlType === 'service') {
-    const sp = item.pageB;
-    const lp = item.pageA;
-    return `1. Keep ${sp.path} (your ${typeB}) as the main page for "${topKw}" — it covers the service broadly.\n2. Update ${lp.path} (your ${typeA}) to lead with its specific city in the first sentence, add the local address, and include city-specific details. This makes it clearly different from the service page.\n3. Once each page covers something distinct, Google can rank both — the service page for general searches and the city page for local ones.`;
-  }
-  if (item.pageA.urlType === 'location' && item.pageB.urlType === 'location') {
-    return `1. Each location page needs content that only makes sense for that specific city. For ${item.pageA.path}: start with the city name in sentence one, add the address, parking info, and local photos.\n2. Same for ${item.pageB.path}: make it clearly about that city, not just a copy with a different city name swapped in.\n3. Once both pages are genuinely different, they stop competing. Google will rank each one for searches in its respective city.`;
+  // Collect all unique pages involved across all conflicts in this market
+  const pageTypes = new Map<string, UrlType>();
+  for (const c of item.conflicts) {
+    for (const p of c.pages) {
+      if (!pageTypes.has(p.path)) pageTypes.set(p.path, p.urlType);
+    }
   }
 
-  return `1. Choose ${stronger.path} as your primary page for "${topKw}" — it currently ranks better (#${stronger.bestPosition} vs #${weaker.bestPosition}).\n2. Strengthen it: add more content, photos, and internal links pointing to it from related pages.\n3. Update ${weaker.path} to focus on a related but different angle — change its title and H1 so it covers a distinct topic. This gives Google a reason to rank both pages for different searches instead of treating them as competitors.\n4. Add an internal link from ${weaker.path} to ${stronger.path} for "${topKw}".`;
+  const servicePaths = [...pageTypes.entries()].filter(([, t]) => t === 'service').map(([p]) => p);
+  const locationPaths = [...pageTypes.entries()].filter(([, t]) => t === 'location').map(([p]) => p);
+  const homePaths = [...pageTypes.entries()].filter(([, t]) => t === 'homepage').map(([p]) => p);
+  const topKw = item.conflicts[0]?.keyword || 'this keyword';
+
+  if (servicePaths.length > 0 && locationPaths.length > 0) {
+    const sp = servicePaths[0];
+    const lp = locationPaths[0];
+    return `In ${city}, your location page (${lp}) and main service page (${sp}) are both showing up for the same searches.\n\n1. Strengthen ${lp} for ${city} specifically: lead every section with "${city}", add the local address, local photos, and any customer reviews from ${city} customers.\n2. On ${sp}: remove or reduce city-specific mentions of "${city}" — keep it general so Google sends city searches to the location page.\n3. Link prominently from ${sp} to ${lp} so both visitors and Google understand which page owns ${city} searches.`;
+  }
+  if (homePaths.length > 0 && servicePaths.length > 0) {
+    const sp = servicePaths[0];
+    return `In ${city}, your homepage and ${sp} are competing for the same searches.\n\n1. Make ${sp} the authoritative page for "${topKw}" — add more detailed content, photos, and a visible phone number / call-to-action.\n2. On your homepage, mention the service briefly but link to ${sp} rather than repeating all the same content.\n3. Check that most internal links for this service point to ${sp}, not the homepage — this tells Google which page should rank.`;
+  }
+  if (locationPaths.length >= 2) {
+    return `In ${city}, multiple location pages are appearing for the same searches — they're competing against each other.\n\n1. Identify which page best represents ${city} and strengthen it with city-specific content: local address, photos, and reviews.\n2. Check whether any of the other pages are accidentally targeting ${city} in their content or internal links and remove those mentions.\n3. If any of these pages truly duplicate each other, consolidate them with a 301 redirect to the strongest one.`;
+  }
+
+  const allPaths = [...pageTypes.keys()].join(', ');
+  return `In ${city}, these pages are competing for the same ${item.conflicts.length} keyword${item.conflicts.length !== 1 ? 's' : ''}: ${allPaths}.\n\nFor each conflicting keyword, pick ONE page as the primary and:\n1. Strengthen that page — update its title, H1, and body content to clearly match what people search for in ${city}.\n2. On the competing page, change the topic focus so it covers something distinct.\n3. Add an internal link from the competing page to the primary page for "${topKw}".`;
 }
 
-function generateSpecificContentFix(group: ContentOverlapGroup): string {
-  const topic = group.sharedPhrases[0] || 'this topic';
-  const servicePages = group.pages.filter(p => p.urlType === 'service');
-  const locationPages = group.pages.filter(p => p.urlType === 'location');
-  const blogPages = group.pages.filter(p => p.urlType === 'blog');
+function generateSpecificContentFix(item: TitleConflict): string {
+  const topic = item.sharedPhrase || 'this topic';
+  const servicePages = item.pages.filter(p => p.urlType === 'service');
+  const locationPages = item.pages.filter(p => p.urlType === 'location');
+  const blogPages = item.pages.filter(p => p.urlType === 'blog');
 
   if (servicePages.length > 0 && locationPages.length > 0) {
     const sp = servicePages[0];
     const locPaths = locationPages.map(p => p.path).join(', ');
-    return `1. Keep ${sp.path} as your main "${topic}" page — it covers the service broadly for any visitor.\n2. For each city page (${locPaths}): rewrite the opening paragraph to lead with that specific city. Mention the city in the first sentence, add the local address, and include something unique to that location (a landmark, local customer review, or city-specific detail).\n3. Once each city page is genuinely different, Google will rank all of them — the main page for general searches, each city page for city-specific searches like "${topic} Chehalis WA".`;
+    return `1. Keep ${sp.path} as your main "${topic}" page — it covers the service broadly for any visitor.\n2. For each city page (${locPaths}): rewrite the opening paragraph to lead with that specific city. Mention the city in the first sentence, add the local address, and include something unique to that location (a landmark, local customer review, or city-specific detail).\n3. Once each city page is genuinely different, Google will rank all of them — the main page for general searches, each city page for city-specific searches like "${topic}".`;
   }
   if (locationPages.length >= 2 && servicePages.length === 0) {
     return `Fix each page individually:\n1. Move the city name into the very first sentence (not just the title).\n2. Add that location's physical address, parking info, and a photo specific to that location.\n3. If you have reviews from customers in that city, add them to that city's page only.\nOnce each page has content that only makes sense for one specific city, they stop competing with each other.`;
@@ -138,7 +146,7 @@ function generateSpecificContentFix(group: ContentOverlapGroup): string {
     const sp = servicePages[0];
     return `1. Make ${sp.path} the definitive page for "${topic}" — add more content, photos of your work, and a clear call-to-action with your phone number.\n2. Rewrite ${bp.path} to answer a specific question about "${topic}" (like "how much does it cost?" or "how long does it take?") — keep it informational, not a sales page.\n3. Add a prominent link from the blog post to the service page so readers who are ready to hire can find it easily.`;
   }
-  const paths = group.pages.map(p => p.path).join(', ');
+  const paths = item.pages.map(p => p.path).join(', ');
   return `1. Pick ONE page as your primary "${topic}" page — usually the one with the cleanest, most relevant URL.\n2. Strengthen it: update the title and H1 to clearly match what people search for, add more unique content, and point internal links to it from other pages.\n3. Rewrite the other pages (${paths}) to cover related but distinct topics so each page is clearly about something different. Google will then rank each for its own unique angle instead of making them fight each other.`;
 }
 
@@ -269,63 +277,63 @@ function WrongPageCard({ item }: { item: WrongPageRanking }) {
   );
 }
 
-// ─── Tier 3: Exact Keyword Conflict Card ─────────────────────────────
+// ─── Tier 3: Market Keyword Conflict Card ────────────────────────────
 
-function ExactConflictCard({ item }: { item: ExactKeywordConflict }) {
+function MarketConflictCard({ item }: { item: MarketKeywordConflict }) {
   const [showAll, setShowAll] = useState(false);
-  const specificFix = generateSpecificExactConflictFix(item);
-  const displayKws = showAll ? item.sharedKeywords : item.sharedKeywords.slice(0, 8);
+  const fix = generateMarketConflictFix(item);
+  const displayConflicts = showAll ? item.conflicts : item.conflicts.slice(0, 10);
 
   return (
     <div className="card p-0 overflow-hidden">
       {/* Header */}
       <div className="p-4 border-b border-char-700">
-        <p className="text-sm text-ash-200 mb-1">
-          These 2 pages rank for <strong className="text-warning">{item.sharedKeywords.length} of the same keyword{item.sharedKeywords.length !== 1 ? 's' : ''}</strong> — Google splits traffic between them instead of sending it all to one.
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          {item.severity === 'high' && (
+            <span className="text-[10px] bg-warning/20 text-warning border border-warning/30 px-2 py-0.5 rounded-full font-display uppercase">High Priority</span>
+          )}
+          <span className="text-[10px] text-ash-400 bg-char-700 px-2 py-0.5 rounded-full">📍 {item.marketLabel}</span>
+        </div>
+        <p className="text-sm text-ash-200">
+          <strong className="text-warning">{item.conflicts.length} keyword{item.conflicts.length !== 1 ? 's' : ''}</strong> where multiple pages from your site are competing against each other in this market.
         </p>
-        {item.totalSharedVolume > 0 && (
-          <p className="text-xs text-ash-500">{item.totalSharedVolume.toLocaleString()} combined monthly searches affected</p>
-        )}
       </div>
 
-      {/* Page pair */}
-      <div className="px-4 pt-3 pb-2 grid grid-cols-2 gap-2">
-        {[item.pageA, item.pageB].map((page, idx) => (
-          <div key={idx} className="rounded bg-char-800 border border-char-600 p-3">
-            <div className="flex items-center justify-between gap-1 mb-2">
-              <PageTypeChip type={page.urlType} size="xs" />
-              <span className="text-[10px] text-ash-500">Best: #{page.bestPosition}</span>
-            </div>
-            <div className="font-mono text-xs text-ash-200">{page.path || '/'}</div>
-            {page.etv > 0 && (
-              <div className="text-[10px] text-success mt-1">{Math.round(page.etv)} est. monthly visits</div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* Shared keyword list */}
-      <div className="px-4 pb-3">
-        <div className="text-[10px] text-ash-500 uppercase font-display mb-1.5">Keywords both pages rank for</div>
-        <div className="space-y-1">
-          {displayKws.map((kw, i) => (
-            <div key={i} className="flex items-center gap-2 rounded bg-char-800 px-2.5 py-1.5">
-              <span className="flex-1 text-xs text-ash-200">{kw.keyword}</span>
-              {kw.volume > 0 && (
-                <span className="text-[10px] text-ash-500 shrink-0">{kw.volume.toLocaleString()}/mo</span>
-              )}
-              <span className="text-[10px] text-ash-500 shrink-0 font-mono">
-                #{kw.positionA} vs #{kw.positionB}
-              </span>
+      {/* Keyword conflict list */}
+      <div className="px-4 py-3">
+        <div className="text-[10px] text-ash-500 uppercase font-display mb-2">Competing keywords in this market</div>
+        <div className="space-y-2">
+          {displayConflicts.map((conflict, i) => (
+            <div key={i} className="rounded bg-char-800 border border-char-600 p-2.5">
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="flex-1 text-xs text-ash-200">{conflict.keyword}</span>
+                {conflict.volume > 0 && (
+                  <span className="text-[10px] text-ash-500 shrink-0">{conflict.volume.toLocaleString()} nat.</span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {conflict.pages.map((page, j) => (
+                  <span
+                    key={j}
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                      j === 0
+                        ? 'bg-success/10 text-success border-success/20'
+                        : 'bg-warning/10 text-warning border-warning/20'
+                    }`}
+                  >
+                    #{page.position} {page.path}
+                  </span>
+                ))}
+              </div>
             </div>
           ))}
         </div>
-        {item.sharedKeywords.length > 8 && (
+        {item.conflicts.length > 10 && (
           <button
             onClick={() => setShowAll(v => !v)}
             className="mt-2 text-[10px] text-flame-400 hover:text-flame-300 transition-colors"
           >
-            {showAll ? '▲ Show fewer' : `▼ Show ${item.sharedKeywords.length - 8} more keywords`}
+            {showAll ? '▲ Show fewer' : `▼ Show ${item.conflicts.length - 10} more keywords`}
           </button>
         )}
       </div>
@@ -333,61 +341,58 @@ function ExactConflictCard({ item }: { item: ExactKeywordConflict }) {
       {/* Fix — always visible */}
       <div className="px-4 pb-4 pt-3 border-t border-char-700 bg-char-800/40">
         <div className="text-[10px] text-ash-500 uppercase font-display mb-2">What to do</div>
-        <p className="text-xs text-ash-300 leading-relaxed whitespace-pre-line">{specificFix}</p>
+        <p className="text-xs text-ash-300 leading-relaxed whitespace-pre-line">{fix}</p>
       </div>
     </div>
   );
 }
 
-// ─── Tier 4: Content Overlap Card ───────────────────────────────────
+// ─── Tier 4: Title Conflict Card ─────────────────────────────────────
 
-function ContentOverlapCard({ group }: { group: ContentOverlapGroup }) {
-  const topic = group.sharedPhrases[0] || 'this topic';
-  const n = group.pages.length;
-  const specificFix = generateSpecificContentFix(group);
-  const servicePages = group.pages.filter(p => p.urlType === 'service');
-  const locationPages = group.pages.filter(p => p.urlType === 'location');
+function TitleConflictCard({ item }: { item: TitleConflict }) {
+  const n = item.pages.length;
+  const specificFix = generateSpecificContentFix(item);
+  const servicePages = item.pages.filter(p => p.urlType === 'service');
+  const locationPages = item.pages.filter(p => p.urlType === 'location');
 
   let problemStatement: string;
   if (servicePages.length > 0 && locationPages.length > 0) {
-    problemStatement = `Your main service page and ${locationPages.length} city page${locationPages.length > 1 ? 's' : ''} all target "${topic}" — they're competing against each other. Google will pick one to rank and mostly ignore the others.`;
+    problemStatement = `Your main service page and ${locationPages.length} city page${locationPages.length > 1 ? 's' : ''} all have "${item.sharedPhrase}" in their title — they're competing against each other. Google will pick one to rank and mostly ignore the others.`;
   } else if (locationPages.length >= 3) {
-    problemStatement = `${n} location pages cover "${topic}" with nearly identical content. Google treats them as duplicates and ranks only the strongest one — leaving the others invisible.`;
+    problemStatement = `${n} location pages all have "${item.sharedPhrase}" in their title. Google treats them as duplicates and ranks only the strongest one — leaving the others invisible.`;
+  } else if (n >= 3) {
+    problemStatement = `${n} pages on your site all have "${item.sharedPhrase}" in their title. Google will pick one to rank and mostly ignore the rest.`;
   } else {
-    problemStatement = `${n} pages on your site all target "${topic}". Google will pick one to rank and mostly ignore the rest — you're splitting your chances unnecessarily.`;
+    problemStatement = `These 2 pages both have "${item.sharedPhrase}" in their title — they're targeting the same search and competing against each other.`;
   }
 
   return (
     <div className="card p-0 overflow-hidden">
       {/* Header */}
       <div className="p-4 border-b border-char-700">
-        <p className="text-sm text-ash-200 leading-snug mb-2">{problemStatement}</p>
-        {group.sharedPhrases.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[10px] text-ash-500">These pages all contain:</span>
-            {group.sharedPhrases.map((phrase) => (
-              <span key={phrase} className="text-[11px] bg-warning/10 text-warning border border-warning/20 px-2 py-0.5 rounded-full font-mono">
-                {phrase}
-              </span>
-            ))}
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          {item.severity === 'critical' && (
+            <span className="text-[10px] bg-danger/20 text-danger border border-danger/30 px-2 py-0.5 rounded-full font-display uppercase">Critical</span>
+          )}
+          <span className="text-[11px] bg-warning/10 text-warning border border-warning/20 px-2 py-0.5 rounded-full font-mono">
+            {item.sharedPhrase}
+          </span>
+        </div>
+        <p className="text-sm text-ash-200 leading-snug">{problemStatement}</p>
       </div>
 
       {/* Page list — full title visible */}
       <div className="px-4 py-3">
-        <div className="text-[10px] text-ash-500 uppercase font-display mb-2">Pages competing against each other</div>
+        <div className="text-[10px] text-ash-500 uppercase font-display mb-2">Pages with matching title phrases</div>
         <div className="space-y-2">
-          {group.pages.map((page, idx) => (
+          {item.pages.map((page, idx) => (
             <div key={idx} className="rounded bg-char-800 border border-char-600 p-3">
               <div className="flex items-center gap-2 mb-1">
                 <PageTypeChip type={page.urlType} size="xs" />
                 <span className="font-mono text-xs text-ash-200">{page.path || '/'}</span>
               </div>
-              {(page.h1 || page.title) && (
-                <div className="text-xs text-ash-400 leading-snug">
-                  {page.h1 || page.title}
-                </div>
+              {page.title && (
+                <div className="text-xs text-ash-400 leading-snug">{page.title}</div>
               )}
             </div>
           ))}
@@ -519,17 +524,21 @@ export default function CannibalizationTab({ results }: TabProps) {
     );
   }, [keywordsData, results.domain, serpConflicts]);
 
-  const exactConflicts = useMemo(() => {
+  const marketConflicts = useMemo(() => {
     if (!keywordsData?.markets) return [];
-    return detectExactKeywordConflicts(keywordsData.markets);
+    return detectMarketKeywordConflicts(keywordsData.markets);
   }, [keywordsData]);
+
+  // Total keyword-level conflicts across all markets (for stat display)
+  const exactConflictCount = useMemo(
+    () => marketConflicts.reduce((s, m) => s + m.conflicts.length, 0),
+    [marketConflicts]
+  );
 
   const contentOverlaps = useMemo(() => {
     if (pages.length === 0) return [];
-    return detectContentOverlaps(
-      pages, results.domain, keywordsData?.locations || []
-    );
-  }, [pages, results.domain, keywordsData]);
+    return detectTitleConflicts(pages, results.domain);
+  }, [pages, results.domain]);
 
   const rankingPages = useMemo(() => {
     if (!keywordsData?.markets) return [];
@@ -555,7 +564,7 @@ export default function CannibalizationTab({ results }: TabProps) {
 
   const [activeSection, setActiveSection] = useState<ActiveSection>('all');
 
-  const totalIssues = serpConflicts.length + wrongPageRankings.length + exactConflicts.length + contentOverlaps.length;
+  const totalIssues = serpConflicts.length + wrongPageRankings.length + marketConflicts.length + contentOverlaps.length;
   const hasKeywordData = !!keywordsData?.markets;
   const hasAnyData = totalIssues > 0;
 
@@ -588,7 +597,7 @@ export default function CannibalizationTab({ results }: TabProps) {
     { id: 'all', label: 'All Issues', count: totalIssues, title: '' },
     { id: 'serp', label: '✅ Confirmed Conflicts', count: serpConflicts.length, title: 'Confirmed Conflicts' },
     { id: 'wrongpage', label: '🎯 Wrong Page Showing Up', count: wrongPageRankings.length, title: 'Wrong Page Ranking' },
-    { id: 'ngram', label: '⚔ Same Keywords', count: exactConflicts.length, title: 'Same Keywords' },
+    { id: 'ngram', label: '⚔ Same Keywords', count: marketConflicts.length, title: 'Same Keywords' },
     { id: 'content', label: '📄 Duplicate Content', count: contentOverlaps.length, title: 'Duplicate Content' },
     ...(rankingPages.length > 0
       ? [{ id: 'rankings' as ActiveSection, label: '📈 All Rankings', count: rankingPages.length, title: 'All Rankings' }]
@@ -617,8 +626,8 @@ export default function CannibalizationTab({ results }: TabProps) {
             { value: criticalCount, label: 'High Priority', isWarning: criticalCount > 0 },
             { value: serpConflicts.length, label: 'Confirmed by Google', isWarning: serpConflicts.length > 0 },
             { value: wrongPageRankings.length, label: 'Wrong Page Ranking', isWarning: wrongPageRankings.length > 0 },
-            { value: exactConflicts.length, label: 'Same-Keyword Conflicts', isWarning: exactConflicts.length > 0 },
-            { value: contentOverlaps.length, label: 'Duplicate Content Groups', isWarning: contentOverlaps.length > 0 },
+            { value: exactConflictCount, label: 'Local Keyword Conflicts', isWarning: exactConflictCount > 0 },
+            { value: contentOverlaps.length, label: 'Title Phrase Conflicts', isWarning: contentOverlaps.length > 0 },
             {
               value: totalVolume > 0 ? totalVolume.toLocaleString() : '0',
               label: 'Searches Affected / Month',
@@ -680,33 +689,33 @@ export default function CannibalizationTab({ results }: TabProps) {
         </div>
       )}
 
-      {/* ── Exact Keyword Conflicts ── */}
-      {(activeSection === 'all' || activeSection === 'ngram') && exactConflicts.length > 0 && (
+      {/* ── Within-Market Keyword Conflicts ── */}
+      {(activeSection === 'all' || activeSection === 'ngram') && marketConflicts.length > 0 && (
         <div>
           <SectionHeader
-            title="Pages Ranking for the Same Keywords"
-            count={exactConflicts.length}
-            description="Every pair of pages on this site that rank for the exact same keyword — confirmed by comparing their actual ranking keyword lists across all tracked markets. Google splits traffic between these pages instead of concentrating it on one."
+            title="Pages Competing in the Same Local Market"
+            count={marketConflicts.length}
+            description={`Multiple pages from your site are appearing in the same city's search results for the same keywords — ${exactConflictCount} total keyword conflicts across ${marketConflicts.length} market${marketConflicts.length !== 1 ? 's' : ''}. Google can only rank one page well per search; when two of yours compete, both get pushed down.`}
           />
           <div className="space-y-4">
-            {exactConflicts.map((item, idx) => (
-              <ExactConflictCard key={`${item.pageA.url}-${item.pageB.url}-${idx}`} item={item} />
+            {marketConflicts.map((item, idx) => (
+              <MarketConflictCard key={`${item.market}-${idx}`} item={item} />
             ))}
           </div>
         </div>
       )}
 
-      {/* ── Duplicate Content ── */}
+      {/* ── Title Phrase Conflicts ── */}
       {(activeSection === 'all' || activeSection === 'content') && contentOverlaps.length > 0 && (
         <div>
           <SectionHeader
-            title="Multiple Pages Targeting the Same Topic"
+            title="Pages With Matching Title Phrases"
             count={contentOverlaps.length}
-            description="These pages have titles and headings covering the same subject — a common result of AI-generated or templated content. Google will pick one page to rank and treat the others as near-duplicates, even if you created each page to serve a different city or service."
+            description="These pages share exact keyword phrases in their <title> tags — including city and state names. Google reads page titles to decide what each page is about, so identical title phrases are one of the clearest cannibalization signals."
           />
           <div className="space-y-4">
-            {contentOverlaps.map((group, idx) => (
-              <ContentOverlapCard key={idx} group={group} />
+            {contentOverlaps.map((item, idx) => (
+              <TitleConflictCard key={idx} item={item} />
             ))}
           </div>
         </div>

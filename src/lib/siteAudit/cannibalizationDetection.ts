@@ -39,45 +39,33 @@ export interface WrongPageRanking {
 
 // ─── Exported Tier 3 Shape ──────────────────────────────────────────
 
-export interface ExactKeywordConflict {
-  pageA: {
-    url: string;
-    path: string;
-    urlType: UrlType;
-    bestPosition: number;
-    etv: number;
-  };
-  pageB: {
-    url: string;
-    path: string;
-    urlType: UrlType;
-    bestPosition: number;
-    etv: number;
-  };
-  sharedKeywords: Array<{
+export interface MarketKeywordConflict {
+  market: string;           // full market string, e.g. "Vancouver, WA, United States"
+  marketLabel: string;      // short label, e.g. "Vancouver, WA"
+  conflicts: Array<{
     keyword: string;
-    volume: number;
-    positionA: number;
-    positionB: number;
-    marketA: string;
-    marketB: string;
+    volume: number;         // national search volume (only indicative for local keywords)
+    pages: Array<{
+      url: string;
+      path: string;
+      urlType: UrlType;
+      position: number;
+    }>;
   }>;
-  totalSharedVolume: number;
-  risk: 'high' | 'medium';
+  severity: 'high' | 'medium';
 }
 
 // ─── Exported Tier 4 Shape ──────────────────────────────────────────
 
-export interface ContentOverlapGroup {
+export interface TitleConflict {
+  sharedPhrase: string; // The most specific title phrase shared across pages in the group
   pages: Array<{
     url: string;
     path: string;
     title: string;
-    h1: string;
     urlType: UrlType;
   }>;
-  sharedPhrases: string[]; // 2-word phrases shared by all pages in the group
-  risk: 'high' | 'medium';
+  severity: 'critical' | 'high';
   conflictType: string;
   conflictFix: string;
 }
@@ -214,7 +202,8 @@ export function detectWrongPageRankings(
       if (position <= 0 || position > 20) continue; // only ranking pages
 
       const volume = item.keyword_data.keyword_info?.search_volume || 0;
-      if (volume < 10) continue;
+      // No volume floor: local keywords tracked at city level have low national volumes
+      // but are still actionable wrong-page signals.
 
       const url = item.ranked_serp_element.serp_item.url;
       if (!url) continue;
@@ -280,33 +269,31 @@ export function detectWrongPageRankings(
   return results;
 }
 
-// ─── TIER 3: Exact Keyword Conflict Detection ────────────────────────
-
+// ─── TIER 3: Within-Market Keyword Conflict Detection ────────────────
 
 /**
- * Detects every pair of pages that rank for the same exact keyword across any market.
- * Works by comparing actual keyword strings directly — no heuristics.
+ * Detects keywords where 2+ domain pages are both ranking within the same local market.
+ * This is true local cannibalization: Google shows both pages for the same search in the
+ * same city, splitting traffic that should go to one authoritative page.
  *
- * Why this works for multi-market sites: the same keyword (e.g. "auto body repair")
- * may appear in multiple markets, each ranking a different domain page. This means
- * page A ranks for "auto body repair" in Vancouver and page B ranks for "auto body repair"
- * in Chehalis — a direct cannibalization signal.
+ * Groups results by market so fixes are actionable per location.
  *
- * Returns one conflict per page-pair, listing every exact keyword they share.
+ * Note: Cross-market conflicts (page A in Vancouver, page B in Chehalis for the same keyword)
+ * are NOT flagged — that's the INTENDED behavior of location pages serving different cities.
  */
-export function detectExactKeywordConflicts(
+export function detectMarketKeywordConflicts(
   markets: Record<string, MarketData>
-): ExactKeywordConflict[] {
+): MarketKeywordConflict[] {
   const skipTypes: UrlType[] = ['contact', 'about', 'gallery', 'testimonials', 'faq', 'other'];
-
-  // Step 1: Build per-page keyword map (aggregated across all markets)
-  const pageData = new Map<string, {
-    urlType: UrlType;
-    keywords: Array<{ keyword: string; volume: number; position: number; market: string; etv: number }>;
-    totalEtv: number;
-  }>();
+  const results: MarketKeywordConflict[] = [];
 
   for (const [market, md] of Object.entries(markets)) {
+    // Within this market: keyword → best-ranking page per URL
+    const kwUrlMap = new Map<string, {
+      volume: number;
+      urlMap: Map<string, { position: number; urlType: UrlType }>;
+    }>();
+
     for (const item of md.items) {
       const url = item.ranked_serp_element.serp_item.url;
       const pos = item.ranked_serp_element.serp_item.rank_group || 0;
@@ -315,169 +302,71 @@ export function detectExactKeywordConflicts(
       const urlType = classifyUrlType(url);
       if (skipTypes.includes(urlType)) continue;
 
-      if (!pageData.has(url)) {
-        pageData.set(url, { urlType, keywords: [], totalEtv: 0 });
+      const keyword = item.keyword_data.keyword.toLowerCase().trim();
+      const volume = item.keyword_data.keyword_info?.search_volume || 0;
+
+      if (!kwUrlMap.has(keyword)) {
+        kwUrlMap.set(keyword, { volume, urlMap: new Map() });
       }
-      const page = pageData.get(url)!;
-      page.keywords.push({
-        keyword: item.keyword_data.keyword.toLowerCase().trim(),
-        volume: item.keyword_data.keyword_info?.search_volume || 0,
-        position: pos,
-        market,
-        etv: item.ranked_serp_element.serp_item.etv || 0,
+      const kw = kwUrlMap.get(keyword)!;
+      // Keep only the best position per URL in this market
+      const existing = kw.urlMap.get(url);
+      if (!existing || pos < existing.position) {
+        kw.urlMap.set(url, { position: pos, urlType });
+      }
+    }
+
+    // Conflicts = keywords where 2+ different domain pages rank in this market
+    const conflicts: MarketKeywordConflict['conflicts'] = [];
+    for (const [keyword, data] of kwUrlMap.entries()) {
+      if (data.urlMap.size < 2) continue;
+      conflicts.push({
+        keyword,
+        volume: data.volume,
+        pages: [...data.urlMap.entries()]
+          .map(([url, info]) => ({
+            url,
+            path: relativePath(url),
+            urlType: info.urlType,
+            position: info.position,
+          }))
+          .sort((a, b) => a.position - b.position), // best rank first
       });
-      page.totalEtv += item.ranked_serp_element.serp_item.etv || 0;
     }
+
+    if (conflicts.length === 0) continue;
+
+    // Sort: highest-ranking conflicts (lowest position number) first
+    conflicts.sort((a, b) => (a.pages[0]?.position ?? 100) - (b.pages[0]?.position ?? 100));
+
+    const parts = market.split(',');
+    const marketLabel = parts.slice(0, 2).map(s => s.trim()).join(', ');
+    const severity: 'high' | 'medium' = conflicts.length >= 3 ? 'high' : 'medium';
+
+    results.push({ market, marketLabel, conflicts, severity });
   }
 
-  if (pageData.size < 2) return [];
-
-  // Step 2: keyword → list of { url, position, market, volume } entries
-  const kwMap = new Map<string, Array<{ url: string; position: number; market: string; volume: number; etv: number }>>();
-
-  for (const [url, data] of pageData.entries()) {
-    for (const kw of data.keywords) {
-      if (!kwMap.has(kw.keyword)) kwMap.set(kw.keyword, []);
-      kwMap.get(kw.keyword)!.push({ url, position: kw.position, market: kw.market, volume: kw.volume, etv: kw.etv });
-    }
-  }
-
-  // Step 3: For every keyword with 2+ different URLs, record the page-pair conflict
-  const pairConflicts = new Map<string, Array<{
-    keyword: string;
-    volume: number;
-    positionA: number;
-    positionB: number;
-    marketA: string;
-    marketB: string;
-  }>>();
-
-  for (const [keyword, entries] of kwMap.entries()) {
-    const uniqueUrls = [...new Set(entries.map(e => e.url))];
-    if (uniqueUrls.length < 2) continue;
-
-    // Build all pairs
-    for (let i = 0; i < uniqueUrls.length - 1; i++) {
-      for (let j = i + 1; j < uniqueUrls.length; j++) {
-        const urlA = uniqueUrls[i];
-        const urlB = uniqueUrls[j];
-        const pairKey = [urlA, urlB].sort().join('||');
-
-        if (!pairConflicts.has(pairKey)) pairConflicts.set(pairKey, []);
-
-        const entA = entries.find(e => e.url === urlA)!;
-        const entB = entries.find(e => e.url === urlB)!;
-
-        pairConflicts.get(pairKey)!.push({
-          keyword,
-          volume: Math.max(entA.volume, entB.volume),
-          positionA: entA.position,
-          positionB: entB.position,
-          marketA: entA.market,
-          marketB: entB.market,
-        });
-      }
-    }
-  }
-
-  // Step 4: Build output, one conflict per page-pair
-  const conflicts: ExactKeywordConflict[] = [];
-
-  for (const [pairKey, sharedKws] of pairConflicts.entries()) {
-    const [urlA, urlB] = pairKey.split('||');
-    const dataA = pageData.get(urlA);
-    const dataB = pageData.get(urlB);
-    if (!dataA || !dataB) continue;
-
-    // Sort shared keywords by volume desc
-    const sorted = [...sharedKws].sort((a, b) => b.volume - a.volume);
-    const totalSharedVolume = sorted.reduce((s, k) => s + k.volume, 0);
-    const bestPosA = Math.min(...sorted.map(k => k.positionA));
-    const bestPosB = Math.min(...sorted.map(k => k.positionB));
-
-    const risk = (totalSharedVolume >= 100 || sorted.length >= 3) ? 'high' : 'medium';
-
-    conflicts.push({
-      pageA: {
-        url: urlA,
-        path: relativePath(urlA),
-        urlType: dataA.urlType,
-        bestPosition: bestPosA,
-        etv: dataA.totalEtv,
-      },
-      pageB: {
-        url: urlB,
-        path: relativePath(urlB),
-        urlType: dataB.urlType,
-        bestPosition: bestPosB,
-        etv: dataB.totalEtv,
-      },
-      sharedKeywords: sorted,
-      totalSharedVolume,
-      risk,
-    });
-  }
-
-  // High risk first, then by number of shared keywords
-  return conflicts.sort((a, b) => {
-    if (a.risk !== b.risk) return a.risk === 'high' ? -1 : 1;
-    return b.sharedKeywords.length - a.sharedKeywords.length;
+  // High severity first, then by conflict count
+  return results.sort((a, b) => {
+    if (a.severity !== b.severity) return a.severity === 'high' ? -1 : 1;
+    return b.conflicts.length - a.conflicts.length;
   });
 }
 
-// ─── TIER 4: Content Overlap (Title/H1 Analysis) ─────────────────────
+// ─── TIER 4: Title Conflict Detection ────────────────────────────────
+//
+// Detects pages that share exact phrase matches in their <title> tag first segment.
+// Unlike the previous bigram approach, this KEEPS city names and state abbreviations
+// so "Collision Repair Vancouver WA" in 3 titles is correctly flagged as a conflict.
+//
+// Uses 3-grams and 4-grams extracted from the raw title segment (before | separator),
+// after removing only the brand name and punctuation.
 
-const STOP_WORDS = new Set([
-  'the', 'a', 'an', 'in', 'of', 'for', 'to', 'at', 'by', 'and', 'or', 'is',
-  'are', 'be', 'our', 'your', 'we', 'us', 'you', 'my', 'it', 'this', 'that',
-  'with', 'from', 'on', 'near', 'me', 'all', 'any', 'get', 'top', 'best',
-  'local', 'licensed', 'professional', 'affordable', 'quality', 'trusted',
-  'expert', 'experts', 'reliable', 'certified', 'experienced', 'leading',
-  'premier', 'number', 'rated',
+const TITLE_STOPS = new Set([
+  'the', 'a', 'an', 'in', 'of', 'for', 'to', 'at', 'by', 'and', 'or',
+  'is', 'are', 'be', 'our', 'your', 'we', 'us', 'you', 'my', 'it',
+  'this', 'that', 'with', 'from', 'on', 'near', 'me', 'get', 'all',
 ]);
-
-// Generic phrases that would appear on almost every page — skip them
-const GENERIC_BIGRAMS = new Set([
-  'services near', 'near me', 'contact us', 'call us', 'call now',
-  'learn more', 'our services', 'free quote', 'free estimate', 'get quote',
-]);
-
-function extractTargetTokens(
-  page: CrawledPage,
-  brandName: string,
-  cityNames: string[]
-): string[] {
-  // H1 preferred over title
-  const h1 = page.meta?.htags?.h1?.[0] || '';
-  const title = page.meta?.title || '';
-  let raw = (h1 || title).toLowerCase();
-
-  // Strip brand suffix (everything after |, –, -)
-  raw = raw.replace(/\s*[|–—\-].*$/, '').trim();
-
-  // Remove brand name
-  if (brandName.length > 2) {
-    raw = raw.replace(new RegExp('\\b' + brandName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'gi'), ' ');
-  }
-
-  // Remove city names
-  for (const city of cityNames) {
-    if (city.length > 2) {
-      raw = raw.replace(new RegExp('\\b' + city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'gi'), ' ');
-    }
-  }
-
-  // Remove state abbreviations (2-letter)
-  raw = raw.replace(/\b[a-z]{2}\b/g, ' ');
-
-  // Remove punctuation
-  raw = raw.replace(/[^a-z0-9\s]/g, ' ');
-
-  // Tokenize, filter stop words
-  return raw.split(/\s+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length > 2 && !STOP_WORDS.has(t));
-}
 
 function contentConflictDescriptionAndFix(types: UrlType[]): { type: string; fix: string } {
   const typeSet = new Set(types);
@@ -512,18 +401,19 @@ function contentConflictDescriptionAndFix(types: UrlType[]): { type: string; fix
 }
 
 /**
- * Detects pages targeting the same keyword themes based on title/H1 content.
+ * Detects pages whose <title> tags share exact phrase matches (3-grams or 4-grams).
  * Works for unranked pages (new sites, AI-generated content) — no SERP data needed.
- * Groups pages by shared 2-word phrases extracted from their H1/title after
- * removing stop words, brand name, and city names.
+ *
+ * Unlike the previous approach, city names and state abbreviations are KEPT in the
+ * phrases, so "Collision Repair Vancouver WA" shared across 3 titles is correctly
+ * flagged as critical (not lost when stripping geo tokens).
+ *
+ * Only the first segment of the title (before | – — separators) is compared.
  */
-export function detectContentOverlaps(
+export function detectTitleConflicts(
   pages: CrawledPage[],
   domain: string,
-  trackedLocations: string[] = []
-): ContentOverlapGroup[] {
-  // Only analyze indexable HTML pages
-  const eligibleTypes: UrlType[] = ['service', 'location', 'blog', 'homepage'];
+): TitleConflict[] {
   const skipTypes: UrlType[] = ['contact', 'about', 'gallery', 'testimonials', 'faq', 'other'];
 
   // Brand name = domain without TLD
@@ -533,85 +423,98 @@ export function detectContentOverlaps(
     .trim()
     .toLowerCase();
 
-  // City names from tracked locations
-  const cityNames = trackedLocations.map((loc) => {
-    const parts = loc.split(',');
-    return (parts[0] || '').trim().toLowerCase();
-  }).filter((c) => c.length > 2);
-
-  // Build page profiles
-  interface PageProfile {
+  interface TitleProfile {
     url: string;
     path: string;
     title: string;
-    h1: string;
     urlType: UrlType;
-    tokens: string[];
-    bigrams: string[];
+    grams: string[]; // 3-grams and 4-grams from the title segment
   }
 
-  const profiles: PageProfile[] = [];
+  const profiles: TitleProfile[] = [];
 
   for (const page of pages) {
     if (page.status_code !== 200) continue;
-    if (!page.meta?.title && !page.meta?.htags?.h1?.[0]) continue;
+    const title = page.meta?.title || '';
+    if (!title) continue;
 
     const urlType = classifyUrlType(page.url);
     if (skipTypes.includes(urlType)) continue;
 
-    const tokens = extractTargetTokens(page, brandName, cityNames);
-    if (tokens.length < 2) continue;
+    // Take only the first segment (before | – —)
+    const segment = title.split(/\s*[|–—]\s*/)[0].trim();
+    if (!segment) continue;
 
-    const bigrams: string[] = [];
-    for (let i = 0; i < tokens.length - 1; i++) {
-      const gram = tokens[i] + ' ' + tokens[i + 1];
-      if (!GENERIC_BIGRAMS.has(gram)) bigrams.push(gram);
+    let raw = segment.toLowerCase();
+
+    // Remove brand name
+    if (brandName.length > 2) {
+      raw = raw.replace(
+        new RegExp('\\b' + brandName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'gi'),
+        ' '
+      );
     }
 
-    if (bigrams.length === 0) continue;
+    // Remove punctuation (keep alphanumeric + spaces — city names and state abbrevs stay)
+    raw = raw.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+
+    // Tokenize, remove only pure stop words (NOT city names, NOT state abbrevs)
+    const tokens = raw
+      .split(/\s+/)
+      .filter((t) => t.length >= 2 && !TITLE_STOPS.has(t));
+
+    if (tokens.length < 3) continue;
+
+    // Build 3-grams and 4-grams
+    const grams: string[] = [];
+    for (let i = 0; i <= tokens.length - 3; i++) {
+      grams.push(tokens.slice(i, i + 3).join(' '));
+    }
+    for (let i = 0; i <= tokens.length - 4; i++) {
+      grams.push(tokens.slice(i, i + 4).join(' '));
+    }
+
+    if (grams.length === 0) continue;
 
     profiles.push({
       url: page.url,
       path: relativePath(page.url),
-      title: page.meta?.title || '',
-      h1: page.meta?.htags?.h1?.[0] || '',
+      title,
       urlType,
-      tokens,
-      bigrams,
+      grams: [...new Set(grams)],
     });
   }
 
   if (profiles.length < 2) return [];
 
-  // ── Bigram frequency filter ──────────────────────────────────────────
-  // Exclude bigrams that appear on most pages of the site (e.g. "auto body"
-  // on every page of an auto body shop). These are site-wide noise, not
-  // indicators of cannibalization between specific pages.
-  // Only use bigrams appearing on 2–30% of pages for grouping.
-  const bigramFrequency = new Map<string, number>();
+  // Count how many pages contain each gram
+  const gramFreq = new Map<string, number>();
   for (const profile of profiles) {
-    const uniqueBigrams = new Set(profile.bigrams);
-    for (const gram of uniqueBigrams) {
-      bigramFrequency.set(gram, (bigramFrequency.get(gram) || 0) + 1);
+    for (const gram of profile.grams) {
+      gramFreq.set(gram, (gramFreq.get(gram) || 0) + 1);
     }
   }
-  const maxFreq = Math.max(2, Math.ceil(profiles.length * 0.3));
-  const specificBigrams = new Set<string>();
-  for (const [gram, freq] of bigramFrequency.entries()) {
-    if (freq >= 2 && freq <= maxFreq) specificBigrams.add(gram);
+
+  // Only grams on 2+ pages are conflict signals — no upper-bound filter:
+  // title conflicts are always worth reporting regardless of frequency.
+  const conflictGrams = new Set<string>();
+  for (const [gram, freq] of gramFreq.entries()) {
+    if (freq >= 2) conflictGrams.add(gram);
   }
 
-  // Build bigram → page indices (specific bigrams only)
-  const bigramIndex = new Map<string, number[]>(); // bigram → profile indices
+  if (conflictGrams.size === 0) return [];
+
+  // Build gram → [page indices] for conflict grams only
+  const gramIndex = new Map<string, number[]>();
   for (let i = 0; i < profiles.length; i++) {
-    for (const gram of profiles[i].bigrams) {
-      if (!specificBigrams.has(gram)) continue; // skip domain-wide noise
-      if (!bigramIndex.has(gram)) bigramIndex.set(gram, []);
-      bigramIndex.get(gram)!.push(i);
+    for (const gram of profiles[i].grams) {
+      if (!conflictGrams.has(gram)) continue;
+      if (!gramIndex.has(gram)) gramIndex.set(gram, []);
+      gramIndex.get(gram)!.push(i);
     }
   }
 
-  // Union-Find to group pages sharing specific bigrams
+  // Union-Find to group pages that share any conflict gram
   const parent = profiles.map((_, i) => i);
   function find(x: number): number {
     if (parent[x] !== x) parent[x] = find(parent[x]);
@@ -621,24 +524,13 @@ export function detectContentOverlaps(
     parent[find(x)] = find(y);
   }
 
-  // Track which bigrams led to each union for reporting
-  const pairSharedBigrams = new Map<string, Set<string>>();
-
-  for (const [gram, indices] of bigramIndex.entries()) {
-    if (indices.length < 2) continue;
-
-    // Connect all pages sharing this bigram
+  for (const [, indices] of gramIndex.entries()) {
     for (let i = 0; i < indices.length - 1; i++) {
-      for (let j = i + 1; j < indices.length; j++) {
-        union(indices[i], indices[j]);
-        const pairKey = [indices[i], indices[j]].sort().join('-');
-        if (!pairSharedBigrams.has(pairKey)) pairSharedBigrams.set(pairKey, new Set());
-        pairSharedBigrams.get(pairKey)!.add(gram);
-      }
+      union(indices[i], indices[i + 1]);
     }
   }
 
-  // Group pages by root
+  // Group by union-find root
   const groups = new Map<number, number[]>();
   for (let i = 0; i < profiles.length; i++) {
     const root = find(i);
@@ -646,59 +538,55 @@ export function detectContentOverlaps(
     groups.get(root)!.push(i);
   }
 
-  // Build output groups
-  const results: ContentOverlapGroup[] = [];
+  const results: TitleConflict[] = [];
 
   for (const [, memberIndices] of groups.entries()) {
     if (memberIndices.length < 2) continue;
 
     const members = memberIndices.map((i) => profiles[i]);
+    const memberSet = new Set(memberIndices);
 
-    // Find specific bigrams shared by ALL members in the group
-    const commonBigrams = members[0].bigrams.filter((gram) =>
-      specificBigrams.has(gram) && members.every((m) => m.bigrams.includes(gram))
-    );
+    // Pick the best gram to display: prefer 4-grams (more specific) over 3-grams,
+    // then by match count (how many group members share it).
+    let bestGram = '';
+    let bestScore = -1;
+    for (const gram of conflictGrams) {
+      const indices = gramIndex.get(gram) || [];
+      const matchCount = indices.filter((i) => memberSet.has(i)).length;
+      if (matchCount < 2) continue;
+      const gramLen = gram.split(' ').length; // 3 or 4
+      const score = gramLen * 1000 + matchCount;
+      if (score > bestScore) {
+        bestScore = score;
+        bestGram = gram;
+      }
+    }
 
-    // Fall back to specific bigrams shared by at least half the members
-    const frequentBigrams = commonBigrams.length > 0
-      ? commonBigrams
-      : [...bigramIndex.entries()]
-          .filter(([gram, indices]) => {
-            if (!specificBigrams.has(gram)) return false;
-            const memberSet = new Set(memberIndices);
-            const matchCount = indices.filter((i) => memberSet.has(i)).length;
-            return matchCount >= Math.ceil(memberIndices.length / 2);
-          })
-          .map(([gram]) => gram);
-
-    if (frequentBigrams.length === 0) continue;
+    if (!bestGram) continue;
 
     const urlTypes = members.map((m) => m.urlType);
-    const risk = members.length >= 4 ? 'high' : members.length === 3 ? 'high' : 'medium';
+    const severity: 'critical' | 'high' = members.length >= 3 ? 'critical' : 'high';
     const { type, fix } = contentConflictDescriptionAndFix(urlTypes);
 
     results.push({
+      sharedPhrase: bestGram,
       pages: members.map((m) => ({
         url: m.url,
         path: m.path,
         title: m.title,
-        h1: m.h1,
         urlType: m.urlType,
       })),
-      sharedPhrases: frequentBigrams.slice(0, 5),
-      risk,
+      severity,
       conflictType: type,
       conflictFix: fix,
     });
   }
 
-  // Sort: high risk first, then by page count descending
-  results.sort((a, b) => {
-    if (a.risk !== b.risk) return a.risk === 'high' ? -1 : 1;
+  // Critical first, then by page count descending
+  return results.sort((a, b) => {
+    if (a.severity !== b.severity) return a.severity === 'critical' ? -1 : 1;
     return b.pages.length - a.pages.length;
   });
-
-  return results;
 }
 
 // ─── Ranking Page Map ─────────────────────────────────────────────────────────

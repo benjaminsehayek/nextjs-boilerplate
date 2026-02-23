@@ -21,6 +21,7 @@ import {
 } from '@/lib/siteAudit/crawlEngine';
 import { computeScores, computePageHealth } from '@/lib/siteAudit/scoring';
 import { generateDetailedIssues, generateQuickWins } from '@/lib/siteAudit/issueDetection';
+import { buildMarketString } from '@/lib/siteAudit/marketDiscovery';
 import type {
   ScanState,
   CrawlProgress,
@@ -417,8 +418,26 @@ export default function SiteAuditPage() {
       setPhase('analyzing');
       const markets: string[] = [];
 
-      // Add primary market from business detection
-      if (detectedBusiness?.city && detectedBusiness?.region) {
+      // PRIMARY SOURCE: user's tracked business locations (most reliable — user explicitly set these).
+      // buildMarketString() uses the same state abbreviation table as market auto-discovery,
+      // producing the exact "City,StateName,Country" format DataForSEO expects.
+      if (locations.length > 0) {
+        log('Using tracked business locations as markets...');
+        for (const loc of locations) {
+          if (markets.length >= 5) break;
+          if (!loc.city) continue;
+          const country: 'United States' | 'Canada' = 'United States';
+          const market = buildMarketString(loc.city, loc.state || '', country);
+          if (!markets.some((m) => m.toLowerCase() === market.toLowerCase())) {
+            markets.push(market);
+            log('  Market: ' + market, 'success');
+          }
+        }
+        log(markets.length + ' market(s) from tracked locations', 'success');
+      }
+
+      // FALLBACK: business auto-detection (used when no tracked locations)
+      if (markets.length === 0 && detectedBusiness?.city && detectedBusiness?.region) {
         const country = detectedBusiness.country === 'US' || detectedBusiness.country === 'us' ? 'United States'
           : detectedBusiness.country === 'CA' || detectedBusiness.country === 'ca' ? 'Canada' : '';
         const autoMarket = [detectedBusiness.city, detectedBusiness.region, country].filter(Boolean).join(',');
@@ -428,36 +447,34 @@ export default function SiteAuditPage() {
         }
       }
 
-      // Discover markets from crawled location pages
+      // SUPPLEMENT: discover additional markets from crawled location pages (up to 5 total)
       try {
         const { discoverMarketsFromCrawl, detectCityFromContent } = await import('@/lib/siteAudit/marketDiscovery');
         const pages = crawlData.pages?.items || [];
         const discovered = discoverMarketsFromCrawl(pages, detectedBusiness);
         if (discovered.length > 0) {
-          log('Market Auto-Discovery — found ' + discovered.length + ' location pages');
           const existingLower = markets.map((m) => m.toLowerCase());
           let added = 0;
           for (const dm of discovered) {
             if (markets.length >= 5) break;
             if (existingLower.includes(dm.location.toLowerCase())) continue;
-            if (existingLower.some((m) => m.includes(dm.city.toLowerCase()))) continue;
+            if (existingLower.some((m) => m.split(',')[0]?.toLowerCase() === dm.city.toLowerCase())) continue;
             markets.push(dm.location);
             existingLower.push(dm.location.toLowerCase());
             added++;
-            log('  Auto-added market: ' + dm.location, 'success');
           }
-          if (added > 0) log('  ' + added + ' new market(s) added from site structure', 'success');
+          if (added > 0) log(added + ' additional market(s) found in site structure', 'success');
         }
 
-        // Content fallback if no markets found
+        // Content fallback if still no markets
         if (markets.length === 0) {
-          log('No markets from GBP or location pages — scanning page content...');
+          log('No markets found — scanning page content...');
           const detected = detectCityFromContent(pages);
           if (detected) {
             markets.push(detected.location);
             log('Content-based detection: ' + detected.location, 'success');
           } else {
-            log('No city detected — using TLD fallback', 'warning');
+            log('No city detected — keyword analysis may be limited', 'warning');
           }
         }
       } catch (e: any) {

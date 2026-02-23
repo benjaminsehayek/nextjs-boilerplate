@@ -117,6 +117,27 @@ function extractLocationFromSegment(
   return null;
 }
 
+// ─── Shared Location Utilities ────────────────────────────────────
+
+/**
+ * Build a DataForSEO-compatible location string from city + state (abbreviation or full name).
+ * Format: "City,StateName,Country" — must match DataForSEO's location database exactly.
+ * State abbreviations (WA, BC, ON …) are automatically expanded to full names.
+ */
+export function buildMarketString(
+  city: string,
+  state: string,
+  country: 'United States' | 'Canada' = 'United States'
+): string {
+  const stateKey = state.trim().toLowerCase();
+  const fullState =
+    US_STATE_ABBREV_TO_NAME[stateKey] ||
+    CA_PROVINCE_ABBREV_TO_NAME[stateKey] ||
+    // Already a full name — title-case it for consistency
+    state.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  return [city.trim(), fullState, country].join(',');
+}
+
 // ─── Main Discovery Functions ─────────────────────────────────────
 
 /**
