@@ -206,32 +206,60 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
             </div>
           </div>
 
-          {/* Best/Worst Areas */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-            <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="text-xl">🎯</div>
-                <div className="text-sm font-display">Strongest Areas</div>
-              </div>
-              <div className="text-xs text-ash-300">
-                {currentHeatmap.pointsRanking > 0
-                  ? `Your business appears in top 20 at ${currentHeatmap.pointsRanking} locations`
-                  : 'No rankings found in this grid'}
-              </div>
-            </div>
+          {/* Insight cards */}
+          {(() => {
+            const top3 = currentHeatmap.top3Count;
+            const notRanking = currentHeatmap.notRanking;
+            const nearTop3 = currentHeatmap.pointsRanking - top3; // ranking 4–20
+            const top3Pct = totalPoints > 0 ? Math.round((top3 / totalPoints) * 100) : 0;
 
-            <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="text-xl">⚠️</div>
-                <div className="text-sm font-display">Opportunity Areas</div>
+            let strengthTitle: string;
+            let strengthBody: string;
+            if (top3 === 0) {
+              strengthTitle = 'Not yet in the top 3';
+              strengthBody = `You don't appear in the top 3 results anywhere on this grid for "${selectedKeyword}". The top 3 spots capture ~75% of clicks — this keyword is your biggest growth lever.`;
+            } else if (top3 === totalPoints) {
+              strengthTitle = 'Dominant coverage';
+              strengthBody = `You rank in the top 3 across your entire service area (${top3Pct}%). Customers searching for "${selectedKeyword}" will almost always find you first.`;
+            } else {
+              strengthTitle = `Top 3 in ${top3Pct}% of your area`;
+              strengthBody = `${top3} of ${totalPoints} neighborhoods rank you in the top 3 for "${selectedKeyword}". These are the areas actively sending you customers right now.`;
+            }
+
+            let gapTitle: string;
+            let gapBody: string;
+            let gapColor: string;
+            if (notRanking === 0 && nearTop3 === 0) {
+              gapTitle = 'Full coverage — nothing to fix';
+              gapBody = `Every area in your grid can find you in the top 3 for "${selectedKeyword}". Maintain your Google Business Profile activity to keep this position.`;
+              gapColor = 'bg-green-500/10 border-green-500/20';
+            } else if (notRanking === 0) {
+              gapTitle = `${nearTop3} areas just outside the top 3`;
+              gapBody = `You're ranking 4–20 in ${nearTop3} neighborhoods — visible but not prominent. Improving your profile, reviews, and local citations could push these into top-3 territory.`;
+              gapColor = 'bg-amber-500/10 border-amber-500/20';
+            } else if (nearTop3 === 0) {
+              gapTitle = `Invisible in ${notRanking} neighborhoods`;
+              gapBody = `${notRanking} areas can't find you at all for "${selectedKeyword}" — competitors are getting 100% of those calls. Adding service-area content and building local citations can close these gaps.`;
+              gapColor = 'bg-red-500/10 border-red-500/20';
+            } else {
+              gapTitle = `${notRanking + nearTop3} areas need attention`;
+              gapBody = `${notRanking} neighborhoods can't find you at all, and ${nearTop3} more rank you outside the top 3. Focusing on reviews, Google Business posts, and local citations in those areas can shift customers your way.`;
+              gapColor = 'bg-red-500/10 border-red-500/20';
+            }
+
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-lg">
+                  <div className="text-sm font-display mb-1">{strengthTitle}</div>
+                  <p className="text-xs text-ash-300 leading-relaxed">{strengthBody}</p>
+                </div>
+                <div className={`p-4 border rounded-lg ${gapColor}`}>
+                  <div className="text-sm font-display mb-1">{gapTitle}</div>
+                  <p className="text-xs text-ash-300 leading-relaxed">{gapBody}</p>
+                </div>
               </div>
-              <div className="text-xs text-ash-300">
-                {currentHeatmap.notRanking > 0
-                  ? `${currentHeatmap.notRanking} locations need SEO improvement`
-                  : 'Great coverage across all grid points!'}
-              </div>
-            </div>
-          </div>
+            );
+          })()}
         </div>
       )}
 
