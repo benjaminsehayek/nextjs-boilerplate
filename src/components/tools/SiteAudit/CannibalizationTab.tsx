@@ -6,11 +6,11 @@ import { PAGE_TYPE_LABELS, INTENT_LABELS } from './types';
 import {
   detectCannibalizationConflicts,
   detectWrongPageRankings,
-  detectNgramOverlaps,
+  detectExactKeywordConflicts,
   detectContentOverlaps,
   buildRankingPageMap,
   type WrongPageRanking,
-  type NgramOverlapConflict,
+  type ExactKeywordConflict,
   type ContentOverlapGroup,
   type RankingPage,
 } from '@/lib/siteAudit/cannibalizationDetection';
@@ -94,12 +94,29 @@ function generateSpecificWrongPageFix(item: WrongPageRanking): string {
   return `1. Create a dedicated ${idealLabel} for "${item.keyword}" with clear service information, your service area, and a prominent phone number / call-to-action.\n2. Link to it from ${item.path} using "${item.keyword}" as the anchor text.\n3. This tells Google which page you actually want to rank for this search.`;
 }
 
-function generateSpecificNgramFix(item: NgramOverlapConflict): string {
-  const phrases = item.sharedPhrases.slice(0, 2).map(p => `"${p}"`).join(' and ');
-  const stronger = item.pageA.etv >= item.pageB.etv ? item.pageA : item.pageB;
+function generateSpecificExactConflictFix(item: ExactKeywordConflict): string {
+  const n = item.sharedKeywords.length;
+  const topKw = item.sharedKeywords[0].keyword;
+  const stronger = item.pageA.bestPosition <= item.pageB.bestPosition ? item.pageA : item.pageB;
   const weaker = stronger === item.pageA ? item.pageB : item.pageA;
+  const typeA = PAGE_TYPE_LABELS[item.pageA.urlType].label.toLowerCase();
+  const typeB = PAGE_TYPE_LABELS[item.pageB.urlType].label.toLowerCase();
 
-  return `1. Choose ${stronger.path} as the main page for ${phrases} — it currently has stronger traffic. Improve it with more content, photos, and internal links pointing to it.\n2. Update ${weaker.path} to target a related but distinct angle: change its title and H1 so it clearly covers something different. This gives Google a reason to rank both pages instead of choosing one.\n3. Add an internal link from ${weaker.path} to ${stronger.path} for the shared keyword phrases.`;
+  if (item.pageA.urlType === 'service' && item.pageB.urlType === 'location') {
+    const sp = item.pageA;
+    const lp = item.pageB;
+    return `1. Keep ${sp.path} (your ${typeA}) as the main page for "${topKw}" — it covers the service broadly.\n2. Update ${lp.path} (your ${typeB}) to lead with its specific city in the first sentence, add the local address, and include city-specific details. This makes it clearly different from the service page.\n3. Once each page covers something distinct, Google can rank both — the service page for general searches and the city page for local ones.`;
+  }
+  if (item.pageA.urlType === 'location' && item.pageB.urlType === 'service') {
+    const sp = item.pageB;
+    const lp = item.pageA;
+    return `1. Keep ${sp.path} (your ${typeB}) as the main page for "${topKw}" — it covers the service broadly.\n2. Update ${lp.path} (your ${typeA}) to lead with its specific city in the first sentence, add the local address, and include city-specific details. This makes it clearly different from the service page.\n3. Once each page covers something distinct, Google can rank both — the service page for general searches and the city page for local ones.`;
+  }
+  if (item.pageA.urlType === 'location' && item.pageB.urlType === 'location') {
+    return `1. Each location page needs content that only makes sense for that specific city. For ${item.pageA.path}: start with the city name in sentence one, add the address, parking info, and local photos.\n2. Same for ${item.pageB.path}: make it clearly about that city, not just a copy with a different city name swapped in.\n3. Once both pages are genuinely different, they stop competing. Google will rank each one for searches in its respective city.`;
+  }
+
+  return `1. Choose ${stronger.path} as your primary page for "${topKw}" — it currently ranks better (#${stronger.bestPosition} vs #${weaker.bestPosition}).\n2. Strengthen it: add more content, photos, and internal links pointing to it from related pages.\n3. Update ${weaker.path} to focus on a related but different angle — change its title and H1 so it covers a distinct topic. This gives Google a reason to rank both pages for different searches instead of treating them as competitors.\n4. Add an internal link from ${weaker.path} to ${stronger.path} for "${topKw}".`;
 }
 
 function generateSpecificContentFix(group: ContentOverlapGroup): string {
@@ -252,49 +269,65 @@ function WrongPageCard({ item }: { item: WrongPageRanking }) {
   );
 }
 
-// ─── Tier 3: N-gram Overlap Card ────────────────────────────────────
+// ─── Tier 3: Exact Keyword Conflict Card ─────────────────────────────
 
-function NgramCard({ item }: { item: NgramOverlapConflict }) {
-  const specificFix = generateSpecificNgramFix(item);
-  const sharedPhrases = item.sharedPhrases.slice(0, 4);
+function ExactConflictCard({ item }: { item: ExactKeywordConflict }) {
+  const [showAll, setShowAll] = useState(false);
+  const specificFix = generateSpecificExactConflictFix(item);
+  const displayKws = showAll ? item.sharedKeywords : item.sharedKeywords.slice(0, 8);
 
   return (
     <div className="card p-0 overflow-hidden">
       {/* Header */}
       <div className="p-4 border-b border-char-700">
-        <p className="text-sm text-ash-200 mb-2">
-          These 2 pages both rank for searches containing the same keywords — Google is splitting traffic between them instead of sending it all to the stronger page.
+        <p className="text-sm text-ash-200 mb-1">
+          These 2 pages rank for <strong className="text-warning">{item.sharedKeywords.length} of the same keyword{item.sharedKeywords.length !== 1 ? 's' : ''}</strong> — Google splits traffic between them instead of sending it all to one.
         </p>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[10px] text-ash-500">Overlapping keywords:</span>
-          {sharedPhrases.map((phrase) => (
-            <span key={phrase} className="text-[11px] bg-warning/10 text-warning border border-warning/20 px-2 py-0.5 rounded-full font-mono">
-              {phrase}
-            </span>
-          ))}
-          {item.overlapPct > 0 && (
-            <span className="text-[10px] text-ash-500 ml-1">{item.overlapPct}% overlap</span>
-          )}
-        </div>
+        {item.totalSharedVolume > 0 && (
+          <p className="text-xs text-ash-500">{item.totalSharedVolume.toLocaleString()} combined monthly searches affected</p>
+        )}
       </div>
 
       {/* Page pair */}
-      <div className="px-4 py-3 grid grid-cols-2 gap-2">
+      <div className="px-4 pt-3 pb-2 grid grid-cols-2 gap-2">
         {[item.pageA, item.pageB].map((page, idx) => (
           <div key={idx} className="rounded bg-char-800 border border-char-600 p-3">
             <div className="flex items-center justify-between gap-1 mb-2">
               <PageTypeChip type={page.urlType} size="xs" />
-              {page.topPosition < 999 && (
-                <span className="text-[10px] text-ash-500">Best: #{page.topPosition}</span>
-              )}
+              <span className="text-[10px] text-ash-500">Best: #{page.bestPosition}</span>
             </div>
             <div className="font-mono text-xs text-ash-200">{page.path || '/'}</div>
-            <div className="text-[10px] text-ash-500 mt-1.5">
-              {page.kwCount} keyword{page.kwCount !== 1 ? 's' : ''}
-              {page.etv > 0 && ` · ${Math.round(page.etv)} est. monthly visits`}
-            </div>
+            {page.etv > 0 && (
+              <div className="text-[10px] text-success mt-1">{Math.round(page.etv)} est. monthly visits</div>
+            )}
           </div>
         ))}
+      </div>
+
+      {/* Shared keyword list */}
+      <div className="px-4 pb-3">
+        <div className="text-[10px] text-ash-500 uppercase font-display mb-1.5">Keywords both pages rank for</div>
+        <div className="space-y-1">
+          {displayKws.map((kw, i) => (
+            <div key={i} className="flex items-center gap-2 rounded bg-char-800 px-2.5 py-1.5">
+              <span className="flex-1 text-xs text-ash-200">{kw.keyword}</span>
+              {kw.volume > 0 && (
+                <span className="text-[10px] text-ash-500 shrink-0">{kw.volume.toLocaleString()}/mo</span>
+              )}
+              <span className="text-[10px] text-ash-500 shrink-0 font-mono">
+                #{kw.positionA} vs #{kw.positionB}
+              </span>
+            </div>
+          ))}
+        </div>
+        {item.sharedKeywords.length > 8 && (
+          <button
+            onClick={() => setShowAll(v => !v)}
+            className="mt-2 text-[10px] text-flame-400 hover:text-flame-300 transition-colors"
+          >
+            {showAll ? '▲ Show fewer' : `▼ Show ${item.sharedKeywords.length - 8} more keywords`}
+          </button>
+        )}
       </div>
 
       {/* Fix — always visible */}
@@ -486,10 +519,10 @@ export default function CannibalizationTab({ results }: TabProps) {
     );
   }, [keywordsData, results.domain, serpConflicts]);
 
-  const ngramOverlaps = useMemo(() => {
+  const exactConflicts = useMemo(() => {
     if (!keywordsData?.markets) return [];
-    return detectNgramOverlaps(keywordsData.markets, results.domain);
-  }, [keywordsData, results.domain]);
+    return detectExactKeywordConflicts(keywordsData.markets);
+  }, [keywordsData]);
 
   const contentOverlaps = useMemo(() => {
     if (pages.length === 0) return [];
@@ -522,7 +555,7 @@ export default function CannibalizationTab({ results }: TabProps) {
 
   const [activeSection, setActiveSection] = useState<ActiveSection>('all');
 
-  const totalIssues = serpConflicts.length + wrongPageRankings.length + ngramOverlaps.length + contentOverlaps.length;
+  const totalIssues = serpConflicts.length + wrongPageRankings.length + exactConflicts.length + contentOverlaps.length;
   const hasKeywordData = !!keywordsData?.markets;
   const hasAnyData = totalIssues > 0;
 
@@ -555,7 +588,7 @@ export default function CannibalizationTab({ results }: TabProps) {
     { id: 'all', label: 'All Issues', count: totalIssues, title: '' },
     { id: 'serp', label: '✅ Confirmed Conflicts', count: serpConflicts.length, title: 'Confirmed Conflicts' },
     { id: 'wrongpage', label: '🎯 Wrong Page Showing Up', count: wrongPageRankings.length, title: 'Wrong Page Ranking' },
-    { id: 'ngram', label: '⚔ Competing Pages', count: ngramOverlaps.length, title: 'Competing Pages' },
+    { id: 'ngram', label: '⚔ Same Keywords', count: exactConflicts.length, title: 'Same Keywords' },
     { id: 'content', label: '📄 Duplicate Content', count: contentOverlaps.length, title: 'Duplicate Content' },
     ...(rankingPages.length > 0
       ? [{ id: 'rankings' as ActiveSection, label: '📈 All Rankings', count: rankingPages.length, title: 'All Rankings' }]
@@ -584,7 +617,7 @@ export default function CannibalizationTab({ results }: TabProps) {
             { value: criticalCount, label: 'High Priority', isWarning: criticalCount > 0 },
             { value: serpConflicts.length, label: 'Confirmed by Google', isWarning: serpConflicts.length > 0 },
             { value: wrongPageRankings.length, label: 'Wrong Page Ranking', isWarning: wrongPageRankings.length > 0 },
-            { value: ngramOverlaps.length, label: 'Pages Competing' },
+            { value: exactConflicts.length, label: 'Same-Keyword Conflicts', isWarning: exactConflicts.length > 0 },
             { value: contentOverlaps.length, label: 'Duplicate Content Groups', isWarning: contentOverlaps.length > 0 },
             {
               value: totalVolume > 0 ? totalVolume.toLocaleString() : '0',
@@ -647,17 +680,17 @@ export default function CannibalizationTab({ results }: TabProps) {
         </div>
       )}
 
-      {/* ── Competing Pages (N-gram overlap) ── */}
-      {(activeSection === 'all' || activeSection === 'ngram') && ngramOverlaps.length > 0 && (
+      {/* ── Exact Keyword Conflicts ── */}
+      {(activeSection === 'all' || activeSection === 'ngram') && exactConflicts.length > 0 && (
         <div>
           <SectionHeader
-            title="Pages Competing Against Each Other for Rankings"
-            count={ngramOverlaps.length}
-            description="These pairs of pages both rank for overlapping keyword searches. Google sees them as targeting the same thing and splits traffic between them — neither page gets the full benefit. The fix is to make each page clearly cover a different topic."
+            title="Pages Ranking for the Same Keywords"
+            count={exactConflicts.length}
+            description="Every pair of pages on this site that rank for the exact same keyword — confirmed by comparing their actual ranking keyword lists across all tracked markets. Google splits traffic between these pages instead of concentrating it on one."
           />
           <div className="space-y-4">
-            {ngramOverlaps.map((item, idx) => (
-              <NgramCard key={`${item.pageA.url}-${item.pageB.url}-${idx}`} item={item} />
+            {exactConflicts.map((item, idx) => (
+              <ExactConflictCard key={`${item.pageA.url}-${item.pageB.url}-${idx}`} item={item} />
             ))}
           </div>
         </div>

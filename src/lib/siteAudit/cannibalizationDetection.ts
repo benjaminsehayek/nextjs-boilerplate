@@ -39,26 +39,30 @@ export interface WrongPageRanking {
 
 // ─── Exported Tier 3 Shape ──────────────────────────────────────────
 
-export interface NgramOverlapConflict {
+export interface ExactKeywordConflict {
   pageA: {
     url: string;
     path: string;
     urlType: UrlType;
-    topPosition: number;
+    bestPosition: number;
     etv: number;
-    kwCount: number;
   };
   pageB: {
     url: string;
     path: string;
     urlType: UrlType;
-    topPosition: number;
+    bestPosition: number;
     etv: number;
-    kwCount: number;
   };
-  sharedPhrases: string[];
-  overlapPct: number; // 0–100
-  sharedVolume: number;
+  sharedKeywords: Array<{
+    keyword: string;
+    volume: number;
+    positionA: number;
+    positionB: number;
+    marketA: string;
+    marketB: string;
+  }>;
+  totalSharedVolume: number;
   risk: 'high' | 'medium';
 }
 
@@ -276,174 +280,149 @@ export function detectWrongPageRankings(
   return results;
 }
 
-// ─── TIER 3: N-gram Overlap (Ranked Keywords) ────────────────────────
+// ─── TIER 3: Exact Keyword Conflict Detection ────────────────────────
 
-function buildNgrams(
-  text: string,
-  n: number
-): string[] {
-  const words = text.toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '')
-    .split(/\s+/)
-    .filter((w) => w.length > 2);
-  const grams: string[] = [];
-  for (let i = 0; i <= words.length - n; i++) {
-    grams.push(words.slice(i, i + n).join(' '));
-  }
-  return grams;
-}
 
 /**
- * Detects pages targeting semantically overlapping keyword sets by comparing
- * the n-grams of their ranked keywords. Catches cases where two pages rank for
- * similar-but-different keywords (e.g. "plumber dallas" vs "plumbing service dallas")
- * without appearing in the same SERP.
+ * Detects every pair of pages that rank for the same exact keyword across any market.
+ * Works by comparing actual keyword strings directly — no heuristics.
+ *
+ * Why this works for multi-market sites: the same keyword (e.g. "auto body repair")
+ * may appear in multiple markets, each ranking a different domain page. This means
+ * page A ranks for "auto body repair" in Vancouver and page B ranks for "auto body repair"
+ * in Chehalis — a direct cannibalization signal.
+ *
+ * Returns one conflict per page-pair, listing every exact keyword they share.
  */
-export function detectNgramOverlaps(
-  markets: Record<string, MarketData>,
-  domain: string
-): NgramOverlapConflict[] {
-  // Build pageMap: URL → {items, etv, topPos}
-  const pageMap = new Map<string, {
-    items: Array<{ keyword: string; volume: number; position: number; etv: number }>;
+export function detectExactKeywordConflicts(
+  markets: Record<string, MarketData>
+): ExactKeywordConflict[] {
+  const skipTypes: UrlType[] = ['contact', 'about', 'gallery', 'testimonials', 'faq', 'other'];
+
+  // Step 1: Build per-page keyword map (aggregated across all markets)
+  const pageData = new Map<string, {
     urlType: UrlType;
+    keywords: Array<{ keyword: string; volume: number; position: number; market: string; etv: number }>;
+    totalEtv: number;
   }>();
 
-  for (const [, marketData] of Object.entries(markets)) {
-    for (const item of marketData.items) {
+  for (const [market, md] of Object.entries(markets)) {
+    for (const item of md.items) {
       const url = item.ranked_serp_element.serp_item.url;
       const pos = item.ranked_serp_element.serp_item.rank_group || 0;
-      if (!url || pos <= 0 || pos > 100) continue; // only ranking pages
+      if (!url || pos <= 0 || pos > 100) continue;
 
-      if (!pageMap.has(url)) {
-        pageMap.set(url, { items: [], urlType: classifyUrlType(url) });
+      const urlType = classifyUrlType(url);
+      if (skipTypes.includes(urlType)) continue;
+
+      if (!pageData.has(url)) {
+        pageData.set(url, { urlType, keywords: [], totalEtv: 0 });
       }
-      pageMap.get(url)!.items.push({
-        keyword: item.keyword_data.keyword,
+      const page = pageData.get(url)!;
+      page.keywords.push({
+        keyword: item.keyword_data.keyword.toLowerCase().trim(),
         volume: item.keyword_data.keyword_info?.search_volume || 0,
         position: pos,
+        market,
         etv: item.ranked_serp_element.serp_item.etv || 0,
       });
+      page.totalEtv += item.ranked_serp_element.serp_item.etv || 0;
     }
   }
 
-  // Skip utility page types that shouldn't be compared
-  const skipTypes: UrlType[] = ['contact', 'about', 'gallery', 'testimonials', 'faq'];
+  if (pageData.size < 2) return [];
 
-  // Build ngram profiles per page (top 20 ngrams by volume)
-  interface PageProfile {
-    url: string;
-    urlType: UrlType;
-    ngrams: Map<string, { volume: number }>;
-    topPosition: number;
-    etv: number;
-    kwCount: number;
+  // Step 2: keyword → list of { url, position, market, volume } entries
+  const kwMap = new Map<string, Array<{ url: string; position: number; market: string; volume: number; etv: number }>>();
+
+  for (const [url, data] of pageData.entries()) {
+    for (const kw of data.keywords) {
+      if (!kwMap.has(kw.keyword)) kwMap.set(kw.keyword, []);
+      kwMap.get(kw.keyword)!.push({ url, position: kw.position, market: kw.market, volume: kw.volume, etv: kw.etv });
+    }
   }
 
-  const profiles: PageProfile[] = [];
+  // Step 3: For every keyword with 2+ different URLs, record the page-pair conflict
+  const pairConflicts = new Map<string, Array<{
+    keyword: string;
+    volume: number;
+    positionA: number;
+    positionB: number;
+    marketA: string;
+    marketB: string;
+  }>>();
 
-  for (const [url, data] of pageMap.entries()) {
-    if (skipTypes.includes(data.urlType)) continue;
-    if (data.items.length === 0) continue;
+  for (const [keyword, entries] of kwMap.entries()) {
+    const uniqueUrls = [...new Set(entries.map(e => e.url))];
+    if (uniqueUrls.length < 2) continue;
 
-    const ngramMap = new Map<string, { volume: number }>();
+    // Build all pairs
+    for (let i = 0; i < uniqueUrls.length - 1; i++) {
+      for (let j = i + 1; j < uniqueUrls.length; j++) {
+        const urlA = uniqueUrls[i];
+        const urlB = uniqueUrls[j];
+        const pairKey = [urlA, urlB].sort().join('||');
 
-    for (const { keyword, volume } of data.items) {
-      const bigrams = buildNgrams(keyword, 2);
-      const trigrams = buildNgrams(keyword, 3);
-      for (const gram of [...bigrams, ...trigrams]) {
-        const existing = ngramMap.get(gram);
-        if (existing) {
-          existing.volume += volume;
-        } else {
-          ngramMap.set(gram, { volume });
-        }
+        if (!pairConflicts.has(pairKey)) pairConflicts.set(pairKey, []);
+
+        const entA = entries.find(e => e.url === urlA)!;
+        const entB = entries.find(e => e.url === urlB)!;
+
+        pairConflicts.get(pairKey)!.push({
+          keyword,
+          volume: Math.max(entA.volume, entB.volume),
+          positionA: entA.position,
+          positionB: entB.position,
+          marketA: entA.market,
+          marketB: entB.market,
+        });
       }
     }
+  }
 
-    // Keep top 20 by volume
-    const sorted = [...ngramMap.entries()]
-      .sort((a, b) => b[1].volume - a[1].volume)
-      .slice(0, 20);
-    const topNgrams = new Map(sorted);
+  // Step 4: Build output, one conflict per page-pair
+  const conflicts: ExactKeywordConflict[] = [];
 
-    const positions = data.items.map((i) => i.position).filter((p) => p > 0);
-    const etv = data.items.reduce((s, i) => s + i.etv, 0);
+  for (const [pairKey, sharedKws] of pairConflicts.entries()) {
+    const [urlA, urlB] = pairKey.split('||');
+    const dataA = pageData.get(urlA);
+    const dataB = pageData.get(urlB);
+    if (!dataA || !dataB) continue;
 
-    profiles.push({
-      url,
-      urlType: data.urlType,
-      ngrams: topNgrams,
-      topPosition: positions.length > 0 ? Math.min(...positions) : 999,
-      etv,
-      kwCount: data.items.length,
+    // Sort shared keywords by volume desc
+    const sorted = [...sharedKws].sort((a, b) => b.volume - a.volume);
+    const totalSharedVolume = sorted.reduce((s, k) => s + k.volume, 0);
+    const bestPosA = Math.min(...sorted.map(k => k.positionA));
+    const bestPosB = Math.min(...sorted.map(k => k.positionB));
+
+    const risk = (totalSharedVolume >= 100 || sorted.length >= 3) ? 'high' : 'medium';
+
+    conflicts.push({
+      pageA: {
+        url: urlA,
+        path: relativePath(urlA),
+        urlType: dataA.urlType,
+        bestPosition: bestPosA,
+        etv: dataA.totalEtv,
+      },
+      pageB: {
+        url: urlB,
+        path: relativePath(urlB),
+        urlType: dataB.urlType,
+        bestPosition: bestPosB,
+        etv: dataB.totalEtv,
+      },
+      sharedKeywords: sorted,
+      totalSharedVolume,
+      risk,
     });
   }
 
-  // Pairwise comparison
-  const overlaps: NgramOverlapConflict[] = [];
-  const seen = new Set<string>();
-
-  for (let i = 0; i < profiles.length; i++) {
-    for (let j = i + 1; j < profiles.length; j++) {
-      const a = profiles[i];
-      const b = profiles[j];
-
-      const aKeys = [...a.ngrams.keys()];
-      const bKeys = [...b.ngrams.keys()];
-      const shared = aKeys.filter((g) => bKeys.includes(g));
-
-      if (shared.length < 2) continue;
-
-      const overlapPct = Math.round(
-        (shared.length / Math.min(aKeys.length, bKeys.length)) * 100
-      );
-
-      if (overlapPct < 15 && shared.length < 3) continue;
-
-      const pairKey = [a.url, b.url].sort().join('||');
-      if (seen.has(pairKey)) continue;
-      seen.add(pairKey);
-
-      const sharedVolume = shared.reduce((sum, g) => {
-        const av = a.ngrams.get(g)?.volume || 0;
-        const bv = b.ngrams.get(g)?.volume || 0;
-        return sum + Math.max(av, bv);
-      }, 0);
-
-      const risk = overlapPct >= 50 ? 'high' : 'medium';
-
-      overlaps.push({
-        pageA: {
-          url: a.url,
-          path: relativePath(a.url),
-          urlType: a.urlType,
-          topPosition: a.topPosition,
-          etv: a.etv,
-          kwCount: a.kwCount,
-        },
-        pageB: {
-          url: b.url,
-          path: relativePath(b.url),
-          urlType: b.urlType,
-          topPosition: b.topPosition,
-          etv: b.etv,
-          kwCount: b.kwCount,
-        },
-        sharedPhrases: shared.slice(0, 6),
-        overlapPct,
-        sharedVolume,
-        risk,
-      });
-    }
-  }
-
-  overlaps.sort((a, b) => {
+  // High risk first, then by number of shared keywords
+  return conflicts.sort((a, b) => {
     if (a.risk !== b.risk) return a.risk === 'high' ? -1 : 1;
-    return b.sharedVolume - a.sharedVolume;
+    return b.sharedKeywords.length - a.sharedKeywords.length;
   });
-
-  return overlaps;
 }
 
 // ─── TIER 4: Content Overlap (Title/H1 Analysis) ─────────────────────
