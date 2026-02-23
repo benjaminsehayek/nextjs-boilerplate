@@ -125,10 +125,23 @@ export function extractMapItems(resultData: any): MapsSerpItem[] {
 
   const items: any[] = resultData.items || [];
 
+  // Also check top-level result properties (original tool pattern)
+  if (items.length === 0) {
+    if (resultData.local_pack) return resultData.local_pack;
+    if (resultData.maps_pack) return resultData.maps_pack;
+    if (resultData.local_results) return resultData.local_results;
+    if (Array.isArray(resultData.maps_search)) return resultData.maps_search;
+  }
+
   // Primary: direct maps_search items at top level
   let mapItems = items.filter(
     (item: any) => item.type === 'maps_search'
   );
+
+  // Critical: DataForSEO sometimes returns a maps_search wrapper (no title) containing nested items
+  if (mapItems.length > 0 && mapItems[0].type === 'maps_search' && !mapItems[0].title && Array.isArray(mapItems[0].items)) {
+    mapItems = mapItems[0].items;
+  }
 
   // Fallback 1: local_pack / maps_pack / similar containers
   if (mapItems.length === 0) {

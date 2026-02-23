@@ -8,7 +8,7 @@ import { ToolPageShell } from '@/components/ui/ToolPageShell';
 import { GridConfigurator } from '@/components/tools/LocalGrid/GridConfigurator';
 import { ScanProgress } from '@/components/tools/LocalGrid/ScanProgress';
 import { ResultsDashboard } from '@/components/tools/LocalGrid/ResultsDashboard';
-import { generateGridPoints, findBusinessRank, extractMapItems, calculateCost, getCachedResult, setCachedResult, clearScanCache, detectInputType, parseGoogleMapsUrl } from '@/components/tools/LocalGrid/utils';
+import { generateGridPoints, findBusinessRank, extractMapItems, calculateCost, getCachedResult, setCachedResult, clearScanCache, detectInputType, parseGoogleMapsUrl, autoZoomForRadius } from '@/components/tools/LocalGrid/utils';
 import { dfsCall } from '@/lib/dataforseo';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/lib/hooks/useUser';
@@ -251,13 +251,14 @@ function LocalGridInner() {
                 return { pIdx, point, data: cached, fromCache: true };
               }
 
+              const zoom = autoZoomForRadius(config.radius);
               const result = await dfsCall<any>('serp/google/maps/live/advanced', [
                 {
                   keyword: keyword.text,
-                  location_coordinate: `${point.lat},${point.lng},100`,
+                  location_coordinate: `${point.lat.toFixed(7)},${point.lng.toFixed(7)},${zoom}`,
                   language_code: 'en',
-                  device: 'mobile',
-                  os: 'ios',
+                  device: 'desktop',
+                  os: 'windows',
                   depth: 20,
                 },
               ]);
