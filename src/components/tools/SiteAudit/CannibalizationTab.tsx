@@ -8,9 +8,11 @@ import {
   detectWrongPageRankings,
   detectNgramOverlaps,
   detectContentOverlaps,
+  buildRankingPageMap,
   type WrongPageRanking,
   type NgramOverlapConflict,
   type ContentOverlapGroup,
+  type RankingPage,
 } from '@/lib/siteAudit/cannibalizationDetection';
 import { StatGrid } from './shared/StatGrid';
 
@@ -394,9 +396,102 @@ function ContentOverlapCard({ group }: { group: ContentOverlapGroup }) {
   );
 }
 
+// ─── Ranking Pages Card ──────────────────────────────────────────────
+
+function RankingPageCard({
+  page,
+  competingKeywords,
+}: {
+  page: RankingPage;
+  competingKeywords: Set<string>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const competingCount = page.keywords.filter((k) =>
+    competingKeywords.has(k.keyword.toLowerCase())
+  ).length;
+
+  return (
+    <div className="card p-0 overflow-hidden">
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1.5">
+              <PageTypeChip type={page.urlType} />
+              <span className="text-[10px] bg-char-700 text-ash-400 px-2 py-0.5 rounded-full">
+                #{page.topPosition} best rank
+              </span>
+              {competingCount > 0 && (
+                <span className="text-[10px] bg-warning/10 text-warning border border-warning/20 px-2 py-0.5 rounded-full">
+                  ⚠️ {competingCount} competing kw{competingCount !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+            <div className="font-mono text-xs text-ash-200 truncate" title={page.url}>
+              {page.path || '/'}
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-sm font-display text-ash-200">{page.kwCount}</div>
+            <div className="text-[10px] text-ash-500">keywords</div>
+            {page.totalEtv > 0 && (
+              <div className="text-[10px] text-success mt-0.5">{Math.round(page.totalEtv)} ETV</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-char-700">
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="w-full px-4 py-2 flex items-center justify-between text-xs text-ash-400 hover:text-ash-200 transition-colors"
+        >
+          <span className="font-display">View {page.keywords.length} keyword{page.keywords.length !== 1 ? 's' : ''}</span>
+          <span className="text-ash-500">{expanded ? '▲' : '▼'}</span>
+        </button>
+        {expanded && (
+          <div className="px-4 pb-3">
+            <div className="space-y-1">
+              {page.keywords.slice(0, 30).map((kw, i) => {
+                const isCompeting = competingKeywords.has(kw.keyword.toLowerCase());
+                return (
+                  <div
+                    key={i}
+                    className={`flex items-center gap-3 rounded px-2.5 py-1.5 text-xs ${
+                      isCompeting ? 'bg-warning/10 border border-warning/20' : 'bg-char-800'
+                    }`}
+                  >
+                    <span className={`text-[10px] font-display w-8 text-right shrink-0 ${
+                      kw.position <= 3 ? 'text-success' : kw.position <= 10 ? 'text-ash-200' : 'text-ash-500'
+                    }`}>
+                      #{kw.position}
+                    </span>
+                    <span className={`flex-1 truncate ${isCompeting ? 'text-warning' : 'text-ash-300'}`}>
+                      {kw.keyword}
+                      {isCompeting && <span className="ml-1.5 text-[10px] opacity-70">⚔ cannibalized</span>}
+                    </span>
+                    {kw.volume > 0 && (
+                      <span className="text-[10px] text-ash-500 shrink-0">{kw.volume.toLocaleString()}/mo</span>
+                    )}
+                    <span className="text-[10px] text-ash-600 truncate max-w-[100px] shrink-0">{kw.market.split(',')[0]}</span>
+                  </div>
+                );
+              })}
+              {page.keywords.length > 30 && (
+                <div className="text-[10px] text-ash-500 text-center pt-1">
+                  + {page.keywords.length - 30} more keywords
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Tab ────────────────────────────────────────────────────────
 
-type ActiveSection = 'all' | 'serp' | 'wrongpage' | 'ngram' | 'content';
+type ActiveSection = 'all' | 'serp' | 'wrongpage' | 'ngram' | 'content' | 'rankings';
 
 export default function CannibalizationTab({ results }: TabProps) {
   const keywordsData = results.crawlData.keywords;
@@ -428,6 +523,28 @@ export default function CannibalizationTab({ results }: TabProps) {
       pages, results.domain, keywordsData?.locations || []
     );
   }, [pages, results.domain, keywordsData]);
+
+  const rankingPages = useMemo(() => {
+    if (!keywordsData?.markets) return [];
+    return buildRankingPageMap(keywordsData.markets);
+  }, [keywordsData]);
+
+  // Keywords that appear on 2+ domain pages — used to highlight competing keywords
+  const competingKeywords = useMemo(() => {
+    const kwToPages = new Map<string, Set<string>>();
+    for (const page of rankingPages) {
+      for (const kw of page.keywords) {
+        const key = kw.keyword.toLowerCase();
+        if (!kwToPages.has(key)) kwToPages.set(key, new Set());
+        kwToPages.get(key)!.add(page.url);
+      }
+    }
+    const competing = new Set<string>();
+    for (const [kw, urlSet] of kwToPages.entries()) {
+      if (urlSet.size >= 2) competing.add(kw);
+    }
+    return competing;
+  }, [rankingPages]);
 
   const [activeSection, setActiveSection] = useState<ActiveSection>('all');
 
@@ -466,7 +583,10 @@ export default function CannibalizationTab({ results }: TabProps) {
     { id: 'wrongpage', label: '🔄 Wrong Page', count: wrongPageRankings.length, title: 'Wrong Page Ranking' },
     { id: 'ngram', label: '📊 Keyword Overlap', count: ngramOverlaps.length, title: 'N-gram' },
     { id: 'content', label: '📄 Content Overlap', count: contentOverlaps.length, title: 'Content' },
-  ].filter((s) => s.id === 'all' || s.count > 0) as Array<{ id: ActiveSection; label: string; count: number; title: string }>;
+    ...(rankingPages.length > 0
+      ? [{ id: 'rankings' as ActiveSection, label: '📈 Ranking Pages', count: rankingPages.length, title: 'Ranking Pages' }]
+      : []),
+  ].filter((s) => s.id === 'all' || s.id === 'rankings' || s.count > 0) as Array<{ id: ActiveSection; label: string; count: number; title: string }>;
 
   const totalVolume =
     serpConflicts.reduce((s, c) => s + c.volume, 0) +
@@ -581,6 +701,31 @@ export default function CannibalizationTab({ results }: TabProps) {
           <div className="space-y-4">
             {contentOverlaps.map((group, idx) => (
               <ContentOverlapCard key={idx} group={group} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Ranking Pages by Keyword ── */}
+      {activeSection === 'rankings' && rankingPages.length > 0 && (
+        <div>
+          <SectionHeader
+            title="Ranking Pages by Keyword"
+            count={rankingPages.length}
+            description={`All ${rankingPages.length} domain pages with active rankings, sorted by traffic value. Keywords marked ⚔ cannibalized appear on multiple pages simultaneously — those are your direct cannibalization conflicts.`}
+          />
+          {competingKeywords.size > 0 && (
+            <div className="mb-4 flex items-start gap-2 rounded bg-warning/10 border border-warning/20 p-3">
+              <span className="text-warning shrink-0">⚠️</span>
+              <p className="text-xs text-warning">
+                <strong>{competingKeywords.size} keyword{competingKeywords.size !== 1 ? 's' : ''}</strong> appear on multiple pages simultaneously.
+                Expand each page below to see exactly which keywords are being split.
+              </p>
+            </div>
+          )}
+          <div className="space-y-3">
+            {rankingPages.map((page, idx) => (
+              <RankingPageCard key={`${page.url}-${idx}`} page={page} competingKeywords={competingKeywords} />
             ))}
           </div>
         </div>

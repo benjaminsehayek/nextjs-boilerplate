@@ -604,16 +604,35 @@ export function detectContentOverlaps(
 
   if (profiles.length < 2) return [];
 
-  // Build bigram → page indices
+  // ── Bigram frequency filter ──────────────────────────────────────────
+  // Exclude bigrams that appear on most pages of the site (e.g. "auto body"
+  // on every page of an auto body shop). These are site-wide noise, not
+  // indicators of cannibalization between specific pages.
+  // Only use bigrams appearing on 2–30% of pages for grouping.
+  const bigramFrequency = new Map<string, number>();
+  for (const profile of profiles) {
+    const uniqueBigrams = new Set(profile.bigrams);
+    for (const gram of uniqueBigrams) {
+      bigramFrequency.set(gram, (bigramFrequency.get(gram) || 0) + 1);
+    }
+  }
+  const maxFreq = Math.max(2, Math.ceil(profiles.length * 0.3));
+  const specificBigrams = new Set<string>();
+  for (const [gram, freq] of bigramFrequency.entries()) {
+    if (freq >= 2 && freq <= maxFreq) specificBigrams.add(gram);
+  }
+
+  // Build bigram → page indices (specific bigrams only)
   const bigramIndex = new Map<string, number[]>(); // bigram → profile indices
   for (let i = 0; i < profiles.length; i++) {
     for (const gram of profiles[i].bigrams) {
+      if (!specificBigrams.has(gram)) continue; // skip domain-wide noise
       if (!bigramIndex.has(gram)) bigramIndex.set(gram, []);
       bigramIndex.get(gram)!.push(i);
     }
   }
 
-  // Union-Find to group pages sharing bigrams
+  // Union-Find to group pages sharing specific bigrams
   const parent = profiles.map((_, i) => i);
   function find(x: number): number {
     if (parent[x] !== x) parent[x] = find(parent[x]);
@@ -656,16 +675,17 @@ export function detectContentOverlaps(
 
     const members = memberIndices.map((i) => profiles[i]);
 
-    // Find bigrams shared by ALL members in the group
+    // Find specific bigrams shared by ALL members in the group
     const commonBigrams = members[0].bigrams.filter((gram) =>
-      members.every((m) => m.bigrams.includes(gram))
+      specificBigrams.has(gram) && members.every((m) => m.bigrams.includes(gram))
     );
 
-    // Fall back to bigrams shared by at least half the members
+    // Fall back to specific bigrams shared by at least half the members
     const frequentBigrams = commonBigrams.length > 0
       ? commonBigrams
       : [...bigramIndex.entries()]
-          .filter(([, indices]) => {
+          .filter(([gram, indices]) => {
+            if (!specificBigrams.has(gram)) return false;
             const memberSet = new Set(memberIndices);
             const matchCount = indices.filter((i) => memberSet.has(i)).length;
             return matchCount >= Math.ceil(memberIndices.length / 2);
@@ -700,4 +720,76 @@ export function detectContentOverlaps(
   });
 
   return results;
+}
+
+// ─── Ranking Page Map ─────────────────────────────────────────────────────────
+// Page-centric view: each domain page with all the keywords it ranks for.
+// Used in the "Ranking Pages" section to show which pages compete for overlapping queries.
+
+export interface RankingPage {
+  url: string;
+  path: string;
+  urlType: UrlType;
+  keywords: Array<{
+    keyword: string;
+    volume: number;
+    position: number;
+    market: string;
+    etv: number;
+  }>;
+  topPosition: number;
+  totalVolume: number;
+  totalEtv: number;
+  kwCount: number;
+}
+
+/**
+ * Builds a page-centric view of all SERP keyword data.
+ * Each entry = one domain URL + all keywords it ranks for across all markets.
+ * Sorted by total ETV descending (highest-traffic pages first).
+ */
+export function buildRankingPageMap(
+  markets: Record<string, MarketData>
+): RankingPage[] {
+  const pageMap = new Map<string, RankingPage>();
+
+  for (const [market, md] of Object.entries(markets)) {
+    for (const item of md.items) {
+      const url = item.ranked_serp_element.serp_item.url;
+      const pos = item.ranked_serp_element.serp_item.rank_group || 0;
+      if (!url || pos <= 0 || pos > 100) continue;
+
+      const keyword = item.keyword_data.keyword;
+      const volume = item.keyword_data.keyword_info?.search_volume || 0;
+      const etv = item.ranked_serp_element.serp_item.etv || 0;
+
+      if (!pageMap.has(url)) {
+        pageMap.set(url, {
+          url,
+          path: relativePath(url),
+          urlType: classifyUrlType(url),
+          keywords: [],
+          topPosition: pos,
+          totalVolume: 0,
+          totalEtv: 0,
+          kwCount: 0,
+        });
+      }
+
+      const page = pageMap.get(url)!;
+      page.keywords.push({ keyword, volume, position: pos, market, etv });
+      page.totalVolume += volume;
+      page.totalEtv += etv;
+      page.kwCount++;
+      if (pos < page.topPosition) page.topPosition = pos;
+    }
+  }
+
+  // Sort keywords within each page by position (best rank first)
+  for (const page of pageMap.values()) {
+    page.keywords.sort((a, b) => a.position - b.position);
+  }
+
+  // Return sorted by ETV descending
+  return [...pageMap.values()].sort((a, b) => b.totalEtv - a.totalEtv);
 }
