@@ -20,7 +20,7 @@ export type TabId =
   | 'overview' | 'issues' | 'meta' | 'content'
   | 'links' | 'resources' | 'technical' | 'pages'
   | 'pagespeed' | 'social' | 'localrankings'
-  | 'pagehealth' | 'structure';
+  | 'pagehealth' | 'structure' | 'cannibalization';
 
 export type UrlType =
   | 'homepage' | 'service' | 'blog' | 'location'
@@ -494,6 +494,92 @@ export interface ScanProgress {
   tasks: string[];
 }
 
+// ─── Domain Rank Overview (from dataforseo_labs/google/domain_rank_overview/live) ──
+
+export interface DomainRankOverview {
+  target: string;
+  organic?: {
+    pos_1: number;
+    pos_2_3: number;
+    pos_4_10: number;
+    pos_11_20: number;
+    pos_21_30: number;
+    pos_31_40: number;
+    pos_41_50: number;
+    pos_51_60: number;
+    pos_61_70: number;
+    pos_71_80: number;
+    pos_81_90: number;
+    pos_91_100: number;
+    etv: number;
+    estimated_paid_traffic_cost: number;
+    count: number;
+    is_new: number;
+    is_up: number;
+    is_down: number;
+    is_lost: number;
+  };
+  paid?: {
+    count: number;
+    etv: number;
+    estimated_paid_traffic_cost: number;
+  };
+}
+
+// ─── Google PageSpeed Insights (CrUX + Lab data) ────────────────────
+
+export interface PSIMetric {
+  percentile: number;        // p75 value
+  category: 'FAST' | 'AVERAGE' | 'SLOW';
+  distributions?: Array<{ min: number; max: number; proportion: number }>;
+}
+
+export interface PagespeedInsights {
+  url: string;
+  strategy: 'mobile' | 'desktop';
+  /** CrUX field data — real user metrics from Chrome UX Report */
+  fieldData?: {
+    overall_category: 'FAST' | 'AVERAGE' | 'SLOW' | 'NONE';
+    FIRST_CONTENTFUL_PAINT_MS?: PSIMetric;
+    LARGEST_CONTENTFUL_PAINT_MS?: PSIMetric;
+    CUMULATIVE_LAYOUT_SHIFT_SCORE?: PSIMetric;
+    INTERACTION_TO_NEXT_PAINT?: PSIMetric;
+    EXPERIMENTAL_TIME_TO_FIRST_BYTE?: PSIMetric;
+    FIRST_INPUT_DELAY_MS?: PSIMetric;
+  };
+  /** Origin-level CrUX (more data, entire domain not just page) */
+  originFieldData?: {
+    overall_category: 'FAST' | 'AVERAGE' | 'SLOW' | 'NONE';
+    LARGEST_CONTENTFUL_PAINT_MS?: PSIMetric;
+    CUMULATIVE_LAYOUT_SHIFT_SCORE?: PSIMetric;
+    INTERACTION_TO_NEXT_PAINT?: PSIMetric;
+    EXPERIMENTAL_TIME_TO_FIRST_BYTE?: PSIMetric;
+  };
+  /** Lighthouse lab scores (0–100) */
+  scores?: {
+    performance: number;
+    accessibility: number;
+    bestPractices: number;
+    seo: number;
+  };
+  /** Key Lighthouse audit display values */
+  audits?: {
+    'first-contentful-paint'?: string;
+    'largest-contentful-paint'?: string;
+    'total-blocking-time'?: string;
+    'cumulative-layout-shift'?: string;
+    'speed-index'?: string;
+    'interactive'?: string;
+    'server-response-time'?: string;
+    'render-blocking-resources'?: string;
+    'uses-optimized-images'?: string;
+    'uses-webp-images'?: string;
+    'uses-text-compression'?: string;
+    'uses-long-cache-ttl'?: string;
+    'efficient-animated-content'?: string;
+  };
+}
+
 // ─── Full Crawl Data (stored in Supabase JSONB) ─────────────────────
 
 export interface CrawlData {
@@ -506,6 +592,10 @@ export interface CrawlData {
   nonIndexable?: { items: NonIndexablePage[]; totalCount: number };
   redirectChains?: { items: RedirectChain[]; totalCount: number };
   lighthouse?: LighthouseData | null;
+  /** Google PageSpeed Insights — mobile + desktop CrUX field data */
+  pagespeedInsights?: { mobile?: PagespeedInsights; desktop?: PagespeedInsights } | null;
+  /** DataForSEO Labs domain rank overview — organic keyword count + ETV */
+  domainRankOverview?: DomainRankOverview | null;
   business?: DetectedBusiness | null;
   markets?: string[];
   keywords?: {

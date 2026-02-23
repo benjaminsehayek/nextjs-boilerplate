@@ -19,6 +19,7 @@ const SocialTab = dynamic(() => import('./SocialTab'));
 const LocalRankingsTab = dynamic(() => import('./LocalRankingsTab'));
 const PageHealthTab = dynamic(() => import('./PageHealthTab'));
 const StructureTab = dynamic(() => import('./StructureTab'));
+const CannibalizationTab = dynamic(() => import('./CannibalizationTab'));
 
 export default function Dashboard({ results, activeTab, onTabChange }: DashboardProps) {
   const [quickWinCompletions, setQuickWinCompletions] = useState<Record<string, boolean>>({});
@@ -37,6 +38,19 @@ export default function Dashboard({ results, activeTab, onTabChange }: Dashboard
     { id: 'localrankings', name: 'Local Rankings' },
     { id: 'pagehealth', name: 'Page Health' },
     { id: 'structure', name: 'Structure' },
+    {
+      id: 'cannibalization',
+      name: 'Cannibalization',
+      badge: (() => {
+        const markets = results.crawlData.keywords?.markets;
+        if (!markets) return undefined;
+        let count = 0;
+        for (const md of Object.values(markets)) {
+          count += md.items.filter((it) => it._isCannibalized).length;
+        }
+        return count > 0 ? count : undefined;
+      })(),
+    },
   ];
 
   function handleCategoryClick(category: string) {
@@ -133,6 +147,7 @@ export default function Dashboard({ results, activeTab, onTabChange }: Dashboard
         {activeTab === 'localrankings' && <LocalRankingsTab results={results} />}
         {activeTab === 'pagehealth' && <PageHealthTab results={results} />}
         {activeTab === 'structure' && <StructureTab results={results} />}
+        {activeTab === 'cannibalization' && <CannibalizationTab results={results} />}
       </div>
 
       {/* Footer */}

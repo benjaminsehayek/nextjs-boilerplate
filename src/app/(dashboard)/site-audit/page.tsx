@@ -13,8 +13,11 @@ import { cleanDomain } from '@/lib/dataforseo';
 import {
   submitCrawlTask,
   submitLighthouseTask,
+  submitMobileLighthouseTask,
   pollCrawlStatus,
   fetchCrawlData,
+  fetchDomainRankOverview,
+  fetchMobileLighthouseResult,
 } from '@/lib/siteAudit/crawlEngine';
 import { computeScores, computePageHealth } from '@/lib/siteAudit/scoring';
 import { generateDetailedIssues, generateQuickWins } from '@/lib/siteAudit/issueDetection';
@@ -264,16 +267,20 @@ export default function SiteAuditPage() {
         .update({ status: 'crawling' })
         .eq('id', auditId);
 
-      // ── Step 2: Submit Lighthouse + Detect business (parallel, non-blocking) ──
+      // ── Step 2: Submit Lighthouse (desktop + mobile) + Detect business (all parallel) ──
       let lhTaskId: string | null = null;
       const lhPromise = submitLighthouseTask(cleanedDomain, log)
         .then((id) => { lhTaskId = id; completeTask('Submitting Lighthouse task'); })
         .catch((e) => { log('Lighthouse task failed: ' + e.message, 'warning'); completeTask('Submitting Lighthouse task'); });
 
+      let lhMobileTaskId: string | null = null;
+      const lhMobilePromise = submitMobileLighthouseTask(cleanedDomain, log)
+        .then((id) => { lhMobileTaskId = id; })
+        .catch(() => { /* non-blocking */ });
+
       let detectedBusiness: any = null;
       const bizPromise = (async () => {
         try {
-          // Dynamic import to avoid bundling if not needed
           const { detectBusiness } = await import('@/lib/siteAudit/businessDetection');
           detectedBusiness = await detectBusiness(cleanedDomain, log);
           completeTask('Detecting business');
@@ -284,7 +291,7 @@ export default function SiteAuditPage() {
       })();
 
       // Wait for parallel tasks
-      await Promise.all([lhPromise, bizPromise]);
+      await Promise.all([lhPromise, lhMobilePromise, bizPromise]);
 
       if (abortRef.current) return;
 
@@ -350,6 +357,59 @@ export default function SiteAuditPage() {
       const finalStatus = await pollCrawlStatus(taskId);
       crawlData.summary = finalStatus.summary || undefined;
       crawlData.business = detectedBusiness;
+
+      if (abortRef.current) return;
+
+      // ── Step 4.5: Parallel enrichment — domain rank overview + mobile Lighthouse + PSI ──
+      log('Fetching domain intelligence (parallel)...');
+      const homepageUrl = 'https://' + cleanedDomain;
+
+      const [domainRankResult, mobileLhResult, psiMobileResult, psiDesktopResult] =
+        await Promise.allSettled([
+          // DataForSEO Labs: organic keyword count + ETV
+          fetchDomainRankOverview(cleanedDomain, log),
+          // Mobile Lighthouse (already submitted in Step 2)
+          fetchMobileLighthouseResult(lhMobileTaskId, log),
+          // Google PageSpeed Insights — mobile
+          fetch('/api/pagespeed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: homepageUrl, strategy: 'mobile' }),
+          }).then((r) => r.ok ? r.json() : null).catch(() => null),
+          // Google PageSpeed Insights — desktop
+          fetch('/api/pagespeed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: homepageUrl, strategy: 'desktop' }),
+          }).then((r) => r.ok ? r.json() : null).catch(() => null),
+        ]);
+
+      crawlData.domainRankOverview =
+        domainRankResult.status === 'fulfilled' ? domainRankResult.value : null;
+
+      // Attach mobile Lighthouse as a separate field on lighthouse (nested)
+      const mobileLh = mobileLhResult.status === 'fulfilled' ? mobileLhResult.value : null;
+      if (mobileLh) {
+        (crawlData as any).lighthouseMobile = mobileLh;
+      }
+
+      const psiMobile = psiMobileResult.status === 'fulfilled' ? psiMobileResult.value : null;
+      const psiDesktop = psiDesktopResult.status === 'fulfilled' ? psiDesktopResult.value : null;
+      if (psiMobile || psiDesktop) {
+        crawlData.pagespeedInsights = {
+          ...(psiMobile ? { mobile: psiMobile } : {}),
+          ...(psiDesktop ? { desktop: psiDesktop } : {}),
+        };
+        log('PageSpeed Insights collected', 'success');
+      }
+
+      if (domainRankResult.status === 'fulfilled' && domainRankResult.value?.organic) {
+        const org = domainRankResult.value.organic;
+        log(
+          `Domain ranks for ${org.count} keywords · ETV ${Math.round(org.etv).toLocaleString()}/mo`,
+          'success'
+        );
+      }
 
       if (abortRef.current) return;
 

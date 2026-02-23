@@ -297,6 +297,143 @@ async function fetchLighthouseResult(
   return null;
 }
 
+// ─── DataForSEO Labs: Domain Rank Overview ───────────────────────────
+
+/**
+ * Fetch organic keyword count, ETV, and position distribution for a domain
+ * from dataforseo_labs/google/domain_rank_overview/live.
+ * Non-blocking — returns null if it fails.
+ */
+export async function fetchDomainRankOverview(
+  domain: string,
+  log: Logger
+): Promise<import('@/components/tools/SiteAudit/types').DomainRankOverview | null> {
+  log('Fetching domain rank overview (organic keyword count + ETV)...');
+  try {
+    const data = await dfsCall<any>('dataforseo_labs/google/domain_rank_overview/live', [
+      {
+        target: domain,
+        location_name: 'United States',
+        language_name: 'English',
+      },
+    ]);
+
+    const result = data.tasks?.[0]?.result?.[0];
+    if (!result) {
+      log('  Domain rank overview: no result returned', 'warning');
+      return null;
+    }
+
+    log(
+      `  Domain rank overview: ${result.metrics?.organic?.count ?? 0} keywords, ETV ${result.metrics?.organic?.etv ?? 0}`,
+      'success'
+    );
+
+    return {
+      target: domain,
+      organic: result.metrics?.organic,
+      paid: result.metrics?.paid,
+    };
+  } catch (e: any) {
+    log('  Domain rank overview failed: ' + e.message, 'warning');
+    return null;
+  }
+}
+
+// ─── Mobile Lighthouse ───────────────────────────────────────────────
+
+/**
+ * Submit a Mobile Lighthouse task. Tries https:// then https://www.
+ * Returns the task ID or null if both fail.
+ */
+export async function submitMobileLighthouseTask(
+  domain: string,
+  log: Logger
+): Promise<string | null> {
+  log('Submitting Mobile Lighthouse task...');
+  const urls = ['https://' + domain, 'https://www.' + domain];
+
+  for (const url of urls) {
+    try {
+      const data = await dfsCall<any>('on_page/lighthouse/task_post', [
+        {
+          url,
+          for_mobile: true,
+          categories: ['performance', 'accessibility', 'best_practices', 'seo'],
+        },
+      ]);
+
+      if (data.status_code === 20000 && data.tasks?.[0]?.status_code === 20100) {
+        const taskId = data.tasks[0].id;
+        log('  Mobile Lighthouse task queued: ' + taskId, 'success');
+        return taskId;
+      }
+
+      log(
+        '  Mobile Lighthouse rejected for ' + url + ': ' +
+        (data.tasks?.[0]?.status_message || data.status_message || 'unknown'),
+        'warning'
+      );
+    } catch (e: any) {
+      log('  Mobile Lighthouse submit failed for ' + url + ': ' + e.message, 'warning');
+    }
+  }
+
+  log('  Mobile Lighthouse task could not be created', 'warning');
+  return null;
+}
+
+/**
+ * Poll and retrieve Mobile Lighthouse results. Up to 15 attempts (60s).
+ */
+export async function fetchMobileLighthouseResult(
+  lhMobileTaskId: string | null,
+  log: Logger
+): Promise<import('@/components/tools/SiteAudit/types').LighthouseData | null> {
+  if (!lhMobileTaskId) return null;
+
+  log('Retrieving Mobile Lighthouse results...');
+  const maxAttempts = 15;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const data = await dfsGet<any>('on_page/lighthouse/task_get/json/' + lhMobileTaskId);
+
+      if (data.status_code !== 20000) return null;
+
+      const taskStatus = data.tasks?.[0]?.status_code;
+
+      if (taskStatus === 20000) {
+        const result = data.tasks?.[0]?.result?.[0] || null;
+        if (result) {
+          const lhData = result.categories
+            ? result
+            : result.lighthouseResult || result.lighthouse_result || null;
+          if (lhData?.categories) {
+            log('  Mobile Lighthouse complete', 'success');
+            return lhData as import('@/components/tools/SiteAudit/types').LighthouseData;
+          }
+        }
+        return null;
+      }
+
+      if (taskStatus === 20100 || taskStatus === 20200) {
+        log('  Mobile Lighthouse processing (attempt ' + attempt + '/' + maxAttempts + ')...');
+        await sleep(4000);
+        continue;
+      }
+
+      return null;
+    } catch (e: any) {
+      if (attempt < maxAttempts) { await sleep(4000); continue; }
+      return null;
+    }
+  }
+
+  log('  Mobile Lighthouse timed out', 'warning');
+  return null;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
