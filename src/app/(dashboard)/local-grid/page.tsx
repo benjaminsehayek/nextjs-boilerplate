@@ -255,7 +255,7 @@ function LocalGridInner() {
               const result = await dfsCall<any>('serp/google/maps/live/advanced', [
                 {
                   keyword: keyword.text,
-                  location_coordinate: `${point.lat.toFixed(7)},${point.lng.toFixed(7)},${zoom}`,
+                  location_coordinate: `${point.lat.toFixed(7)},${point.lng.toFixed(7)},${zoom}z`,
                   language_code: 'en',
                   device: 'desktop',
                   os: 'windows',
