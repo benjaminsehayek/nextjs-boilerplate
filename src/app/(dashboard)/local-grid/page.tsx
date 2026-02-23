@@ -191,7 +191,19 @@ function LocalGridInner() {
       setCurrentScan(scan as GridScanResult);
       setScanState('scanning');
 
-      await runGridScan(scan.id, effectiveBizInfo, config, gridPoints, profile?.id);
+      const heatmap = await runGridScan(
+        scan.id,
+        effectiveBizInfo,
+        config,
+        gridPoints,
+        profile?.id,
+        (progress) => setCurrentScan((prev) => (prev ? { ...prev, progress } : prev))
+      );
+
+      // Directly update state — don't rely on Supabase realtime subscription
+      setHeatmapData(heatmap);
+      setCurrentScan((prev) => (prev ? { ...prev, status: 'complete', points: gridPoints } : prev));
+      setScanState('complete');
     } catch (err) {
       console.error('Error starting scan:', err);
       setError(err instanceof Error ? err.message : 'Failed to start scan');
@@ -206,8 +218,9 @@ function LocalGridInner() {
     bizInfo: BusinessInfo,
     config: GridConfig,
     gridPoints: GridPoint[],
-    userId?: string
-  ) => {
+    userId?: string,
+    onProgress?: (progress: GridScanResult['progress']) => void
+  ): Promise<Record<string, HeatmapData>> => {
     try {
       await (supabase as any)
         .from('grid_scans')
@@ -226,17 +239,17 @@ function LocalGridInner() {
         const keyword = config.keywords[kIdx];
         addLog(`Scanning keyword: "${keyword.text}"...`, 'info');
 
+        const kwStartProgress = {
+          current: kIdx,
+          total: config.keywords.length,
+          currentKeyword: keyword.text,
+          currentPoint: 0,
+        };
         await (supabase as any)
           .from('grid_scans')
-          .update({
-            progress: {
-              current: kIdx,
-              total: config.keywords.length,
-              currentKeyword: keyword.text,
-              currentPoint: 0,
-            },
-          })
+          .update({ progress: kwStartProgress })
           .eq('id', scanId);
+        onProgress?.(kwStartProgress);
 
         for (let batchStart = 0; batchStart < gridPoints.length; batchStart += BATCH_SIZE) {
           const batch = gridPoints.slice(batchStart, batchStart + BATCH_SIZE);
@@ -331,17 +344,17 @@ function LocalGridInner() {
             }
           }
 
+          const batchProgress = {
+            current: kIdx,
+            total: config.keywords.length,
+            currentKeyword: keyword.text,
+            currentPoint: Math.min(batchStart + BATCH_SIZE, gridPoints.length),
+          };
           await (supabase as any)
             .from('grid_scans')
-            .update({
-              progress: {
-                current: kIdx,
-                total: config.keywords.length,
-                currentKeyword: keyword.text,
-                currentPoint: Math.min(batchStart + BATCH_SIZE, gridPoints.length),
-              },
-            })
+            .update({ progress: batchProgress })
             .eq('id', scanId);
+          onProgress?.(batchProgress);
 
           await new Promise((resolve) => setTimeout(resolve, 200));
         }
@@ -406,12 +419,15 @@ function LocalGridInner() {
       if (cacheHits > 0) {
         addLog(`${cacheHits} cached results used (saved API calls)`, 'info');
       }
+
+      return heatmap;
     } catch (err) {
       console.error('Scan error:', err);
       await (supabase as any)
         .from('grid_scans')
         .update({ status: 'failed' })
         .eq('id', scanId);
+      throw err; // re-throw so handleStartScan can catch it
     }
   };
 
