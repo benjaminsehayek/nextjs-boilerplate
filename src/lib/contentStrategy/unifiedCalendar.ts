@@ -1,13 +1,14 @@
 // Unified 12-week content calendar builder
 // Reuses data from existing site_audits + off_page_audits — zero new DataForSEO calls
 
-import { calculateKeywordROI } from './roi';
+import { calculateKeywordROI, calculateKeywordROIV2 } from './roi';
 import { classifyFunnel } from './funnel';
 import {
   detectCannibalizationConflicts,
   detectWrongPageRankings,
 } from '@/lib/siteAudit/cannibalizationDetection';
 import type { CalendarItemV2, SimpleStrategyConfig } from '@/types';
+import type { EnrichedKeyword } from './keywordResearch';
 
 // ─── Input Types ─────────────────────────────────────────────────────
 
@@ -102,13 +103,25 @@ function buildGBPItems(
   keywords: MarketKeywordItem[],
   cfg: SimpleStrategyConfig,
   count = 12,
+  enrichedMap?: Map<string, EnrichedKeyword>,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
   const scored = keywords.map(item => {
     const kw = item.keyword_data.keyword;
     const vol = item.keyword_data.keyword_info?.search_volume ?? 0;
-    const funnel = classifyFunnel(kw);
-    const roi = calculateKeywordROI(vol, funnel, cfg.conversionRate, cfg.profitPerJob, cfg.closeRate);
-    return { item, kw, vol, funnel, roi: roi.roi };
+    const enriched = enrichedMap?.get(kw.toLowerCase());
+    const funnel = enriched?.funnel ?? classifyFunnel(kw);
+    const roi = enriched
+      ? calculateKeywordROIV2(vol, cfg, {
+          funnel: enriched.funnel,
+          intent: enriched.intent,
+          localType: enriched.localType,
+          difficulty: enriched.difficulty,
+          competition: enriched.competition,
+          hasLocalPack: enriched.hasLocalPack,
+          currentRank: enriched.currentRank,
+        }).roi
+      : calculateKeywordROI(vol, funnel, cfg.conversionRate, cfg.profitPerJob, cfg.closeRate).roi;
+    return { kw, vol, funnel, roi, enriched: enriched ?? null };
   });
 
   // Prefer bottom-funnel; fall back to all keywords when pool is thin
@@ -116,17 +129,29 @@ function buildGBPItems(
   if (pool.length < Math.ceil(count / 2)) pool = scored;
   pool = pool.slice().sort((a, b) => b.roi - a.roi).slice(0, count);
 
-  return pool.map((k) => ({
-    id: makeId('gbp', k.kw),
-    type: 'gbp_post' as const,
-    title: `GBP Post: ${k.kw}`,
-    primaryKeyword: k.kw,
-    keywords: [k.kw],
-    action: `Publish a Google Business Profile post targeting "${k.kw}". Include a specific offer or callout and a direct CTA (call, book, or visit).`,
-    rationale: `Est. ${k.vol.toLocaleString()} searches/mo · $${k.roi}/mo ROI potential at position 3`,
-    priority: i < 4 ? 'high' : i < 8 ? 'medium' : 'low',
-    roiValue: k.roi,
-  }));
+  return pool.map((k, i) => {
+    const signals = k.enriched
+      ? [
+          `${k.enriched.intent.charAt(0).toUpperCase() + k.enriched.intent.slice(1)} intent`,
+          k.enriched.competition ? `Competition: ${k.enriched.competition}` : null,
+          k.enriched.difficulty != null ? `KD: ${k.enriched.difficulty}` : null,
+        ].filter(Boolean).join(' · ')
+      : null;
+
+    return {
+      id: makeId('gbp', k.kw),
+      type: 'gbp_post' as const,
+      title: `GBP Post: ${k.kw}`,
+      primaryKeyword: k.kw,
+      keywords: [k.kw],
+      action: `Publish a Google Business Profile post targeting "${k.kw}". Include a specific offer or callout and a direct CTA (call, book, or visit).`,
+      rationale: signals
+        ? `Est. ${k.vol.toLocaleString()} searches/mo · $${k.roi}/mo ROI · ${signals}`
+        : `Est. ${k.vol.toLocaleString()} searches/mo · $${k.roi}/mo ROI potential at position 3`,
+      priority: (i < 4 ? 'high' : i < 8 ? 'medium' : 'low') as 'high' | 'medium' | 'low',
+      roiValue: k.roi,
+    };
+  });
 }
 
 // ─── Blog Posts (informational keywords → authority + top-funnel traffic) ───
@@ -140,21 +165,29 @@ function buildBlogItems(
   keywords: MarketKeywordItem[],
   cfg: SimpleStrategyConfig,
   count = 4,
+  enrichedMap?: Map<string, EnrichedKeyword>,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
   const scored = keywords.map(item => {
     const kw = item.keyword_data.keyword;
     const vol = item.keyword_data.keyword_info?.search_volume ?? 0;
-    const funnel = classifyFunnel(kw);
-    return { kw, vol, funnel };
+    const enriched = enrichedMap?.get(kw.toLowerCase());
+    const funnel = enriched?.funnel ?? classifyFunnel(kw);
+    return { kw, vol, funnel, enriched: enriched ?? null };
   });
 
-  // Prefer informational/top-funnel; fall back to middle-funnel if needed
-  const topPool = scored.filter(k => k.funnel === 'top').sort((a, b) => b.vol - a.vol);
-  const midPool = scored.filter(k => k.funnel === 'middle').sort((a, b) => b.vol - a.vol);
+  // Blog posts target informational/top-funnel keywords for topical authority
+  // When enriched, also prefer 'informational' intent
+  const topPool = scored
+    .filter(k => k.funnel === 'top' || k.enriched?.intent === 'informational')
+    .sort((a, b) => b.vol - a.vol);
+  const midPool = scored
+    .filter(k => k.funnel === 'middle' && k.enriched?.intent !== 'transactional')
+    .sort((a, b) => b.vol - a.vol);
   const pool = [...topPool, ...midPool].slice(0, count);
 
-  return pool.map((k) => {
+  return pool.map((k, i) => {
     const slug = k.kw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const signals = k.enriched?.difficulty != null ? ` · KD: ${k.enriched.difficulty}` : '';
     return {
       id: makeId('blog', k.kw),
       type: 'blog_post' as const,
@@ -162,8 +195,8 @@ function buildBlogItems(
       primaryKeyword: k.kw,
       keywords: [k.kw],
       action: `Write an 800–1,200 word blog post targeting "${k.kw}". Include an H1, 3–4 H2 sections, a FAQ block (3–5 questions), and at least one internal link to a relevant service page. Target URL: /blog/${slug}.`,
-      rationale: `${k.vol.toLocaleString()} searches/mo · ${k.funnel === 'top' ? 'Informational' : 'Evaluating'} intent — builds topical authority and feeds leads to service pages`,
-      priority: i < 2 ? 'high' : 'medium',
+      rationale: `${k.vol.toLocaleString()} searches/mo · Informational intent — builds topical authority${signals}`,
+      priority: (i < 2 ? 'high' : 'medium') as 'high' | 'medium' | 'low',
       roiValue: Math.round(k.vol * 0.005 * cfg.conversionRate * cfg.profitPerJob * (cfg.closeRate / 100)),
       targetUrl: `/blog/${slug}`,
     };
@@ -177,6 +210,7 @@ function buildWebsiteAdditions(
   pageUrls: Set<string>,
   cfg: SimpleStrategyConfig,
   count = 8,
+  enrichedMap?: Map<string, EnrichedKeyword>,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
   // Keywords where no site page is ranking in top 10
   const gaps = keywords
@@ -187,17 +221,34 @@ function buildWebsiteAdditions(
     .map(item => {
       const kw = item.keyword_data.keyword;
       const vol = item.keyword_data.keyword_info?.search_volume ?? 0;
-      const funnel = classifyFunnel(kw);
-      const roi = calculateKeywordROI(vol, funnel, cfg.conversionRate, cfg.profitPerJob, cfg.closeRate);
-      return { item, kw, vol, funnel, roi: roi.roi };
+      const enriched = enrichedMap?.get(kw.toLowerCase());
+      const funnel = enriched?.funnel ?? classifyFunnel(kw);
+      const roi = enriched
+        ? calculateKeywordROIV2(vol, cfg, {
+            funnel: enriched.funnel,
+            intent: enriched.intent,
+            localType: enriched.localType,
+            difficulty: enriched.difficulty,
+            competition: enriched.competition,
+            hasLocalPack: enriched.hasLocalPack,
+            currentRank: enriched.currentRank,
+          }).roi
+        : calculateKeywordROI(vol, funnel, cfg.conversionRate, cfg.profitPerJob, cfg.closeRate).roi;
+      return { kw, vol, funnel, roi, enriched: enriched ?? null };
     })
     .sort((a, b) => b.roi - a.roi)
     .slice(0, count);
 
-  return gaps.map((k) => {
-    // Suggest a URL based on keyword
+  return gaps.map((k, i) => {
     const slug = k.kw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const suggestedUrl = `/services/${slug}`;
+    const signals = k.enriched
+      ? [
+          k.enriched.competition ? `Competition: ${k.enriched.competition}` : null,
+          k.enriched.difficulty != null ? `KD: ${k.enriched.difficulty}` : null,
+        ].filter(Boolean).join(' · ')
+      : null;
+
     return {
       id: makeId('add', suggestedUrl),
       type: 'website_addition' as const,
@@ -205,8 +256,10 @@ function buildWebsiteAdditions(
       primaryKeyword: k.kw,
       keywords: [k.kw],
       action: `Create a new service page targeting "${k.kw}" at ${suggestedUrl}. Include H1, meta title, meta description, FAQs, and a CTA.`,
-      rationale: `No page currently ranks for this keyword · Est. $${k.roi}/mo ROI at top-3 position`,
-      priority: i < 3 ? 'high' : i < 6 ? 'medium' : 'low',
+      rationale: signals
+        ? `No page ranks for this keyword · Est. $${k.roi}/mo ROI · ${signals}`
+        : `No page currently ranks for this keyword · Est. $${k.roi}/mo ROI at top-3 position`,
+      priority: (i < 3 ? 'high' : i < 6 ? 'medium' : 'low') as 'high' | 'medium' | 'low',
       roiValue: k.roi,
       targetUrl: suggestedUrl,
     };
@@ -478,18 +531,39 @@ export function buildUnifiedCalendar(
   siteAudit: SiteAuditData,
   offPageAudit: OffPageAuditData | null,
   cfg: SimpleStrategyConfig,
+  enrichedKeywords?: EnrichedKeyword[],
 ): CalendarItemV2[] {
-  // 1. Collect + dedupe keywords from all markets
-  const rawKeywords = collectAuditKeywords(siteAudit);
-  const keywords = dedupeKeywords(rawKeywords);
+  // 1. Build keyword pool
+  //    When enrichedKeywords provided: merge into MarketKeywordItem format + build lookup map
+  //    When not provided: fall back to audit-only keywords (existing behaviour)
+  let keywords: MarketKeywordItem[];
+  let enrichedMap: Map<string, EnrichedKeyword> | undefined;
+
+  if (enrichedKeywords && enrichedKeywords.length > 0) {
+    // Convert enriched keywords to MarketKeywordItem shape so builders work unchanged
+    keywords = enrichedKeywords.map(ek => ({
+      keyword_data: {
+        keyword: ek.keyword,
+        keyword_info: { search_volume: ek.volume, cpc: ek.cpc ?? 0 },
+      },
+      ranked_serp_element: ek.currentRank != null
+        ? { serp_item: { rank_group: ek.currentRank, url: '' } }
+        : undefined,
+    }));
+    // Lookup map for enriched-ROI calculations inside builders
+    enrichedMap = new Map(enrichedKeywords.map(ek => [ek.keyword.toLowerCase(), ek]));
+  } else {
+    const rawKeywords = collectAuditKeywords(siteAudit);
+    keywords = dedupeKeywords(rawKeywords);
+  }
 
   // 2. Page URL set for gap detection
   const pageUrls = buildPageUrlSet(siteAudit);
 
   // 3. Build each item pool
-  const gbpItems = buildGBPItems(keywords, cfg, 12);
-  const blogItems = buildBlogItems(keywords, cfg, 4);
-  const addItems = buildWebsiteAdditions(keywords, pageUrls, cfg, 8);
+  const gbpItems = buildGBPItems(keywords, cfg, 12, enrichedMap);
+  const blogItems = buildBlogItems(keywords, cfg, 4, enrichedMap);
+  const addItems = buildWebsiteAdditions(keywords, pageUrls, cfg, 8, enrichedMap);
   const fixItems = buildPageFixTasks(siteAudit, 8);
   const opItems = buildOffPageItems(offPageAudit, 10);
 

@@ -319,3 +319,59 @@ export const LOCATION_CODES: Record<string, number> = {
   'United Kingdom': 2826,
   'Australia': 2036,
 };
+
+// ─── Multi-factor ROI Matrix Constants ───────────────────────────────
+// Each factor multiplies one variable in the ROI formula:
+//   ROI = Volume × CTR × ConvRate × CloseRate × ProfitPerJob
+
+// Intent type → ConvRate multiplier
+// Transactional keywords signal purchase-ready visitors
+export const INTENT_CONV_MULT = {
+  transactional:  1.5,  // Ready to buy — highest conversion
+  commercial:     1.1,  // Comparing options
+  informational:  0.7,  // Researching — lowest conversion
+  branded:        1.2,  // Brand-aware, existing relationship
+} as const;
+
+// Local modifier → ConvRate multiplier
+// "Near me" searches signal immediate urgency
+export const LOCAL_CONV_MULT = {
+  near_me:    1.5,  // Immediate local urgency
+  city_name:  1.3,  // Local geographic intent
+  none:       1.0,  // Generic / baseline
+} as const;
+
+// Competition level → CTR multiplier
+// High competition = more ads + SERP features stealing organic clicks
+export const COMPETITION_CTR_MULT = {
+  LOW:        1.10,
+  MEDIUM:     1.00,
+  HIGH:       0.85,
+  VERY_HIGH:  0.70,
+} as const;
+
+// Local pack (Google Maps) presence → CTR multiplier
+// Maps box absorbs ~25% of organic clicks when present
+export const LOCAL_PACK_CTR_MULT = {
+  present: 0.75,
+  absent:  1.00,
+} as const;
+
+// Keyword difficulty → probability of ranking (risk-adjusts final ROI)
+export const DIFFICULTY_PROB_MULT = {
+  'very-easy': 1.00,  // KD 0–29: high probability, weeks to rank
+  'easy':      0.80,  // KD 30–44: ~3 months
+  'medium':    0.55,  // KD 45–59: ~6 months
+  'hard':      0.35,  // KD 60–74: ~12 months
+  'very-hard': 0.15,  // KD 75–100: high risk, 12+ months
+} as const;
+
+/** Map a numeric keyword difficulty score to a probability bucket */
+export function kdBucket(kd: number | null | undefined): keyof typeof DIFFICULTY_PROB_MULT {
+  if (kd == null) return 'medium'; // conservative default when unknown
+  if (kd < 30) return 'very-easy';
+  if (kd < 45) return 'easy';
+  if (kd < 60) return 'medium';
+  if (kd < 75) return 'hard';
+  return 'very-hard';
+}

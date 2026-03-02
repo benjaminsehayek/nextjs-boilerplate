@@ -1,7 +1,12 @@
 // Two-axis ROI calculation model
 
 import type { FunnelStage } from './funnel';
-import { FUNNEL_MULT, CTR_BY_POSITION, DEFAULT_CTR } from './constants';
+import {
+  FUNNEL_MULT, CTR_BY_POSITION, DEFAULT_CTR,
+  INTENT_CONV_MULT, LOCAL_CONV_MULT, COMPETITION_CTR_MULT,
+  LOCAL_PACK_CTR_MULT, DIFFICULTY_PROB_MULT, kdBucket,
+} from './constants';
+import type { SimpleStrategyConfig } from '@/types';
 
 export interface ROIResult {
   monthlyVisitors: number;
@@ -39,6 +44,71 @@ export function calculateKeywordROI(
 
   const monthlyClosed = monthlyLeads * (closeRate / 100);
   const roi = monthlyClosed * profitPerJob;
+
+  return {
+    monthlyVisitors: Math.round(monthlyVisitors * 10) / 10,
+    monthlyLeads: Math.round(monthlyLeads * 100) / 100,
+    monthlyClosed: Math.round(monthlyClosed * 100) / 100,
+    roi: Math.round(roi),
+  };
+}
+
+/**
+ * Multi-factor keyword ROI — extends the 2-axis model with five additional signals:
+ *
+ * CTR adjustments (factors that steal organic clicks):
+ *   • Competition level  → fewer/more ads competing for the SERP
+ *   • Local pack present → Maps box absorbs ~25% of organic clicks
+ *
+ * ConvRate adjustments (factors that affect visitor quality):
+ *   • Funnel stage       → bottom-funnel converts at 3× top-funnel rate
+ *   • Intent type        → transactional visitors are purchase-ready
+ *   • Local modifier     → "near me" signals immediate local urgency
+ *
+ * Risk adjustment:
+ *   • Keyword difficulty → probability of actually ranking (risk-adjusts ROI)
+ *
+ * Formula:
+ *   ctr            = baseCTR[rank] × COMPETITION_CTR_MULT × LOCAL_PACK_CTR_MULT
+ *   convRate       = baseConv × FUNNEL_MULT × INTENT_CONV_MULT × LOCAL_CONV_MULT
+ *   roi            = volume × ctr × convRate × (closeRate/100) × profitPerJob
+ *                  × DIFFICULTY_PROB_MULT[kdBucket(difficulty)]
+ */
+export function calculateKeywordROIV2(
+  volume: number,
+  cfg: SimpleStrategyConfig,
+  factors: {
+    funnel: FunnelStage;
+    intent: 'transactional' | 'commercial' | 'informational' | 'branded';
+    localType: 'near_me' | 'city_name' | 'none';
+    difficulty: number | null;
+    competition: 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH' | null;
+    hasLocalPack: boolean;
+    currentRank: number | null;
+  }
+): ROIResult {
+  const position = Math.max(1, Math.min(15, factors.currentRank ?? 3));
+  const baseCtr = CTR_BY_POSITION[position] ?? DEFAULT_CTR;
+
+  // CTR adjustments
+  const ctr = baseCtr
+    * COMPETITION_CTR_MULT[factors.competition ?? 'MEDIUM']
+    * LOCAL_PACK_CTR_MULT[factors.hasLocalPack ? 'present' : 'absent'];
+
+  const monthlyVisitors = volume * ctr;
+
+  // ConvRate adjustments
+  const adjustedConvRate = cfg.conversionRate
+    * FUNNEL_MULT[factors.funnel]
+    * INTENT_CONV_MULT[factors.intent]
+    * LOCAL_CONV_MULT[factors.localType];
+
+  const monthlyLeads = monthlyVisitors * adjustedConvRate;
+  const monthlyClosed = monthlyLeads * (cfg.closeRate / 100);
+  const roiBase = monthlyClosed * cfg.profitPerJob;
+
+  // Risk-adjust by probability of ranking
+  const roi = roiBase * DIFFICULTY_PROB_MULT[kdBucket(factors.difficulty)];
 
   return {
     monthlyVisitors: Math.round(monthlyVisitors * 10) / 10,
