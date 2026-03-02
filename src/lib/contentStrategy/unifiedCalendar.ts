@@ -58,8 +58,10 @@ interface OffPageAuditData {
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-function makeId(prefix: string, index: number) {
-  return `${prefix}-${index}`;
+/** Content-based ID — stable across audits when the same item reappears */
+function makeId(type: string, content: string): string {
+  const slug = content.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 50);
+  return `${type}-${slug}`;
 }
 
 /** Collect all MarketKeywordItems from crawl_data.keywords.markets */
@@ -114,8 +116,8 @@ function buildGBPItems(
   if (pool.length < Math.ceil(count / 2)) pool = scored;
   pool = pool.slice().sort((a, b) => b.roi - a.roi).slice(0, count);
 
-  return pool.map((k, i) => ({
-    id: makeId('gbp', i),
+  return pool.map((k) => ({
+    id: makeId('gbp', k.kw),
     type: 'gbp_post' as const,
     title: `GBP Post: ${k.kw}`,
     primaryKeyword: k.kw,
@@ -151,10 +153,10 @@ function buildBlogItems(
   const midPool = scored.filter(k => k.funnel === 'middle').sort((a, b) => b.vol - a.vol);
   const pool = [...topPool, ...midPool].slice(0, count);
 
-  return pool.map((k, i) => {
+  return pool.map((k) => {
     const slug = k.kw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     return {
-      id: makeId('blog', i),
+      id: makeId('blog', k.kw),
       type: 'blog_post' as const,
       title: `Blog: ${k.kw}`,
       primaryKeyword: k.kw,
@@ -192,12 +194,12 @@ function buildWebsiteAdditions(
     .sort((a, b) => b.roi - a.roi)
     .slice(0, count);
 
-  return gaps.map((k, i) => {
+  return gaps.map((k) => {
     // Suggest a URL based on keyword
     const slug = k.kw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const suggestedUrl = `/services/${slug}`;
     return {
-      id: makeId('add', i),
+      id: makeId('add', suggestedUrl),
       type: 'website_addition' as const,
       title: `New Page: ${k.kw}`,
       primaryKeyword: k.kw,
@@ -313,7 +315,7 @@ function buildPageFixTasks(
     .sort((a, b) => b.totalImpact - a.totalImpact || b.topImpact - a.topImpact)
     .slice(0, count);
 
-  return pages.map(({ url, issues, topImpact }, i) => {
+  return pages.map(({ url, issues, topImpact }) => {
     const pathLabel = url
       ? url.replace(/^https?:\/\/[^/]+/, '') || '/'
       : 'site-wide';
@@ -321,7 +323,7 @@ function buildPageFixTasks(
     const fixList = issues.map(iss => `• ${iss.fix}`).join('\n');
 
     return {
-      id: makeId('fix', i),
+      id: makeId('fix', url ?? issues[0]?.title ?? 'site-wide'),
       type: 'website_change' as const,
       title: `Fix ${n > 1 ? `${n} issues on` : 'issue on'} ${pathLabel}`,
       primaryKeyword: '',
@@ -362,7 +364,7 @@ function buildOffPageItems(
 
   for (const source of citationSources.slice(0, Math.ceil(count * 0.65))) {
     items.push({
-      id: makeId('cit', items.length),
+      id: makeId('cit', source),
       type: 'offpage_post' as const,
       title: `Submit to ${source}`,
       primaryKeyword: '',
@@ -384,7 +386,7 @@ function buildOffPageItems(
 
   for (const gap of linkGaps) {
     items.push({
-      id: makeId('link', items.length),
+      id: makeId('link', gap.domain),
       type: 'offpage_post' as const,
       title: `Get link from ${gap.domain}`,
       primaryKeyword: '',

@@ -11,8 +11,20 @@ const UnifiedCalendar = dynamic(() => import('@/components/tools/ContentStrategy
 
 type Phase = 'checking' | 'prereq_missing' | 'config' | 'generating' | 'complete';
 
+// Days before auto-refresh triggers per tier (undefined = no auto-refresh)
+const AUTO_REFRESH_DAYS: Partial<Record<string, number>> = {
+  growth: 7,
+  marketing: 30,
+};
+
+function autoRefreshDue(lastGeneratedAt: string | null, tier: string): boolean {
+  const days = AUTO_REFRESH_DAYS[tier];
+  if (!days || !lastGeneratedAt) return false;
+  return Date.now() - new Date(lastGeneratedAt).getTime() > days * 24 * 60 * 60 * 1000;
+}
+
 export default function ContentStrategyPage() {
-  const { user, business, loading: authLoading } = useAuth();
+  const { user, business, profile, loading: authLoading } = useAuth();
   const supabase = createClient();
 
   const [phase, setPhase] = useState<Phase>('checking');
@@ -21,6 +33,7 @@ export default function ContentStrategyPage() {
   const [strategy, setStrategy] = useState<any>(null);
   const [calendarItems, setCalendarItems] = useState<CalendarItemV2[]>([]);
   const [itemStatuses, setItemStatuses] = useState<Record<string, 'done' | 'skipped'>>({});
+  const [storedEconomics, setStoredEconomics] = useState<SimpleStrategyConfig | null>(null);
   const [hasNewerAudit, setHasNewerAudit] = useState(false);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -54,7 +67,7 @@ export default function ContentStrategyPage() {
         .then((r: any) => r.error ? { data: null, error: r.error } : r),
       (supabase as any)
         .from('content_strategies')
-        .select('id, calendar_v2, item_statuses, source_audit_id, last_generated_at, status, domain')
+        .select('id, calendar_v2, item_statuses, source_audit_id, last_generated_at, status, domain, economics')
         .eq('business_id', business.id)
         .eq('status', 'complete')
         .order('created_at', { ascending: false })
@@ -78,58 +91,88 @@ export default function ContentStrategyPage() {
       setStrategy(existing);
       setCalendarItems(existing.calendar_v2);
       setItemStatuses(existing.item_statuses ?? {});
+      setStoredEconomics((existing.economics as SimpleStrategyConfig) ?? null);
 
-      if (existing.source_audit_id && audit.id !== existing.source_audit_id) {
-        setHasNewerAudit(true);
-      }
+      const newerAudit = !!(existing.source_audit_id && audit.id !== existing.source_audit_id);
+      setHasNewerAudit(newerAudit);
 
       setPhase('complete');
+
+      // Auto-refresh for qualifying tiers — run silently in background
+      const tier = profile?.subscription_tier ?? 'free';
+      if (autoRefreshDue(existing.last_generated_at, tier) && existing.economics) {
+        generate(
+          existing.economics as SimpleStrategyConfig,
+          { silent: true, auditData: audit, offPageData: offPage, prevStatuses: existing.item_statuses ?? {} }
+        );
+      }
     } else {
       setPhase('config');
     }
-  }, [business?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [business?.id, profile?.subscription_tier]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!authLoading && business?.id) loadData();
   }, [authLoading, business?.id, loadData]);
 
   // ── Generate strategy ──────────────────────────────────────────────
-  async function generate(cfg: SimpleStrategyConfig) {
-    if (!siteAudit || !business?.id) return;
+  async function generate(
+    cfg: SimpleStrategyConfig,
+    opts?: {
+      silent?: boolean;
+      auditData?: SiteAudit | null;
+      offPageData?: any;
+      prevStatuses?: Record<string, 'done' | 'skipped'>;
+    }
+  ) {
+    const auditToUse = opts?.auditData ?? siteAudit;
+    const offPageToUse = opts?.offPageData ?? offPageAudit;
+    if (!auditToUse || !business?.id) return;
+
     setError('');
-    setPhase('generating');
+    if (!opts?.silent) setPhase('generating');
+    setRefreshing(true);
 
     try {
       const { buildUnifiedCalendar } = await import('@/lib/contentStrategy/unifiedCalendar');
-      const items = buildUnifiedCalendar(siteAudit as any, offPageAudit, cfg);
+      const items = buildUnifiedCalendar(auditToUse as any, offPageToUse, cfg);
+
+      // Carry over statuses for items that still exist — orphaned statuses are cleaned up
+      const prevStatuses = opts?.prevStatuses ?? itemStatuses;
+      const newIds = new Set(items.map(i => i.id));
+      const carryOver: Record<string, 'done' | 'skipped'> = {};
+      for (const [id, status] of Object.entries(prevStatuses)) {
+        if (newIds.has(id)) carryOver[id] = status;
+      }
 
       const now = new Date().toISOString();
       const upsertData = {
         business_id: business.id,
-        domain: siteAudit.domain ?? (business as any).domain ?? '',
+        domain: auditToUse.domain ?? (business as any).domain ?? '',
         status: 'complete',
         calendar_v2: items,
-        source_audit_id: siteAudit.id,
-        source_offpage_id: offPageAudit?.id ?? null,
+        source_audit_id: auditToUse.id,
+        source_offpage_id: offPageToUse?.id ?? null,
         last_generated_at: now,
-        item_statuses: {},
+        item_statuses: carryOver,
         economics: cfg,
         completed_tasks: [],
       };
 
       let result;
-      if (strategy?.id) {
+      const strategyId = strategy?.id;
+      if (strategyId) {
         result = await (supabase as any)
           .from('content_strategies')
           .update(upsertData)
-          .eq('id', strategy.id)
-          .select('id, calendar_v2, item_statuses, source_audit_id, last_generated_at')
+          .eq('id', strategyId)
+          .select('id, calendar_v2, item_statuses, source_audit_id, last_generated_at, economics')
           .single();
       } else {
         result = await (supabase as any)
           .from('content_strategies')
           .insert(upsertData)
-          .select('id, calendar_v2, item_statuses, source_audit_id, last_generated_at')
+          .select('id, calendar_v2, item_statuses, source_audit_id, last_generated_at, economics')
           .single();
       }
 
@@ -137,18 +180,25 @@ export default function ContentStrategyPage() {
 
       setStrategy(result.data);
       setCalendarItems(items);
-      setItemStatuses({});
+      setItemStatuses(carryOver);
+      setStoredEconomics(cfg);
       setHasNewerAudit(false);
-      setPhase('complete');
+      if (!opts?.silent) setPhase('complete');
     } catch (err: any) {
       setError(err.message || 'Failed to generate strategy');
-      setPhase(strategy ? 'complete' : 'config');
+      if (!opts?.silent) setPhase(strategy ? 'complete' : 'config');
+    } finally {
+      setRefreshing(false);
     }
   }
 
+  // If economics are already stored, refresh inline — no config form needed
   function handleRefresh() {
-    setRefreshing(false);
-    setPhase('config');
+    if (storedEconomics) {
+      generate(storedEconomics, { silent: true });
+    } else {
+      setPhase('config');
+    }
   }
 
   // ── Item status toggle ─────────────────────────────────────────────

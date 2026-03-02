@@ -14,12 +14,13 @@ const TOOL_ACCESS: Record<string, SubscriptionTier[]> = {
 };
 
 const FEATURE_ACCESS: Record<string, SubscriptionTier[]> = {
-  'content-generation':  ['marketing', 'growth'],
-  'email-campaigns':     ['marketing', 'growth'],
-  'sms-campaigns':       ['marketing', 'growth'],
-  'real-time-leads':     ['growth'],
-  'multi-location':      ['growth'],
-  'cross-tool-pipeline': ['growth'],
+  'content-generation':    ['marketing', 'growth'],
+  'email-campaigns':       ['marketing', 'growth'],
+  'sms-campaigns':         ['marketing', 'growth'],
+  'real-time-leads':       ['growth'],
+  'multi-location':        ['growth'],
+  'cross-tool-pipeline':   ['growth'],
+  'strategy-auto-refresh': ['marketing', 'growth'],
 };
 
 export function useSubscription() {
