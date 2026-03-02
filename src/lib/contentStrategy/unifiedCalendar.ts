@@ -159,12 +159,13 @@ function buildGBPItems(
   });
 }
 
-// ─── Blog Posts (informational keywords → authority + top-funnel traffic) ───
+// ─── Blog Posts (informational keyword gaps only) ────────────────────
 
 /**
- * Blog posts target top-funnel informational keywords to build topical authority.
- * Published every 3 weeks (weeks 3, 6, 9, 12). They feed internal links to
- * service pages, strengthening the bottom-funnel conversion path.
+ * Blog posts are only recommended when there are genuine informational gaps —
+ * keywords the site isn't already ranking well for (rank > 5 or not ranking).
+ * If the site ranks top-5 for all relevant informational terms, no blogs are
+ * added (no point writing content that duplicates existing ranked pages).
  */
 function buildBlogItems(
   keywords: MarketKeywordItem[],
@@ -177,19 +178,30 @@ function buildBlogItems(
     const vol = item.keyword_data.keyword_info?.search_volume ?? 0;
     const enriched = enrichedMap?.get(kw.toLowerCase());
     const funnel = enriched?.funnel ?? classifyFunnel(kw);
-    return { kw, vol, funnel, enriched: enriched ?? null };
+    // Check whether the site already ranks well for this keyword
+    const currentRank = enriched?.currentRank
+      ?? item.ranked_serp_element?.serp_item?.rank_group
+      ?? null;
+    return { kw, vol, funnel, enriched: enriched ?? null, currentRank };
   });
 
-  // Blog posts target informational/top-funnel keywords for topical authority
-  // When enriched, also prefer 'informational' intent
+  // Only target informational/top-funnel keywords where we're NOT already top-5.
+  // Ranking top-5 means the page is doing its job — no new blog needed.
+  const isGap = (k: typeof scored[0]) =>
+    k.currentRank === null || k.currentRank > 5;
+
   const topPool = scored
-    .filter(k => k.funnel === 'top' || k.enriched?.intent === 'informational')
+    .filter(k => (k.funnel === 'top' || k.enriched?.intent === 'informational') && isGap(k))
     .sort((a, b) => b.vol - a.vol);
+
+  // If informational gap pool is thin, pull in mid-funnel non-transactional gaps
   const midPool = scored
-    .filter(k => k.funnel === 'middle' && k.enriched?.intent !== 'transactional')
+    .filter(k => k.funnel === 'middle' && k.enriched?.intent !== 'transactional' && isGap(k))
     .sort((a, b) => b.vol - a.vol);
+
   const pool = [...topPool, ...midPool].slice(0, count);
 
+  // No gaps found → no blogs recommended (site is already well-covered)
   return pool.map((k, i) => {
     const slug = k.kw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const signals = k.enriched?.difficulty != null ? ` · KD: ${k.enriched.difficulty}` : '';
@@ -200,7 +212,7 @@ function buildBlogItems(
       primaryKeyword: k.kw,
       keywords: [k.kw],
       action: `Write an 800–1,200 word blog post targeting "${k.kw}". Include an H1, 3–4 H2 sections, a FAQ block (3–5 questions), and at least one internal link to a relevant service page. Target URL: /blog/${slug}.`,
-      rationale: `${k.vol.toLocaleString()} searches/mo · Informational intent — builds topical authority${signals}`,
+      rationale: `${k.vol.toLocaleString()} searches/mo · Informational gap — not ranking top-5 · builds topical authority${signals}`,
       priority: (i < 2 ? 'high' : 'medium') as 'high' | 'medium' | 'low',
       roiValue: Math.round(k.vol * 0.005 * cfg.conversionRate * cfg.profitPerJob * (cfg.closeRate / 100)),
       targetUrl: `/blog/${slug}`,
@@ -466,16 +478,23 @@ function buildOffPageItems(
 
 // ─── Week Distribution ────────────────────────────────────────────────
 
+const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
 /**
- * Optimal 12-week local SEO content schedule:
+ * Priority + ROI-driven week distribution.
  *
- *  GBP Posts    — 1/week (every week, consistent presence in Maps/Search)
- *  Blog Posts   — every 3 weeks (wks 3, 6, 9, 12) — builds topical authority
- *  Page Fixes   — front-loaded (wks 1–6) — quick wins that compound early
- *  New Pages    — spread wks 1–8 — keyword gap pages take time to rank
- *  Off-Page     — 1/week starting wk 2 — citation + link-building cadence
+ * GBP posts: 1/week every week — publishing cadence, not priority-ordered.
  *
- * Target density: 3–4 tasks/week average, 2–5 range.
+ * Everything else (fixes, new pages, off-page, blogs) is merged into a single
+ * queue sorted by priority tier then ROI value. The highest-impact work always
+ * lands in the earliest weeks regardless of type. This means:
+ *   - A critical cannibalization fix (impact 9/10) beats a low-ROI citation
+ *   - A high-ROI service page gap beats a medium-priority page fix
+ *
+ * Blogs are spaced at most 1 per 3 weeks (publishing cadence constraint).
+ * All other types can appear in any week based purely on their priority/ROI rank.
+ *
+ * Max 3 non-GBP items per week — realistic workload for a small team.
  */
 function distributeToWeeks(
   gbp: Omit<CalendarItemV2, 'week' | 'status'>[],
@@ -487,48 +506,57 @@ function distributeToWeeks(
 ): CalendarItemV2[] {
   const result: CalendarItemV2[] = [];
 
-  // GBP: 1 per week, every week
+  // GBP: 1 per week, every week (consistent cadence)
   for (let w = 1; w <= numWeeks; w++) {
     const item = gbp[w - 1];
     if (item) result.push({ ...item, week: w, status: 'scheduled' });
   }
 
-  // Blogs: every 3 weeks starting at week 3 (3, 6, 9, 12)
-  let blogIdx = 0;
-  for (let w = 3; w <= numWeeks && blogIdx < blogs.length; w += 3) {
-    result.push({ ...blogs[blogIdx], week: w, status: 'scheduled' });
-    blogIdx++;
+  // Track non-GBP slots filled per week
+  const weekCounts = new Array(numWeeks + 1).fill(0);
+  const MAX_PER_WEEK = 3;
+
+  // Sort all non-blog action items by priority → ROI descending
+  const actionItems = [...webFixes, ...webAdds, ...offPage].sort((a, b) => {
+    const pd = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
+    return pd !== 0 ? pd : b.roiValue - a.roiValue;
+  });
+
+  // Fill weeks with action items in priority order
+  let w = 1;
+  for (const item of actionItems) {
+    while (w <= numWeeks && weekCounts[w] >= MAX_PER_WEEK) w++;
+    if (w > numWeeks) break;
+    result.push({ ...item, week: w, status: 'scheduled' });
+    weekCounts[w]++;
   }
 
-  // Page fixes: front-loaded (weeks 1–6), up to 2/week in first 4 weeks
-  let fixIdx = 0;
-  for (let w = 1; w <= Math.min(6, numWeeks) && fixIdx < webFixes.length; w++) {
-    result.push({ ...webFixes[fixIdx], week: w, status: 'scheduled' });
-    fixIdx++;
-    // Double up in weeks 1–4 if fixes are plentiful
-    if (w <= 4 && fixIdx < webFixes.length) {
-      result.push({ ...webFixes[fixIdx], week: w, status: 'scheduled' });
-      fixIdx++;
+  // Insert blogs: max 1 per 3-week window, placed in whichever week has a free slot
+  // Blogs are already filtered to genuine gaps — if none exist, this loop is empty
+  let blogWindowStart = 1;
+  for (const blog of blogs) {
+    // Find a free slot in this 3-week window
+    let placed = false;
+    for (let bw = blogWindowStart; bw < blogWindowStart + 3 && bw <= numWeeks; bw++) {
+      if (weekCounts[bw] < MAX_PER_WEEK) {
+        result.push({ ...blog, week: bw, status: 'scheduled' });
+        weekCounts[bw]++;
+        blogWindowStart = bw + 3; // next blog at least 3 weeks later
+        placed = true;
+        break;
+      }
     }
-  }
-  // Remaining fixes spread through weeks 7–10
-  for (let w = 7; w <= Math.min(10, numWeeks) && fixIdx < webFixes.length; w++) {
-    result.push({ ...webFixes[fixIdx], week: w, status: 'scheduled' });
-    fixIdx++;
-  }
-
-  // New pages: weeks 1–8 (they need months to rank — start early)
-  let addIdx = 0;
-  for (let w = 1; w <= Math.min(8, numWeeks) && addIdx < webAdds.length; w++) {
-    result.push({ ...webAdds[addIdx], week: w, status: 'scheduled' });
-    addIdx++;
-  }
-
-  // Off-page: 1/week starting week 2, spread across all 12 weeks
-  let opIdx = 0;
-  for (let w = 2; w <= numWeeks && opIdx < offPage.length; w++) {
-    result.push({ ...offPage[opIdx], week: w, status: 'scheduled' });
-    opIdx++;
+    if (!placed) {
+      // Window is full — find next available week after the window
+      for (let bw = blogWindowStart + 3; bw <= numWeeks; bw++) {
+        if (weekCounts[bw] < MAX_PER_WEEK) {
+          result.push({ ...blog, week: bw, status: 'scheduled' });
+          weekCounts[bw]++;
+          blogWindowStart = bw + 3;
+          break;
+        }
+      }
+    }
   }
 
   return result.sort((a, b) => a.week - b.week || a.type.localeCompare(b.type));
