@@ -373,7 +373,13 @@ function buildPageFixTasks(
       )
     );
 
-    const urls = matched?.urls?.slice(0, 4).map(u => u.url) ?? [];
+    // Filter out non-HTML resources — images, fonts, scripts, stylesheets, PDFs.
+    // Attaching SEO fix tasks to asset files makes no sense and creates noise.
+    const isAsset = (url: string) =>
+      /\.(webp|jpg|jpeg|png|gif|svg|ico|pdf|css|js|woff2?|ttf|eot|mp4|mp3)(\?.*)?$/i.test(url) ||
+      /\/assets\//i.test(url);
+
+    const urls = (matched?.urls?.slice(0, 4).map(u => u.url) ?? []).filter(u => !isAsset(u));
 
     if (urls.length === 0) {
       // No specific URL — group as site-wide task
@@ -477,15 +483,21 @@ function buildOffPageItems(
   offPage: OffPageAuditData | null,
   count = 10,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
+  // No off-page audit has been run — don't guess. Return nothing so the calendar
+  // isn't polluted with generic citation tasks the user didn't ask for.
+  // Prompt them to run the Off-Page Audit tool instead.
+  if (!offPage) return [];
+
   const items: Omit<CalendarItemV2, 'week' | 'status'>[] = [];
 
   // Missing citations from off-page audit
-  const missingCitations = (offPage?.citations ?? []).filter(c => !c.found);
+  const missingCitations = (offPage.citations ?? []).filter(c => !c.found);
 
-  // If no off-page audit data, suggest universal citation list as fallback
+  // Only use universal fallback when the audit ran but found no missing citations
+  // (i.e. all known citations are present — surface a small reminder set, not the full list)
   const citationSources: string[] = missingCitations.length > 0
     ? missingCitations.map(c => c.source)
-    : UNIVERSAL_CITATIONS;
+    : UNIVERSAL_CITATIONS.slice(0, 3);
 
   for (const source of citationSources.slice(0, Math.ceil(count * 0.65))) {
     items.push({
@@ -567,8 +579,13 @@ function distributeToWeeks(
   const weekCounts = new Array(numWeeks + 1).fill(0);
   const MAX_PER_WEEK = 3;
 
-  // Sort all non-blog action items by priority → ROI descending
+  // Content items (page fixes + new pages) always before off-page tasks.
+  // Within each group, sort by priority tier → ROI descending.
+  // Off-page (citations, link outreach) fills remaining slots after content work is placed.
+  const TYPE_RANK: Record<string, number> = { website_change: 0, website_addition: 0, offpage_post: 1 };
   const actionItems = [...webFixes, ...webAdds, ...offPage].sort((a, b) => {
+    const td = (TYPE_RANK[a.type] ?? 0) - (TYPE_RANK[b.type] ?? 0);
+    if (td !== 0) return td;
     const pd = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
     return pd !== 0 ? pd : b.roiValue - a.roiValue;
   });
