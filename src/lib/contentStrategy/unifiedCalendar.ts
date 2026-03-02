@@ -3,6 +3,10 @@
 
 import { calculateKeywordROI } from './roi';
 import { classifyFunnel } from './funnel';
+import {
+  detectCannibalizationConflicts,
+  detectWrongPageRankings,
+} from '@/lib/siteAudit/cannibalizationDetection';
 import type { CalendarItemV2, SimpleStrategyConfig } from '@/types';
 
 // ─── Input Types ─────────────────────────────────────────────────────
@@ -166,29 +170,34 @@ function buildWebsiteAdditions(
   });
 }
 
-// ─── Website Changes (site audit issues) ─────────────────────────────
+// ─── Page Fix Tasks (technical SEO issues + cannibalization, per page) ───
 
 type IssueEntry = { title: string; fix: string; impactScore: number };
 
-function buildWebsiteChanges(
+/**
+ * Build one fix task per page that bundles ALL problems for that page:
+ * technical SEO issues (from quickWins) + keyword cannibalization conflicts.
+ */
+function buildPageFixTasks(
   audit: SiteAuditData,
-  count = 6,
+  count = 8,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
+  const urlToIssues = new Map<string, IssueEntry[]>();
+
+  function addIssue(urlOrKey: string, entry: IssueEntry) {
+    const existing = urlToIssues.get(urlOrKey) ?? [];
+    existing.push(entry);
+    urlToIssues.set(urlOrKey, existing);
+  }
+
+  // ── 1. Technical SEO issues from quickWins ─────────────────────────
   const quickWins = (audit.issues_data?.quickWins ?? [])
     .slice()
     .sort((a, b) => b.impactScore - a.impactScore);
-
-  if (quickWins.length === 0) return [];
-
   const detailed = audit.issues_data?.detailed ?? [];
 
-  // Group issues by the specific page URL they affect.
-  // Each quickWin maps to detailed entries which have the affected URL list.
-  // Result: one task per page URL that bundles all its problems together.
-  const urlToIssues = new Map<string, IssueEntry[]>();
-
   for (const qw of quickWins) {
-    // Match quickWin to a detailed entry by title overlap
+    // Match quickWin to detailed entry (which has affected URL list) by title
     const matched = detailed.find(d =>
       d.urls?.length && d.title && (
         qw.title.toLowerCase().startsWith(d.title.toLowerCase().slice(0, 14)) ||
@@ -199,21 +208,60 @@ function buildWebsiteChanges(
     const urls = matched?.urls?.slice(0, 4).map(u => u.url) ?? [];
 
     if (urls.length === 0) {
-      // No specific URL — bucket under a stable key for a site-wide task
-      const key = `__site__${qw.id || qw.title}`;
-      const existing = urlToIssues.get(key) ?? [];
-      existing.push({ title: qw.title, fix: qw.fix, impactScore: qw.impactScore });
-      urlToIssues.set(key, existing);
+      // No specific URL — group as site-wide task
+      addIssue(`__site__${qw.id || qw.title}`, {
+        title: qw.title,
+        fix: qw.fix,
+        impactScore: qw.impactScore,
+      });
     } else {
       for (const url of urls) {
-        const existing = urlToIssues.get(url) ?? [];
-        existing.push({ title: qw.title, fix: qw.fix, impactScore: qw.impactScore });
-        urlToIssues.set(url, existing);
+        addIssue(url, { title: qw.title, fix: qw.fix, impactScore: qw.impactScore });
       }
     }
   }
 
-  // Sort pages: most/highest-impact issues first
+  // ── 2. Cannibalization: SERP-verified conflicts (Tier 1) ───────────
+  const markets = audit.crawl_data?.keywords?.markets;
+  const domain = audit.domain ?? '';
+  const locations = audit.crawl_data?.keywords?.locations ?? [];
+
+  if (markets && domain) {
+    const serpConflicts = detectCannibalizationConflicts(
+      markets as any,
+      domain,
+      locations,
+    );
+
+    for (const conflict of serpConflicts) {
+      const competitorPaths = conflict.competitors.map(c => c.path).join(', ');
+      const impactScore = conflict.severity === 'critical' ? 9 : conflict.severity === 'high' ? 7 : 5;
+      addIssue(conflict.primary.url, {
+        title: `Keyword cannibalization: "${conflict.keyword}"`,
+        fix: `This page and ${competitorPaths} are both ranking for "${conflict.keyword}" (${conflict.volume.toLocaleString()} searches/mo). ${conflict.conflictFix}`,
+        impactScore,
+      });
+    }
+
+    // ── 3. Wrong page winning (Tier 2) ────────────────────────────────
+    const serpKeywords = new Set(serpConflicts.map(c => c.keyword));
+    const wrongPageRankings = detectWrongPageRankings(
+      markets as any,
+      domain,
+      locations,
+      serpKeywords,
+    );
+
+    for (const wpr of wrongPageRankings) {
+      addIssue(wpr.url, {
+        title: `Wrong page ranking: "${wpr.keyword}"`,
+        fix: `A ${wpr.pageType} page is winning for "${wpr.keyword}" (${wpr.intent}, position ${wpr.position}, ${wpr.volume.toLocaleString()} searches/mo). ${wpr.reason}`,
+        impactScore: wpr.severity === 'high' ? 8 : 6,
+      });
+    }
+  }
+
+  // ── 4. Sort pages by total issue weight and create tasks ──────────
   const pages = Array.from(urlToIssues.entries())
     .map(([key, issues]) => ({
       url: key.startsWith('__site__') ? undefined : key,
@@ -240,7 +288,7 @@ function buildWebsiteChanges(
       action: url
         ? `Fix the following ${n} issue${n > 1 ? 's' : ''} on ${url}:\n${fixList}`
         : `Fix the following ${n} site-wide issue${n > 1 ? 's' : ''}:\n${fixList}`,
-      rationale: `${n} audit issue${n > 1 ? 's' : ''} detected · Highest impact: ${issues[0].title} (${topImpact}/10)`,
+      rationale: `${n} issue${n > 1 ? 's' : ''} found · Highest impact: ${issues[0].title} (${topImpact}/10)`,
       priority: topImpact >= 7 ? 'high' : topImpact >= 4 ? 'medium' : 'low',
       roiValue: 0,
       targetUrl: url,
@@ -360,7 +408,7 @@ export function buildUnifiedCalendar(
   // 3. Build each item pool
   const gbpItems = buildGBPItems(keywords, cfg, 12);
   const addItems = buildWebsiteAdditions(keywords, pageUrls, cfg, 8);
-  const fixItems = buildWebsiteChanges(siteAudit, 6);
+  const fixItems = buildPageFixTasks(siteAudit, 8);
   const opItems = buildOffPageItems(offPageAudit, 10);
 
   // 4. Distribute to weeks
