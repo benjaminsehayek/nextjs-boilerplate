@@ -79,29 +79,44 @@ export function MapDisplay({ business, gridPoints, heatmapData, showHeatmap = fa
 
       // Add grid points
       if (gridPoints.length > 0) {
+        // Build keyword-specific rank lookup from heatmapData when available.
+        // gridPoints[i].rank is mutated in place during the scan loop, so after
+        // multiple keywords it only holds the last keyword's ranks. heatmapData.points
+        // has the correct per-keyword ranks.
+        const rankLookup = new Map<string, number | null>();
+        if (heatmapData) {
+          heatmapData.points.forEach((p) => {
+            rankLookup.set(`${p.lat.toFixed(7)},${p.lng.toFixed(7)}`, p.rank);
+          });
+        }
+
         gridPoints.forEach((point) => {
+          const rank = heatmapData
+            ? (rankLookup.get(`${point.lat.toFixed(7)},${point.lng.toFixed(7)}`) ?? null)
+            : point.rank;
+
           let color = '#94A3B8'; // Default gray
           let size = showHeatmap ? 28 : 8;
           let textColor = '#fff';
 
-          if (showHeatmap && point.rank !== null) {
-            if (point.rank <= 3) {
+          if (showHeatmap && rank !== null) {
+            if (rank <= 3) {
               color = '#22c55e'; // green
-            } else if (point.rank <= 10) {
+            } else if (rank <= 10) {
               color = '#f59e0b'; // amber
               textColor = '#1a1a1a';
-            } else if (point.rank <= 20) {
+            } else if (rank <= 20) {
               color = '#ef4444'; // red
             } else {
               color = '#6b7280'; // gray
             }
-          } else if (point.rank === null && showHeatmap) {
+          } else if (rank === null && showHeatmap) {
             color = '#6b7280';
             size = 24;
           }
 
           const label = showHeatmap
-            ? (point.rank !== null ? String(point.rank) : '—')
+            ? (rank !== null ? String(rank) : '—')
             : '';
 
           const pointIcon = showHeatmap
@@ -132,15 +147,15 @@ export function MapDisplay({ business, gridPoints, heatmapData, showHeatmap = fa
             if (point.competitors && point.competitors.length > 0) {
               const compList = point.competitors
                 .map((c) => {
-                  const isYou = point.rank !== null && c.rank === point.rank;
+                  const isYou = rank !== null && c.rank === rank;
                   return `<div style="font-size:10px;${isYou ? 'color:#FF5C1A;font-weight:700;' : 'opacity:0.8;'}">#${c.rank} ${c.name}${isYou ? ' ← You' : ''}</div>`;
                 })
                 .join('');
               competitorsHtml = `<div style="border-top:1px solid rgba(255,255,255,0.15);margin-top:6px;padding-top:6px;">${compList}</div>`;
             }
 
-            const popupContent = point.rank
-              ? `<strong>Rank: #${point.rank}</strong>${matchLabel}<br>Distance: ${point.distance.toFixed(2)} mi${competitorsHtml}`
+            const popupContent = rank
+              ? `<strong>Rank: #${rank}</strong>${matchLabel}<br>Distance: ${point.distance.toFixed(2)} mi${competitorsHtml}`
               : `<strong>Not Ranking</strong><br>Distance: ${point.distance.toFixed(2)} mi${competitorsHtml}`;
             marker.bindPopup(popupContent);
           } else {
