@@ -66,6 +66,38 @@ function makeId(type: string, content: string): string {
   return `${type}-${slug}`;
 }
 
+/**
+ * Extract significant topic words from a keyword.
+ * Strips common stop/modifier words, then prefix-stems 6+ char words to catch
+ * plurals and derivations (e.g. "repair" / "repairs" / "repairing" → "repai").
+ */
+function topicWords(kw: string): string[] {
+  const STOP = new Set([
+    'near', 'best', 'cheap', 'local', 'professional', 'affordable', 'licensed',
+    'certified', 'residential', 'commercial', 'same', 'your', 'area', 'city',
+    'the', 'and', 'for', 'with', 'from', 'how', 'what', 'when', 'why', 'does',
+    'cost', 'much', 'need', 'tips', 'signs', 'guide', 'about', 'that', 'this',
+    'will', 'can', 'should', 'have', 'they', 'there', 'here', 'find', 'hire',
+  ]);
+  return kw.toLowerCase()
+    .split(/[\s\-_,]+/)
+    .filter(w => w.length >= 4 && !STOP.has(w) && !/^\d+$/.test(w))
+    .map(w => w.length >= 6 ? w.slice(0, 5) : w);
+}
+
+/**
+ * Returns true when two keywords share ≥ minOverlap stemmed topic words,
+ * indicating they'd compete for the same search intent.
+ */
+function overlapsTopically(kw1: string, kw2: string, minOverlap = 2): boolean {
+  const words2 = new Set(topicWords(kw2));
+  let count = 0;
+  for (const w of topicWords(kw1)) {
+    if (words2.has(w) && ++count >= minOverlap) return true;
+  }
+  return false;
+}
+
 /** Collect all MarketKeywordItems from crawl_data.keywords.markets */
 function collectAuditKeywords(audit: SiteAuditData): MarketKeywordItem[] {
   const markets = audit.crawl_data?.keywords?.markets;
@@ -172,6 +204,8 @@ function buildBlogItems(
   cfg: SimpleStrategyConfig,
   count = 4,
   enrichedMap?: Map<string, EnrichedKeyword>,
+  /** Keywords already claimed by GBP posts or new service pages — blogs must not overlap */
+  claimedKeywords: string[] = [],
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
   const scored = keywords.map(item => {
     const kw = item.keyword_data.keyword;
@@ -190,16 +224,26 @@ function buildBlogItems(
   const isGap = (k: typeof scored[0]) =>
     k.currentRank === null || k.currentRank > 5;
 
+  // No blog should overlap with a GBP post or new service page topic — that would
+  // create multiple pages competing for the same searches (cannibalization).
+  const isNotClaimed = (kw: string) =>
+    !claimedKeywords.some(claimed => overlapsTopically(claimed, kw, 2));
+
   const topPool = scored
-    .filter(k => (k.funnel === 'top' || k.enriched?.intent === 'informational') && isGap(k))
+    .filter(k => (k.funnel === 'top' || k.enriched?.intent === 'informational') && isGap(k) && isNotClaimed(k.kw))
     .sort((a, b) => b.vol - a.vol);
 
   // If informational gap pool is thin, pull in mid-funnel non-transactional gaps
   const midPool = scored
-    .filter(k => k.funnel === 'middle' && k.enriched?.intent !== 'transactional' && isGap(k))
+    .filter(k => k.funnel === 'middle' && k.enriched?.intent !== 'transactional' && isGap(k) && isNotClaimed(k.kw))
     .sort((a, b) => b.vol - a.vol);
 
-  const pool = [...topPool, ...midPool].slice(0, count);
+  // Topically deduplicate within the blog pool itself — no two blogs on the same topic
+  const pool: typeof topPool = [];
+  for (const candidate of [...topPool, ...midPool]) {
+    if (!pool.some(p => overlapsTopically(p.kw, candidate.kw, 2))) pool.push(candidate);
+    if (pool.length >= count) break;
+  }
 
   // No gaps found → no blogs recommended (site is already well-covered)
   return pool.map((k, i) => {
@@ -231,7 +275,7 @@ function buildWebsiteAdditions(
   services?: Array<{ name: string; profit: number; close: number }>,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
   // Keywords where no site page is ranking in top 10
-  const gaps = keywords
+  const gapsSorted = keywords
     .filter(item => {
       const rank = item.ranked_serp_element?.serp_item?.rank_group;
       return rank === undefined || rank === null || rank > 10;
@@ -257,8 +301,15 @@ function buildWebsiteAdditions(
         : calculateKeywordROI(vol, funnel, kwCfg.conversionRate, kwCfg.profitPerJob, kwCfg.closeRate).roi;
       return { kw, vol, funnel, roi, enriched: enriched ?? null };
     })
-    .sort((a, b) => b.roi - a.roi)
-    .slice(0, count);
+    .sort((a, b) => b.roi - a.roi);
+
+  // Topically deduplicate — no two new service pages should target the same semantic topic.
+  // Higher-ROI keyword wins; same-topic duplicates are dropped.
+  const gaps: typeof gapsSorted = [];
+  for (const g of gapsSorted) {
+    if (!gaps.some(d => overlapsTopically(d.kw, g.kw, 2))) gaps.push(g);
+    if (gaps.length >= count) break;
+  }
 
   return gaps.map((k, i) => {
     const slug = k.kw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -605,9 +656,19 @@ export function buildUnifiedCalendar(
   const pageUrls = buildPageUrlSet(siteAudit);
 
   // 3. Build each item pool
+  //    Order matters: GBP + service pages claim topics first; blogs fill remaining gaps.
   const gbpItems = buildGBPItems(keywords, cfg, 12, enrichedMap, services);
-  const blogItems = buildBlogItems(keywords, cfg, 4, enrichedMap);
   const addItems = buildWebsiteAdditions(keywords, pageUrls, cfg, 8, enrichedMap, services);
+
+  // Claimed keywords: GBP posts + new service pages already cover these topics.
+  // Blogs must not overlap — otherwise you'd have a GBP post, a service page, AND a blog
+  // all targeting the same keyword, splitting ranking signals across three URLs.
+  const claimedKeywords = [
+    ...gbpItems.map(i => i.primaryKeyword),
+    ...addItems.map(i => i.primaryKeyword),
+  ].filter(Boolean);
+
+  const blogItems = buildBlogItems(keywords, cfg, 4, enrichedMap, claimedKeywords);
   const fixItems = buildPageFixTasks(siteAudit, 8);
   const opItems = buildOffPageItems(offPageAudit, 10);
 
