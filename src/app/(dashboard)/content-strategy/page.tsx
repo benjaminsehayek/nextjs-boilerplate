@@ -12,6 +12,15 @@ const UnifiedCalendar = dynamic(() => import('@/components/tools/ContentStrategy
 
 type Phase = 'checking' | 'prereq_missing' | 'config' | 'generating' | 'complete';
 
+interface PrereqStatus {
+  hasSiteAudit: boolean;
+  hasIndustry: boolean;
+  hasCity: boolean;
+  hasState: boolean;
+  hasOffPage: boolean;
+  siteAuditDate?: string;
+}
+
 // Days before auto-refresh triggers per tier (undefined = no auto-refresh)
 const AUTO_REFRESH_DAYS: Partial<Record<string, number>> = {
   growth: 7,
@@ -29,6 +38,7 @@ export default function ContentStrategyPage() {
   const supabase = createClient();
 
   const [phase, setPhase] = useState<Phase>('checking');
+  const [prereqStatus, setPrereqStatus] = useState<PrereqStatus | null>(null);
   const [siteAudit, setSiteAudit] = useState<SiteAudit | null>(null);
   const [offPageAudit, setOffPageAudit] = useState<any>(null);
   const [strategy, setStrategy] = useState<any>(null);
@@ -84,11 +94,18 @@ export default function ContentStrategyPage() {
     setSiteAudit(audit);
     setOffPageAudit(offPage);
 
-    if (!audit) {
-      setPhase('prereq_missing');
-      return;
-    }
+    const auditCity = (audit as any)?.crawl_data?.business?.city ?? (business as any)?.city ?? '';
+    const status: PrereqStatus = {
+      hasSiteAudit: !!audit,
+      hasIndustry: !!((business as any)?.industry),
+      hasCity: !!auditCity,
+      hasState: !!((business as any)?.state),
+      hasOffPage: !!offPage,
+      siteAuditDate: (audit as any)?.created_at,
+    };
+    setPrereqStatus(status);
 
+    // Existing strategy → go straight to calendar, no re-gating
     if (existing?.calendar_v2?.length) {
       setStrategy(existing);
       setCalendarItems(existing.calendar_v2);
@@ -109,7 +126,9 @@ export default function ContentStrategyPage() {
         );
       }
     } else {
-      setPhase('config');
+      // First-time generation: all hard prerequisites must be met
+      const allHardReqsMet = status.hasSiteAudit && status.hasIndustry && status.hasCity && status.hasState;
+      setPhase(allHardReqsMet ? 'config' : 'prereq_missing');
     }
   }, [business?.id, profile?.subscription_tier]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -317,20 +336,107 @@ export default function ContentStrategyPage() {
         <div className="card p-4 border-danger bg-danger/5 text-danger text-sm">{error}</div>
       )}
 
-      {/* ── Prerequisite missing ── */}
-      {phase === 'prereq_missing' && (
-        <div className="card p-8 text-center space-y-4">
-          <div className="text-4xl">📊</div>
-          <h2 className="font-display text-lg text-ash-200">Run a Site Audit First</h2>
-          <p className="text-ash-500 max-w-sm mx-auto text-sm">
-            Content Strategy uses your site audit data to find keyword gaps and page issues.
-            Run a site audit to get started.
-          </p>
-          <a href="/site-audit" className="btn-primary inline-flex">
-            Go to Site Audit
-          </a>
-        </div>
-      )}
+      {/* ── Prerequisite checklist ── */}
+      {phase === 'prereq_missing' && prereqStatus && (() => {
+        const allHardReqsMet = prereqStatus.hasSiteAudit && prereqStatus.hasIndustry && prereqStatus.hasCity && prereqStatus.hasState;
+        const items: Array<{
+          done: boolean; required: boolean; label: string; detail: string; href: string; cta: string;
+        }> = [
+          {
+            done: prereqStatus.hasSiteAudit,
+            required: true,
+            label: 'Site Audit',
+            detail: prereqStatus.hasSiteAudit
+              ? `Completed ${new Date(prereqStatus.siteAuditDate!).toLocaleDateString()}`
+              : 'Scans your site for existing keywords, pages, and technical issues',
+            href: '/site-audit',
+            cta: 'Run Site Audit',
+          },
+          {
+            done: prereqStatus.hasIndustry,
+            required: true,
+            label: 'Business Industry',
+            detail: prereqStatus.hasIndustry
+              ? `Set to ${(business as any)?.industry}`
+              : 'Used to match keywords to your services and set ROI defaults',
+            href: '/settings',
+            cta: 'Set in Settings',
+          },
+          {
+            done: prereqStatus.hasCity,
+            required: true,
+            label: 'Business City',
+            detail: prereqStatus.hasCity
+              ? `Set to ${(business as any)?.city}`
+              : 'Required for local keyword volume data — without it you get national averages',
+            href: '/settings',
+            cta: 'Set in Settings',
+          },
+          {
+            done: prereqStatus.hasState,
+            required: true,
+            label: 'Business State',
+            detail: prereqStatus.hasState
+              ? `Set to ${(business as any)?.state}`
+              : 'Narrows keyword research to your geographic market',
+            href: '/settings',
+            cta: 'Set in Settings',
+          },
+          {
+            done: prereqStatus.hasOffPage,
+            required: false,
+            label: 'Off-Page Audit',
+            detail: prereqStatus.hasOffPage
+              ? 'Completed — citation gaps and link opportunities included'
+              : 'Recommended — adds citation gaps and backlink opportunities to your calendar',
+            href: '/off-page-audit',
+            cta: 'Run Off-Page Audit',
+          },
+        ];
+
+        return (
+          <div className="card p-8 space-y-6 max-w-lg">
+            <div>
+              <h2 className="font-display text-lg text-ash-200">Complete These Steps First</h2>
+              <p className="text-ash-500 text-sm mt-1">
+                Keyword research needs accurate business data to find opportunities in your market.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {items.map(item => (
+                <div key={item.label} className={`flex items-start gap-3 p-3 rounded-btn border ${
+                  item.done ? 'border-success/20 bg-success/5' : item.required ? 'border-danger/20 bg-danger/5' : 'border-warning/20 bg-warning/5'
+                }`}>
+                  <span className={`mt-0.5 text-base ${item.done ? 'text-success' : item.required ? 'text-danger' : 'text-warning'}`}>
+                    {item.done ? '✓' : item.required ? '✗' : '⚠'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-ash-200">{item.label}</span>
+                      {!item.required && <span className="text-xs text-ash-500 bg-char-700 px-1.5 py-0.5 rounded">recommended</span>}
+                    </div>
+                    <p className="text-xs text-ash-500 mt-0.5">{item.detail}</p>
+                  </div>
+                  {!item.done && (
+                    <a href={item.href} className="text-xs text-brand-400 hover:text-brand-300 whitespace-nowrap shrink-0 mt-0.5">
+                      {item.cta} →
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button
+              disabled={!allHardReqsMet}
+              onClick={() => setPhase('config')}
+              className="btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {allHardReqsMet ? 'Continue to Strategy Setup' : 'Complete Required Steps Above'}
+            </button>
+          </div>
+        );
+      })()}
 
       {/* ── Config ── */}
       {(phase === 'config' || phase === 'generating') && (
@@ -340,15 +446,6 @@ export default function ContentStrategyPage() {
               <span className="w-2 h-2 rounded-full bg-success" />
               Using site audit from {new Date((siteAudit as any).created_at).toLocaleDateString()}
               {offPageAudit && <span className="ml-2 text-ash-500">+ off-page audit</span>}
-            </div>
-          )}
-          {!city && (
-            <div className="card p-3 border-warning/40 bg-warning/5 flex items-center gap-3 text-xs">
-              <span className="text-warning">⚠</span>
-              <span className="text-ash-400">
-                Your business city is not set — keyword volumes will be national averages instead of local.{' '}
-                <a href="/settings" className="text-warning underline">Update your profile</a> for accurate local data.
-              </span>
             </div>
           )}
           <SimpleConfigForm
