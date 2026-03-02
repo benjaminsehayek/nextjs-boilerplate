@@ -325,11 +325,25 @@ export default function ContentStrategyPage() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-      <div>
-        <h1 className="font-display text-2xl text-ash-100">Content Strategy</h1>
-        <p className="text-ash-500 mt-1 text-sm">
-          12-week plan for GBP posts, off-page SEO, and website improvements — built from your audit data.
-        </p>
+      {/*
+        INTENTIONALLY domain-level — no location selector.
+        Content strategy analyzes the full domain (keywords, pages, authority)
+        and produces one unified plan. Location-specific grids belong in Local Grid.
+        Do NOT add a LocationSelector to this page.
+      */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-2xl text-ash-100">Content Strategy</h1>
+          <p className="text-ash-500 mt-1 text-sm">
+            Keyword research + 12-week content plan — finds what to target, generates what to publish.
+          </p>
+        </div>
+        {domain && (
+          <div className="flex items-center gap-1.5 text-xs text-ash-500 bg-char-700 border border-char-600 px-3 py-1.5 rounded-btn shrink-0 mt-1">
+            <span>🌐</span>
+            <span>{domain}</span>
+          </div>
+        )}
       </div>
 
       {error && (
@@ -442,10 +456,12 @@ export default function ContentStrategyPage() {
       {(phase === 'config' || phase === 'generating') && (
         <div className="space-y-6">
           {siteAudit && (
-            <div className="flex items-center gap-2 text-xs text-ash-400 card px-4 py-2 w-fit">
-              <span className="w-2 h-2 rounded-full bg-success" />
-              Using site audit from {new Date((siteAudit as any).created_at).toLocaleDateString()}
-              {offPageAudit && <span className="ml-2 text-ash-500">+ off-page audit</span>}
+            <div className="flex items-center gap-3 text-xs text-ash-400 card px-4 py-2 w-fit">
+              <span className="w-2 h-2 rounded-full bg-success shrink-0" />
+              <span>Domain-wide strategy for <span className="text-ash-300">{domain}</span></span>
+              <span className="text-char-600">·</span>
+              <span>Site audit {new Date((siteAudit as any).created_at).toLocaleDateString()}</span>
+              {offPageAudit && <><span className="text-char-600">·</span><span>+ off-page audit</span></>}
             </div>
           )}
           <SimpleConfigForm
