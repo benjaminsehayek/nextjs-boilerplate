@@ -130,6 +130,73 @@ function buildPageUrlSet(audit: SiteAuditData): Set<string> {
   return new Set(items.map(p => p.url.toLowerCase()));
 }
 
+/**
+ * Generate synthetic keywords from the industry profile when the keyword pool
+ * is too thin to fill the 12-week calendar.
+ *
+ * Bottom-funnel: "[service] [city]" — feeds GBP posts + new service pages.
+ * Informational: "cost of [service]", "how to [service]" — feeds blog posts.
+ *
+ * Conservative default volumes (100 / 50) ensure real keywords always rank
+ * higher in ROI sorting, while synthetics fill any remaining calendar slots.
+ */
+function buildSyntheticKeywords(
+  services: Array<{ name: string; profit: number; close: number }>,
+  city: string,
+  existingKwSet: Set<string>,
+): { keywords: MarketKeywordItem[]; enrichedEntries: Array<[string, EnrichedKeyword]> } {
+  const keywords: MarketKeywordItem[] = [];
+  const enrichedEntries: Array<[string, EnrichedKeyword]> = [];
+  const seen = new Set(existingKwSet);
+
+  const localType: EnrichedKeyword['localType'] = city ? 'city_name' : 'near_me';
+  const locationSuffix = city ? ` ${city.toLowerCase()}` : ' near me';
+
+  // Bottom-funnel: service + location (up to 12 for full GBP post cadence)
+  for (const svc of services.slice(0, 12)) {
+    const kw = `${svc.name.toLowerCase()}${locationSuffix}`;
+    const kwLower = kw.toLowerCase();
+    if (!seen.has(kwLower)) {
+      keywords.push({
+        keyword_data: { keyword: kw, keyword_info: { search_volume: 100, cpc: 3 } },
+      });
+      enrichedEntries.push([kwLower, {
+        keyword: kw, volume: 100, avgVolume: 100, seasonalMultiplier: 1.0,
+        difficulty: null, competition: 'MEDIUM' as const, cpc: 3,
+        isExternal: false, currentRank: null, hasLocalPack: true,
+        funnel: 'bottom' as const, intent: 'transactional' as const, localType,
+      }]);
+      seen.add(kwLower);
+    }
+  }
+
+  // Informational: cost + how-to for top 6 services → blog post candidates
+  const INFO_PREFIXES: Array<[string, EnrichedKeyword['funnel'], EnrichedKeyword['intent']]> = [
+    ['cost of', 'top', 'informational'],
+    ['how to', 'top', 'informational'],
+  ];
+  for (const svc of services.slice(0, 6)) {
+    for (const [prefix, funnel, intent] of INFO_PREFIXES) {
+      const kw = `${prefix} ${svc.name.toLowerCase()}`;
+      const kwLower = kw.toLowerCase();
+      if (!seen.has(kwLower)) {
+        keywords.push({
+          keyword_data: { keyword: kw, keyword_info: { search_volume: 50, cpc: 1 } },
+        });
+        enrichedEntries.push([kwLower, {
+          keyword: kw, volume: 50, avgVolume: 50, seasonalMultiplier: 1.0,
+          difficulty: null, competition: 'LOW' as const, cpc: 1,
+          isExternal: false, currentRank: null, hasLocalPack: false,
+          funnel, intent, localType: 'none' as const,
+        }]);
+        seen.add(kwLower);
+      }
+    }
+  }
+
+  return { keywords, enrichedEntries };
+}
+
 // ─── GBP Posts ────────────────────────────────────────────────────────
 
 function buildGBPItems(
@@ -204,8 +271,6 @@ function buildBlogItems(
   cfg: SimpleStrategyConfig,
   count = 4,
   enrichedMap?: Map<string, EnrichedKeyword>,
-  /** Keywords already claimed by GBP posts or new service pages — blogs must not overlap */
-  claimedKeywords: string[] = [],
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
   const scored = keywords.map(item => {
     const kw = item.keyword_data.keyword;
@@ -224,18 +289,17 @@ function buildBlogItems(
   const isGap = (k: typeof scored[0]) =>
     k.currentRank === null || k.currentRank > 5;
 
-  // No blog should overlap with a GBP post or new service page topic — that would
-  // create multiple pages competing for the same searches (cannibalization).
-  const isNotClaimed = (kw: string) =>
-    !claimedKeywords.some(claimed => overlapsTopically(claimed, kw, 2));
-
+  // Blogs target informational intent — they don't compete with transactional
+  // service pages or GBP posts even when they cover the same service topic,
+  // because Google serves them on completely different SERPs.
+  // (e.g. "cost of drain cleaning" and "drain cleaning vancouver" never compete)
   const topPool = scored
-    .filter(k => (k.funnel === 'top' || k.enriched?.intent === 'informational') && isGap(k) && isNotClaimed(k.kw))
+    .filter(k => (k.funnel === 'top' || k.enriched?.intent === 'informational') && isGap(k))
     .sort((a, b) => b.vol - a.vol);
 
   // If informational gap pool is thin, pull in mid-funnel non-transactional gaps
   const midPool = scored
-    .filter(k => k.funnel === 'middle' && k.enriched?.intent !== 'transactional' && isGap(k) && isNotClaimed(k.kw))
+    .filter(k => k.funnel === 'middle' && k.enriched?.intent !== 'transactional' && isGap(k))
     .sort((a, b) => b.vol - a.vol);
 
   // Topically deduplicate within the blog pool itself — no two blogs on the same topic
@@ -669,23 +733,31 @@ export function buildUnifiedCalendar(
     keywords = dedupeKeywords(rawKeywords);
   }
 
+  // 1b. Pad thin keyword pools with industry-derived synthetics.
+  //     When the site audit + DataForSEO return fewer than 15 keywords (e.g. brand-new
+  //     site, first run, API failure), the calendar would be nearly empty. Synthetic
+  //     keywords from the industry profile guarantee a full 12-week plan:
+  //       - Bottom-funnel "[service] [city]" → GBP posts + new service pages
+  //       - Informational "cost of [service]" / "how to [service]" → blog posts
+  //     Conservative default volumes (100 / 50) ensure real keywords always rank higher.
+  const MIN_KEYWORD_POOL = 15;
+  if (keywords.length < MIN_KEYWORD_POOL && services) {
+    const city = siteAudit.crawl_data?.business?.city ?? '';
+    const existingKwSet = new Set(keywords.map(k => k.keyword_data.keyword.toLowerCase()));
+    const { keywords: synKws, enrichedEntries } = buildSyntheticKeywords(services, city, existingKwSet);
+    keywords = [...keywords, ...synKws];
+    if (enrichedEntries.length > 0) {
+      enrichedMap = new Map([...(enrichedMap ?? new Map()), ...enrichedEntries]);
+    }
+  }
+
   // 2. Page URL set for gap detection
   const pageUrls = buildPageUrlSet(siteAudit);
 
   // 3. Build each item pool
-  //    Order matters: GBP + service pages claim topics first; blogs fill remaining gaps.
   const gbpItems = buildGBPItems(keywords, cfg, 12, enrichedMap, services);
   const addItems = buildWebsiteAdditions(keywords, pageUrls, cfg, 8, enrichedMap, services);
-
-  // Claimed keywords: GBP posts + new service pages already cover these topics.
-  // Blogs must not overlap — otherwise you'd have a GBP post, a service page, AND a blog
-  // all targeting the same keyword, splitting ranking signals across three URLs.
-  const claimedKeywords = [
-    ...gbpItems.map(i => i.primaryKeyword),
-    ...addItems.map(i => i.primaryKeyword),
-  ].filter(Boolean);
-
-  const blogItems = buildBlogItems(keywords, cfg, 4, enrichedMap, claimedKeywords);
+  const blogItems = buildBlogItems(keywords, cfg, 4, enrichedMap);
   const fixItems = buildPageFixTasks(siteAudit, 8);
   const opItems = buildOffPageItems(offPageAudit, 10);
 
