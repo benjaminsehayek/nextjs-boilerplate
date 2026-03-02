@@ -524,6 +524,13 @@ CREATE TABLE IF NOT EXISTS public.content_strategies (
   estimated_monthly_traffic INTEGER DEFAULT 0,
   estimated_monthly_value DECIMAL(10, 2) DEFAULT 0,
 
+  -- Unified calendar (v2)
+  calendar_v2 JSONB DEFAULT '[]',           -- CalendarItemV2[]
+  source_audit_id UUID REFERENCES public.site_audits(id) ON DELETE SET NULL,
+  source_offpage_id UUID REFERENCES public.off_page_audits(id) ON DELETE SET NULL,
+  last_generated_at TIMESTAMP WITH TIME ZONE,
+  item_statuses JSONB DEFAULT '{}',         -- { [item_id]: 'done' | 'skipped' }
+
   -- Progress tracking
   completed_tasks TEXT[] DEFAULT '{}',
   current_task TEXT,

@@ -125,8 +125,39 @@ export interface ContentStrategy {
   cannibalization: unknown;
   total_opportunity: number | null;
   api_cost: number;
+  // v2 fields
+  calendar_v2: CalendarItemV2[] | null;
+  source_audit_id: string | null;
+  source_offpage_id: string | null;
+  last_generated_at: string | null;
+  item_statuses: Record<string, 'done' | 'skipped'> | null;
   created_at: string;
   updated_at: string;
+}
+
+export type CalendarItemType = 'gbp_post' | 'offpage_post' | 'website_change' | 'website_addition';
+
+export interface CalendarItemV2 {
+  id: string;
+  week: number;
+  type: CalendarItemType;
+  title: string;
+  primaryKeyword: string;
+  keywords: string[];
+  action: string;
+  rationale: string;
+  priority: 'high' | 'medium' | 'low';
+  roiValue: number;
+  status: 'scheduled' | 'done' | 'skipped';
+  generatedContent?: string;
+  targetUrl?: string;
+  targetPlatform?: string;
+}
+
+export interface SimpleStrategyConfig {
+  profitPerJob: number;
+  closeRate: number;
+  conversionRate: number;
 }
 
 export interface GridScan {
