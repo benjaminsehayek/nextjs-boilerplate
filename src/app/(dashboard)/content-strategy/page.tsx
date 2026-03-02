@@ -112,7 +112,7 @@ export default function ContentStrategyPage() {
       setItemStatuses(existing.item_statuses ?? {});
       setStoredEconomics((existing.economics as SimpleStrategyConfig) ?? null);
 
-      const newerAudit = !!(existing.source_audit_id && audit.id !== existing.source_audit_id);
+      const newerAudit = !!(existing.source_audit_id && audit?.id !== existing.source_audit_id);
       setHasNewerAudit(newerAudit);
 
       setPhase('complete');
