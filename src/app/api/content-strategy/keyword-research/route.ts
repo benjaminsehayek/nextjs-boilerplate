@@ -2,7 +2,6 @@ import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   buildSeedKeywords,
-  competitionTier,
   computeSeasonalMultiplier,
   formatLocationName,
   type EnrichedKeyword,
@@ -30,11 +29,41 @@ async function dfsPost<T = any>(endpoint: string, body: unknown[]): Promise<T> {
   return res.json();
 }
 
-/** Build the location param object for a DataForSEO task body */
+/** Build the location param for a DataForSEO task body */
 function dfsLocation(locationName: string | null): { location_name: string } | { location_code: number } {
   return locationName
     ? { location_name: locationName }
     : { location_code: 2840 }; // fallback: United States national
+}
+
+/**
+ * Map DataForSEO search_intent_info.main_intent to our intent/funnel types.
+ * DFS values: "informational" | "navigational" | "commercial" | "transactional"
+ */
+function mapDfsIntent(dfsIntent: string | null | undefined): {
+  intent: EnrichedKeyword['intent'];
+  funnel: EnrichedKeyword['funnel'];
+} | null {
+  switch (dfsIntent) {
+    case 'transactional': return { intent: 'transactional', funnel: 'bottom' };
+    case 'commercial':    return { intent: 'commercial',    funnel: 'middle' };
+    case 'informational': return { intent: 'informational', funnel: 'top'    };
+    case 'navigational':  return { intent: 'branded',       funnel: 'middle' };
+    default: return null;
+  }
+}
+
+/**
+ * Map DFS competition_level string to our competition type.
+ * DFS returns "LOW" | "MEDIUM" | "HIGH" (no VERY_HIGH from string API).
+ */
+function mapDfsCompetition(level: string | null | undefined): EnrichedKeyword['competition'] {
+  switch (level?.toUpperCase()) {
+    case 'LOW':    return 'LOW';
+    case 'MEDIUM': return 'MEDIUM';
+    case 'HIGH':   return 'HIGH';
+    default:       return null;
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -60,7 +89,7 @@ export async function POST(request: NextRequest) {
   const locations = body.locations?.length ? body.locations : city ? [city] : [];
   const siteAuditKeywords: SiteAuditKeyword[] = body.siteAuditKeywords ?? [];
 
-  // City-specific location for DataForSEO — far more accurate than national averages
+  // City-specific location — formatLocationName expands "WA" → "Washington"
   const locationName = formatLocationName(city, state);
   const loc = dfsLocation(locationName);
 
@@ -70,15 +99,30 @@ export async function POST(request: NextRequest) {
   // ── Step 1: Seed keywords ──────────────────────────────────────────
   const seeds = buildSeedKeywords(industry, locations);
 
-  // ── Step 2: External keyword discovery (city-specific) ────────────
-  // monthly_searches is included in the related_keywords response — parsed below
-  const externalKeywords: Array<{
+  // ── Step 2: External keyword discovery ────────────────────────────
+  // depth: 2 returns up to 72 related keywords per seed (depth: 1 only returns 8).
+  //
+  // The related_keywords response already includes:
+  //   keyword_data.keyword_properties.keyword_difficulty  → KD score
+  //   keyword_data.keyword_info.competition_level         → "LOW"|"MEDIUM"|"HIGH"
+  //   search_intent_info.main_intent                      → search intent
+  // We extract all three here to avoid redundant API calls in step 4.
+
+  interface ExternalKeyword {
     keyword: string;
     volume: number;
     cpc: number | null;
-    competition: number | null;
+    competitionLevel: EnrichedKeyword['competition'];
+    difficulty: number | null;     // KD from keyword_properties.keyword_difficulty
+    dfsIntent: string | null;      // from search_intent_info.main_intent
     monthlySearches: Array<{ year: number; month: number; search_volume: number }>;
-  }> = [];
+  }
+
+  const externalKeywords: ExternalKeyword[] = [];
+
+  // Pre-populate KD map from related_keywords response — avoids a separate
+  // bulk_keyword_difficulty call for these keywords.
+  const kwDiffMap = new Map<string, number>();
 
   if (hasDfsCredentials && seeds.length > 0) {
     try {
@@ -86,8 +130,8 @@ export async function POST(request: NextRequest) {
         keyword: seed,
         language_code: 'en',
         ...loc,
-        depth: 1,
-        limit: 35,
+        depth: 2,      // depth 2 = up to 72 related keywords (depth 1 = only 8)
+        limit: 40,     // per-seed cap — 3 seeds × 40 = up to 120 before dedup
         filters: [['keyword_data.keyword_info.search_volume', '>', 10]],
       }));
 
@@ -98,11 +142,21 @@ export async function POST(request: NextRequest) {
           for (const item of result?.items ?? []) {
             const kd = item?.keyword_data;
             if (!kd?.keyword) continue;
+
+            const kw = kd.keyword as string;
+            const kwLower = kw.toLowerCase();
+
+            // KD is already in this response — extract it to skip the bulk call later
+            const kDiff = kd.keyword_properties?.keyword_difficulty ?? null;
+            if (kDiff != null) kwDiffMap.set(kwLower, kDiff);
+
             externalKeywords.push({
-              keyword: kd.keyword,
+              keyword: kw,
               volume: kd.keyword_info?.search_volume ?? 0,
               cpc: kd.keyword_info?.cpc ?? null,
-              competition: kd.keyword_info?.competition ?? null,
+              competitionLevel: mapDfsCompetition(kd.keyword_info?.competition_level),
+              difficulty: kDiff,
+              dfsIntent: item?.search_intent_info?.main_intent ?? null,
               monthlySearches: kd.keyword_info?.monthly_searches ?? [],
             });
           }
@@ -114,16 +168,19 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Step 3: Merge external + internal, deduplicate ─────────────────
-  // Internal keywords (from site audit) take priority — they have rank data.
-  const allKeywords = new Map<string, {
+  // Internal site audit keywords take priority — they have actual rank data.
+  interface MergedKeyword {
     keyword: string;
     volume: number;
     cpc: number | null;
-    competition: number | null;
+    competitionLevel: EnrichedKeyword['competition'];
     isExternal: boolean;
     currentRank: number | null;
+    dfsIntent: string | null;      // present for external keywords, null for site audit ones
     monthlySearches: Array<{ year: number; month: number; search_volume: number }>;
-  }>();
+  }
+
+  const allKeywords = new Map<string, MergedKeyword>();
 
   for (const ik of siteAuditKeywords) {
     if (!ik.keyword || ik.volume <= 0) continue;
@@ -131,10 +188,11 @@ export async function POST(request: NextRequest) {
       keyword: ik.keyword,
       volume: ik.volume,
       cpc: ik.cpc,
-      competition: null,
+      competitionLevel: null,
       isExternal: false,
       currentRank: ik.currentRank,
-      monthlySearches: [], // filled in step 4
+      dfsIntent: null,  // no DFS intent for internal keywords — Claude classifies these
+      monthlySearches: [],
     });
   }
 
@@ -145,15 +203,15 @@ export async function POST(request: NextRequest) {
         keyword: ek.keyword,
         volume: ek.volume,
         cpc: ek.cpc,
-        competition: ek.competition,
+        competitionLevel: ek.competitionLevel,
         isExternal: true,
         currentRank: null,
+        dfsIntent: ek.dfsIntent,
         monthlySearches: ek.monthlySearches,
       });
     }
   }
 
-  // Sort by volume, cap at 100 keywords
   const sortedKeywords = Array.from(allKeywords.values())
     .sort((a, b) => b.volume - a.volume)
     .slice(0, 100);
@@ -162,69 +220,102 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ keywords: [] });
   }
 
-  // ── Step 4: Parallel — city KD + city volume/seasonality ──────────
-  // Both calls use city location so results are local, not national.
-  const kwDiffMap = new Map<string, number>();
-  // volume map: city-specific monthly average + monthly history
+  // ── Step 4: Parallel — KD for site audit keywords + city volume/seasonality ──
+  // KD for external keywords was already extracted from related_keywords (step 2).
+  // We only call bulk_keyword_difficulty for internal keywords without KD.
+  //
+  // CORRECT endpoint for search volume: keywords_data/google_ads/search_volume/live
+  // Response structure for this endpoint: tasks[].result[] is FLAT — no items sub-array.
+  // Competition field is a STRING "HIGH"|"MEDIUM"|"LOW" (not float 0-1).
+
   const kwVolumeMap = new Map<string, {
     volume: number;
+    competition: EnrichedKeyword['competition'];
     monthlySearches: Array<{ year: number; month: number; search_volume: number }>;
   }>();
 
   if (hasDfsCredentials) {
     const kwNames = sortedKeywords.map(k => k.keyword);
+    const kwNeedsKd = kwNames.filter(kw => !kwDiffMap.has(kw.toLowerCase()));
 
     await Promise.allSettled([
-      // 4a: Keyword difficulty (city-specific — local KD is lower than national)
-      dfsPost('dataforseo_labs/google/bulk_keyword_difficulty/live', [{
-        keywords: kwNames,
-        language_code: 'en',
-        ...loc,
-      }]).then((kdRes: any) => {
-        for (const task of kdRes?.tasks ?? []) {
-          for (const item of task?.result ?? []) {
-            if (item?.keyword && item.keyword_difficulty != null) {
-              kwDiffMap.set(item.keyword.toLowerCase(), item.keyword_difficulty);
+      // 4a: KD only for site audit keywords not covered by related_keywords
+      // bulk_keyword_difficulty response: tasks[].result[].items[] (3 nesting levels)
+      ...(kwNeedsKd.length > 0 ? [
+        dfsPost('dataforseo_labs/google/bulk_keyword_difficulty/live', [{
+          keywords: kwNeedsKd,
+          language_code: 'en',
+          ...loc,
+        }]).then((kdRes: any) => {
+          for (const task of kdRes?.tasks ?? []) {
+            for (const result of task?.result ?? []) {          // result level
+              for (const item of result?.items ?? []) {         // items level
+                if (item?.keyword && item.keyword_difficulty != null) {
+                  kwDiffMap.set(item.keyword.toLowerCase(), item.keyword_difficulty);
+                }
+              }
             }
           }
-        }
-      }).catch((e: unknown) => {
-        console.warn('[keyword-research] bulk_keyword_difficulty failed:', e);
-      }),
+        }).catch((e: unknown) => {
+          console.warn('[keyword-research] bulk_keyword_difficulty failed:', e);
+        }),
+      ] : []),
 
-      // 4b: City-specific monthly volume + seasonality history
-      // Replaces national averages from site audit with city-level data.
-      dfsPost('keywords_data/google/search_volume/live', [{
+      // 4b: City-specific monthly volume + seasonality + competition
+      // IMPORTANT: result[] is FLAT for this endpoint — iterate task.result[] directly,
+      // NOT task.result[0].items[] like the Labs endpoints.
+      dfsPost('keywords_data/google_ads/search_volume/live', [{
         keywords: kwNames,
         language_code: 'en',
         ...loc,
       }]).then((volRes: any) => {
         for (const task of volRes?.tasks ?? []) {
-          for (const item of task?.result ?? []) {
+          for (const item of task?.result ?? []) {  // flat — each item is a keyword result
             if (!item?.keyword) continue;
             kwVolumeMap.set(item.keyword.toLowerCase(), {
               volume: item.search_volume ?? 0,
+              competition: mapDfsCompetition(item.competition), // STRING "HIGH"|"MEDIUM"|"LOW"
               monthlySearches: item.monthly_searches ?? [],
             });
           }
         }
       }).catch((e: unknown) => {
-        console.warn('[keyword-research] search_volume/live failed — using audit volumes:', e);
+        console.warn('[keyword-research] google_ads/search_volume/live failed — using related_keywords volumes:', e);
       }),
     ]);
   }
 
-  // ── Step 5: Claude batch intent + funnel classification ───────────
+  // ── Step 5: Classification ─────────────────────────────────────────
+  // External keywords from related_keywords already have search_intent_info.main_intent.
+  // Pre-populate classificationMap from DFS data — Claude only fills the gap for
+  // internal site audit keywords (which have no DFS metadata).
   const classificationMap = new Map<string, {
     funnel: EnrichedKeyword['funnel'];
     intent: EnrichedKeyword['intent'];
     localType: EnrichedKeyword['localType'];
   }>();
 
-  if (hasAnthropicKey) {
+  const cityLower = city.toLowerCase();
+
+  for (const k of sortedKeywords) {
+    if (!k.dfsIntent) continue;
+    const mapped = mapDfsIntent(k.dfsIntent);
+    if (!mapped) continue;
+    const key = k.keyword.toLowerCase();
+    const localType: EnrichedKeyword['localType'] =
+      key.includes('near me') || key.includes('nearby') ? 'near_me'
+      : (cityLower && key.includes(cityLower)) ? 'city_name'
+      : 'none';
+    classificationMap.set(key, { ...mapped, localType });
+  }
+
+  // Claude classifies only site audit keywords that didn't get DFS intent
+  const needsClassification = sortedKeywords.filter(k => !classificationMap.has(k.keyword.toLowerCase()));
+
+  if (hasAnthropicKey && needsClassification.length > 0) {
     try {
       const cityLabel = city || locations[0] || 'your area';
-      const kwList = sortedKeywords.map(k => k.keyword).join('\n');
+      const kwList = needsClassification.map(k => k.keyword).join('\n');
 
       const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -235,15 +326,15 @@ export async function POST(request: NextRequest) {
         },
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
-          max_tokens: 4096,
-          system: `You are an SEO analyst classifying search keywords for a ${industry || 'local service'} business in ${cityLabel}. Return ONLY a valid JSON array — no markdown fences, no explanation, no extra text.`,
+          max_tokens: 2048,
+          system: `You are an SEO analyst classifying search keywords for a ${industry || 'local service'} business in ${cityLabel}. Return ONLY a valid JSON array — no markdown fences, no explanation.`,
           messages: [{
             role: 'user',
-            content: `Classify each keyword below. Return a JSON array where every element has exactly these fields:
-- "keyword": the exact keyword string (copy verbatim)
-- "funnel": "bottom" (emergency/near-me/ready-to-hire) | "middle" (comparing/evaluating options) | "top" (researching/how-to/cost guides)
-- "intent": "transactional" (ready to purchase now) | "commercial" (comparing before buying) | "informational" (learning/researching) | "branded" (business/brand name searches)
-- "localType": "near_me" (contains "near me" or "nearby") | "city_name" (contains a city, neighborhood, or location) | "none" (generic, no local signal)
+            content: `Classify each keyword. Return a JSON array where every element has:
+- "keyword": exact keyword string (copy verbatim)
+- "funnel": "bottom" (emergency/near-me/ready-to-hire) | "middle" (comparing options) | "top" (how-to/cost/research)
+- "intent": "transactional" | "commercial" | "informational" | "branded"
+- "localType": "near_me" | "city_name" | "none"
 
 Keywords:
 ${kwList}`,
@@ -257,10 +348,7 @@ ${kwList}`,
         const jsonMatch = text.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
           const classified = JSON.parse(jsonMatch[0]) as Array<{
-            keyword: string;
-            funnel: string;
-            intent: string;
-            localType: string;
+            keyword: string; funnel: string; intent: string; localType: string;
           }>;
           for (const c of classified) {
             if (!c.keyword) continue;
@@ -278,25 +366,25 @@ ${kwList}`,
   }
 
   // ── Step 6: Assemble EnrichedKeyword[] ────────────────────────────
-  const cityLower = city.toLowerCase();
-
-  const result: EnrichedKeyword[] = sortedKeywords.map(k => {
+  const enriched: EnrichedKeyword[] = sortedKeywords.map(k => {
     const key = k.keyword.toLowerCase();
     const cls = classificationMap.get(key);
     const difficulty = kwDiffMap.get(key) ?? null;
 
-    // Prefer city-specific volume from step 4b; fall back to merged volume from step 3
+    // City-specific volume from google_ads/search_volume (step 4b) is most accurate.
+    // Fall back to national volume from related_keywords (step 2) if city call failed.
     const cityVolumeData = kwVolumeMap.get(key);
-    const avgVolume = cityVolumeData?.volume ?? k.volume;
+    const avgVolume = (cityVolumeData && cityVolumeData.volume > 0) ? cityVolumeData.volume : k.volume;
 
-    // Seasonality: use monthly history from city volume call, or from related_keywords
     const monthlySearches = cityVolumeData?.monthlySearches?.length
       ? cityVolumeData.monthlySearches
       : k.monthlySearches;
     const seasonalMultiplier = computeSeasonalMultiplier(monthlySearches);
-
-    // Current-month volume = annual average × seasonal adjustment
     const volume = Math.max(1, Math.round(avgVolume * seasonalMultiplier));
+
+    // Competition priority: city search_volume string → related_keywords string → null
+    const competition: EnrichedKeyword['competition'] =
+      cityVolumeData?.competition ?? k.competitionLevel ?? null;
 
     const localType: EnrichedKeyword['localType'] = cls?.localType ?? (
       key.includes('near me') || key.includes('nearby') ? 'near_me'
@@ -312,10 +400,6 @@ ${kwList}`,
 
     const intent: EnrichedKeyword['intent'] = cls?.intent ?? 'commercial';
 
-    // Local pack appears for "near me" queries (nearly always) and for
-    // bottom-funnel / transactional city-name queries (service + city).
-    // It does NOT reliably appear for comparative ("best X in Y"), cost,
-    // informational, or how-to queries — those get standard blue-link SERPs.
     const hasLocalPack =
       localType === 'near_me' ||
       (localType === 'city_name' &&
@@ -333,9 +417,7 @@ ${kwList}`,
       avgVolume,
       seasonalMultiplier,
       difficulty,
-      competition: (cityVolumeData ? null : k.competition) != null
-        ? competitionTier(k.competition)
-        : null,
+      competition,
       cpc: k.cpc,
       isExternal: k.isExternal,
       currentRank: k.currentRank,
@@ -346,8 +428,7 @@ ${kwList}`,
     };
   });
 
-  // Re-sort by seasonally-adjusted city volume
-  result.sort((a, b) => b.volume - a.volume);
+  enriched.sort((a, b) => b.volume - a.volume);
 
-  return NextResponse.json({ keywords: result });
+  return NextResponse.json({ keywords: enriched });
 }

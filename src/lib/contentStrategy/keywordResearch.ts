@@ -87,14 +87,36 @@ export function computeSeasonalMultiplier(
   return Math.min(3.0, Math.max(0.25, current.search_volume / avgVolume));
 }
 
+/** US state abbreviation → full name (DataForSEO requires full names in location_name) */
+const US_STATE_NAMES: Record<string, string> = {
+  AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California',
+  CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia',
+  HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa',
+  KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland',
+  MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri',
+  MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey',
+  NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio',
+  OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina',
+  SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont',
+  VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
+  DC: 'District of Columbia',
+};
+
 /**
  * Format city + state into DataForSEO location_name string.
+ * DataForSEO requires the full state name (e.g. "Washington" not "WA").
  * Returns null when city is empty (callers fall back to location_code 2840).
+ * Example output: "Vancouver,Washington,United States"
  */
 export function formatLocationName(city: string, state?: string): string | null {
   const c = city.trim();
   if (!c) return null;
-  const parts = [c, state?.trim(), 'United States'].filter(Boolean);
+  const stateRaw = state?.trim() ?? '';
+  // Expand 2-letter abbreviation to full name; pass longer strings through unchanged
+  const stateFull = stateRaw.length === 2
+    ? (US_STATE_NAMES[stateRaw.toUpperCase()] ?? stateRaw)
+    : stateRaw;
+  const parts = [c, stateFull, 'United States'].filter(Boolean);
   return parts.join(',');
 }
 
