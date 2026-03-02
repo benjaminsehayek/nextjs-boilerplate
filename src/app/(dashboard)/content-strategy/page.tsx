@@ -50,7 +50,8 @@ export default function ContentStrategyPage() {
         .eq('status', 'complete')
         .order('created_at', { ascending: false })
         .limit(1)
-        .maybeSingle(),
+        .maybeSingle()
+        .then((r: any) => r.error ? { data: null, error: r.error } : r),
       (supabase as any)
         .from('content_strategies')
         .select('id, calendar_v2, item_statuses, source_audit_id, last_generated_at, status, domain')

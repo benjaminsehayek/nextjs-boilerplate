@@ -600,6 +600,16 @@ CREATE TABLE IF NOT EXISTS public.off_page_audits (
   referring_domains JSONB DEFAULT '[]', -- [{ domain, backlinks, domainRank, pageRank, firstSeen, lastSeen, toxicityScore, toxicityLevel, follow, nofollow }]
   anchor_data JSONB DEFAULT '[]', -- [{ text, count, percentage, type, follow, nofollow }]
   competitor_data JSONB DEFAULT '[]', -- [{ domain, backlinks, referringDomains, domainRating, toxicScore }]
+  top_backlinks JSONB DEFAULT '[]',
+  link_velocity JSONB DEFAULT '{}',
+  link_gaps JSONB DEFAULT '[]',        -- [{ domain, backlinks, domainRank }]
+  citations JSONB DEFAULT '[]',        -- [{ source, found, url, domain }]
+  social_presence JSONB DEFAULT '[]',
+  toxic_links JSONB DEFAULT '[]',
+  category_scores JSONB DEFAULT '{}',
+  recommendations JSONB DEFAULT '[]',
+  location_data JSONB DEFAULT '[]',    -- per-location GBP + reviews + NAP
+  discovered_locations JSONB DEFAULT '[]',
 
   -- Progress tracking
   completed_tasks TEXT[] DEFAULT '{}',
