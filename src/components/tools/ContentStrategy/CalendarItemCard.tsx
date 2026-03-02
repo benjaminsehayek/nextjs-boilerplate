@@ -10,6 +10,7 @@ interface CalendarItemCardProps {
   industry: string;
   city?: string;
   onStatusChange: (id: string, status: 'scheduled' | 'done' | 'skipped') => void;
+  onContentGenerated?: (id: string, content: string) => void;
 }
 
 const TYPE_META: Record<CalendarItemType, { label: string; color: string; bg: string; icon: string }> = {
@@ -58,7 +59,7 @@ function buildPrompt(item: CalendarItemV2, businessName: string, domain: string,
 }
 
 export default function CalendarItemCard({
-  item, businessName, domain, industry, city = '', onStatusChange,
+  item, businessName, domain, industry, city = '', onStatusChange, onContentGenerated,
 }: CalendarItemCardProps) {
   const meta = TYPE_META[item.type];
   const [expanded, setExpanded] = useState(false);
@@ -79,8 +80,10 @@ export default function CalendarItemCard({
       });
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const data = await res.json();
-      setContent(data.text || data.content?.[0]?.text || '');
+      const generated = data.text || data.content?.[0]?.text || '';
+      setContent(generated);
       setExpanded(true);
+      onContentGenerated?.(item.id, generated);
     } catch (err: any) {
       setGenError(err.message || 'Generation failed');
     } finally {

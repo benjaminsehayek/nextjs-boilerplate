@@ -289,8 +289,9 @@ export const CTR_BY_POSITION: Record<number, number> = {
   1: 0.284, 2: 0.155, 3: 0.11, 4: 0.08, 5: 0.062,
   6: 0.048, 7: 0.038, 8: 0.031, 9: 0.026, 10: 0.022,
   11: 0.015, 12: 0.012, 13: 0.010, 14: 0.008, 15: 0.006,
+  16: 0.005, 17: 0.004, 18: 0.003, 19: 0.003, 20: 0.002,
 };
-export const DEFAULT_CTR = 0.11; // position 3
+export const DEFAULT_CTR = 0.022; // position 10 — conservative fallback
 
 // Page type patterns for classifying crawled pages
 export const PAGE_TYPE_PATTERNS = {
@@ -359,13 +360,37 @@ export const LOCAL_PACK_CTR_MULT = {
   absent:  1.00,
 } as const;
 
-// Keyword difficulty → probability of ranking (risk-adjusts final ROI)
+/**
+ * Expected SERP position for a new page, by keyword difficulty.
+ * Used to calculate realistic CTR for unranked keywords — avoids the
+ * optimistic position-3 default that inflated ROI by 3–5×.
+ *
+ * Based on typical ranking distributions for new local service pages:
+ * KD 0–29 → usually reach top 5 within weeks
+ * KD 30–44 → settle in 6–10 range after ~3 months
+ * KD 45–59 → typically land 10–15 after 6+ months
+ * KD 60–74 → page-2 territory (16+) if ranking at all
+ * KD 75+   → page-2/3, rarely visible
+ */
+export const EXPECTED_POSITION_BY_KD: Record<string, number> = {
+  'very-easy': 5,
+  'easy':      8,
+  'medium':    12,
+  'hard':      16,
+  'very-hard': 20,
+};
+
+/**
+ * Probability of ranking at the expected position above.
+ * This is pure probability (will this page ever rank there?) — it no longer
+ * compensates for position-3 optimism since we now use expected position directly.
+ */
 export const DIFFICULTY_PROB_MULT = {
-  'very-easy': 1.00,  // KD 0–29: high probability, weeks to rank
-  'easy':      0.80,  // KD 30–44: ~3 months
-  'medium':    0.55,  // KD 45–59: ~6 months
-  'hard':      0.35,  // KD 60–74: ~12 months
-  'very-hard': 0.15,  // KD 75–100: high risk, 12+ months
+  'very-easy': 0.90,  // KD 0–29: very likely to rank in top 5
+  'easy':      0.75,  // KD 30–44: likely to rank top 10
+  'medium':    0.55,  // KD 45–59: uncertain, depends on domain authority
+  'hard':      0.30,  // KD 60–74: unlikely — strong incumbents
+  'very-hard': 0.10,  // KD 75–100: very low chance of visible ranking
 } as const;
 
 /** Map a numeric keyword difficulty score to a probability bucket */

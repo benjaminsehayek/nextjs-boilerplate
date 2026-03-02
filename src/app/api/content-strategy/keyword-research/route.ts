@@ -312,6 +312,21 @@ ${kwList}`,
 
     const intent: EnrichedKeyword['intent'] = cls?.intent ?? 'commercial';
 
+    // Local pack appears for "near me" queries (nearly always) and for
+    // bottom-funnel / transactional city-name queries (service + city).
+    // It does NOT reliably appear for comparative ("best X in Y"), cost,
+    // informational, or how-to queries — those get standard blue-link SERPs.
+    const hasLocalPack =
+      localType === 'near_me' ||
+      (localType === 'city_name' &&
+        (funnel === 'bottom' || intent === 'transactional') &&
+        !key.includes('best ') &&
+        !key.includes('cost') &&
+        !key.includes('price') &&
+        !key.includes('how ') &&
+        !key.includes('what ') &&
+        !key.includes('vs '));
+
     return {
       keyword: k.keyword,
       volume,
@@ -324,7 +339,7 @@ ${kwList}`,
       cpc: k.cpc,
       isExternal: k.isExternal,
       currentRank: k.currentRank,
-      hasLocalPack: localType === 'near_me' || localType === 'city_name',
+      hasLocalPack,
       funnel,
       intent,
       localType,

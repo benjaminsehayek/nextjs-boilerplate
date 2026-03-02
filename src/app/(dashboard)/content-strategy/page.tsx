@@ -237,6 +237,20 @@ export default function ContentStrategyPage() {
     }
   }
 
+  // Save AI-generated content back to DB so it persists across sessions
+  async function handleContentGenerated(id: string, content: string) {
+    const updated = calendarItems.map(item =>
+      item.id === id ? { ...item, generatedContent: content } : item
+    );
+    setCalendarItems(updated);
+    if (strategy?.id) {
+      await (supabase as any)
+        .from('content_strategies')
+        .update({ calendar_v2: updated })
+        .eq('id', strategy.id);
+    }
+  }
+
   // If economics are already stored, refresh inline — no config form needed
   function handleRefresh() {
     if (storedEconomics) {
@@ -328,6 +342,15 @@ export default function ContentStrategyPage() {
               {offPageAudit && <span className="ml-2 text-ash-500">+ off-page audit</span>}
             </div>
           )}
+          {!city && (
+            <div className="card p-3 border-warning/40 bg-warning/5 flex items-center gap-3 text-xs">
+              <span className="text-warning">⚠</span>
+              <span className="text-ash-400">
+                Your business city is not set — keyword volumes will be national averages instead of local.{' '}
+                <a href="/settings" className="text-warning underline">Update your profile</a> for accurate local data.
+              </span>
+            </div>
+          )}
           <SimpleConfigForm
             domain={domain}
             industry={industry}
@@ -354,6 +377,7 @@ export default function ContentStrategyPage() {
           hasNewerAudit={hasNewerAudit}
           onRefresh={handleRefresh}
           onStatusChange={handleStatusChange}
+          onContentGenerated={handleContentGenerated}
           refreshing={refreshing}
         />
       )}

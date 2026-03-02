@@ -14,6 +14,7 @@ interface UnifiedCalendarProps {
   hasNewerAudit: boolean;
   onRefresh: () => void;
   onStatusChange: (id: string, status: 'scheduled' | 'done' | 'skipped') => void;
+  onContentGenerated?: (id: string, content: string) => void;
   refreshing?: boolean;
 }
 
@@ -96,7 +97,7 @@ function chipTitle(item: CalendarItemV2): string {
 
 export default function UnifiedCalendar({
   items, businessName, domain, industry, city,
-  lastGeneratedAt, hasNewerAudit, onRefresh, onStatusChange, refreshing,
+  lastGeneratedAt, hasNewerAudit, onRefresh, onStatusChange, onContentGenerated, refreshing,
 }: UnifiedCalendarProps) {
   const [filter, setFilter] = useState<FilterType>('all');
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -325,6 +326,7 @@ export default function UnifiedCalendar({
                 industry={industry}
                 city={city}
                 onStatusChange={onStatusChange}
+                onContentGenerated={onContentGenerated}
               />
             </div>
           </div>

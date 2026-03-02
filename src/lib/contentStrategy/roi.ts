@@ -4,7 +4,7 @@ import type { FunnelStage } from './funnel';
 import {
   FUNNEL_MULT, CTR_BY_POSITION, DEFAULT_CTR,
   INTENT_CONV_MULT, LOCAL_CONV_MULT, COMPETITION_CTR_MULT,
-  LOCAL_PACK_CTR_MULT, DIFFICULTY_PROB_MULT, kdBucket,
+  LOCAL_PACK_CTR_MULT, DIFFICULTY_PROB_MULT, EXPECTED_POSITION_BY_KD, kdBucket,
 } from './constants';
 import type { SimpleStrategyConfig } from '@/types';
 
@@ -54,29 +54,26 @@ export function calculateKeywordROI(
 }
 
 /**
- * Multi-factor keyword ROI with accurate, non-inflated multiplier model.
+ * Multi-factor keyword ROI — accurate model with realistic position assumptions.
  *
- * CTR adjustments (factors that steal organic clicks before reaching the site):
+ * Position:
+ *   • Currently ranking → use actual rank (best case: real measured data)
+ *   • Not ranking (external keyword) → use EXPECTED_POSITION_BY_KD[difficulty]
+ *     e.g. KD 25 → position 5, KD 65 → position 16
+ *   This prevents the position-3 default from inflating unranked keyword ROI 3–5×.
+ *
+ * CTR adjustments (factors that reduce organic clicks before reaching site):
  *   • Competition level  → more ads = lower organic CTR
- *   • Local pack present → Maps box absorbs ~25% of remaining organic clicks
+ *   • Local pack present → Maps box absorbs ~45% of clicks for local queries
  *
  * ConvRate adjustment (visitor purchase-readiness):
- *   • Intent type  × Local modifier ONLY — these are two independent dimensions
- *     (purchase urgency vs geographic specificity) that don't overlap.
- *   NOTE: FUNNEL_MULT is intentionally omitted here. Funnel stage is a coarser
- *   proxy for intent + local that would triple-count the same signal. Stacking
- *   all three pushes convRates to 20%+ (unrealistic). With intent × local alone:
- *     best case  (transactional + near_me) = 1.5 × 1.5 = 2.25× → ~6.75% conv
- *     worst case (informational + none)    = 0.7 × 1.0 = 0.70× → ~2.10% conv
+ *   • Intent type × Local modifier ONLY — funnel stage is a coarse proxy for
+ *     these two dimensions and would triple-count the same signal.
+ *     Max: transactional × near_me = 1.5 × 1.5 = 2.25× → ~6.75% conv (realistic cap)
  *
  * Risk adjustment:
- *   • Keyword difficulty → probability of ranking (expected value, not a conv adjustment)
- *
- * Formula:
- *   ctr    = baseCTR[rank] × COMPETITION_CTR_MULT × LOCAL_PACK_CTR_MULT
- *   conv   = baseConv × INTENT_CONV_MULT × LOCAL_CONV_MULT
- *   roi    = volume × ctr × conv × (closeRate/100) × profitPerJob
- *          × DIFFICULTY_PROB_MULT[kdBucket(difficulty)]
+ *   • Keyword difficulty → probability of ranking at the expected position at all.
+ *     Combined with realistic expected position, this properly discounts hard keywords.
  */
 export function calculateKeywordROIV2(
   volume: number,
@@ -91,7 +88,14 @@ export function calculateKeywordROIV2(
     currentRank: number | null;
   }
 ): ROIResult {
-  const position = Math.max(1, Math.min(15, factors.currentRank ?? 3));
+  // For ranked keywords: use actual position (bounded to positions 1–20 with data)
+  // For unranked keywords: use expected position based on keyword difficulty
+  // — avoids the old `currentRank ?? 3` default that inflated ROI by 3–5×
+  const bucket = kdBucket(factors.difficulty);
+  const position = factors.currentRank != null
+    ? Math.max(1, Math.min(20, factors.currentRank))
+    : (EXPECTED_POSITION_BY_KD[bucket] ?? 10);
+
   const baseCtr = CTR_BY_POSITION[position] ?? DEFAULT_CTR;
 
   // CTR adjustments (two independent factors that both reduce organic clicks)
@@ -111,8 +115,8 @@ export function calculateKeywordROIV2(
   const monthlyClosed = monthlyLeads * (cfg.closeRate / 100);
   const roiBase = monthlyClosed * cfg.profitPerJob;
 
-  // Risk-adjust by probability of ranking
-  const roi = roiBase * DIFFICULTY_PROB_MULT[kdBucket(factors.difficulty)];
+  // Risk-adjust by probability of ranking at the expected position
+  const roi = roiBase * DIFFICULTY_PROB_MULT[bucket];
 
   return {
     monthlyVisitors: Math.round(monthlyVisitors * 10) / 10,
@@ -122,7 +126,11 @@ export function calculateKeywordROIV2(
   };
 }
 
-/** Match a keyword to the closest service by name overlap */
+/**
+ * Match a keyword to the closest service by name word overlap.
+ * Requires at least 2 matching words (>2 chars) to prevent false positives
+ * from single generic words like "repair", "install", "service".
+ */
 export function matchService(
   keyword: string,
   services: Array<{ name: string; profit: number; close: number }>,
@@ -151,5 +159,7 @@ export function matchService(
     }
   }
 
-  return bestMatch;
+  // Require at least 2 matching words — single-word matches (e.g. "repair")
+  // are too generic and could incorrectly assign economics from the wrong service
+  return bestScore >= 2 ? bestMatch : null;
 }
