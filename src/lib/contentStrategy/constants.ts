@@ -351,9 +351,11 @@ export const COMPETITION_CTR_MULT = {
 } as const;
 
 // Local pack (Google Maps) presence → CTR multiplier
-// Maps box absorbs ~25% of organic clicks when present
+// BrightLocal (2023) + Moz data: local pack absorbs 44–56% of total clicks
+// for local-intent queries. Organic position 1 below the pack = ~13% CTR
+// vs ~28% on a SERP without a pack. Multiplier = 0.55 (not 0.75 as naively assumed).
 export const LOCAL_PACK_CTR_MULT = {
-  present: 0.75,
+  present: 0.55,
   absent:  1.00,
 } as const;
 

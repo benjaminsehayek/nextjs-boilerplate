@@ -162,6 +162,7 @@ export default function ContentStrategyPage() {
           body: JSON.stringify({
             industry: (business as any)?.industry ?? '',
             city: auditCity,
+            state: (business as any)?.state ?? '',
             locations: auditCity ? [auditCity] : [],
             siteAuditKeywords: marketKws,
             businessName: business?.name ?? '',
@@ -179,7 +180,7 @@ export default function ContentStrategyPage() {
       if (!opts?.silent) setGenerationStep('Building your calendar…');
 
       const { buildUnifiedCalendar } = await import('@/lib/contentStrategy/unifiedCalendar');
-      const items = buildUnifiedCalendar(auditToUse as any, offPageToUse, cfg, enrichedKeywords);
+      const items = buildUnifiedCalendar(auditToUse as any, offPageToUse, cfg, enrichedKeywords, (business as any)?.industry ?? '');
 
       // Carry over statuses for items that still exist — orphaned statuses are cleaned up
       const prevStatuses = opts?.prevStatuses ?? itemStatuses;

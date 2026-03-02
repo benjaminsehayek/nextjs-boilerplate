@@ -4,7 +4,16 @@ import { INDUSTRY_PROFILES } from './constants';
 
 export interface EnrichedKeyword {
   keyword: string;
+  /** City-specific monthly search volume, seasonally adjusted to current month */
   volume: number;
+  /** Raw annual-average volume before seasonal adjustment (for display) */
+  avgVolume: number;
+  /**
+   * Ratio of current month's volume to annual average.
+   * 1.4 = 40% above average (peak season), 0.6 = 40% below (off season).
+   * Applied to volume already — stored here for rationale display.
+   */
+  seasonalMultiplier: number;
   difficulty: number | null;       // KD 0-100
   competition: 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH' | null;
   cpc: number | null;
@@ -46,6 +55,47 @@ export function buildSeedKeywords(industry: string, locations: string[], limit =
   }
 
   return [...new Set(seeds)].slice(0, limit);
+}
+
+/**
+ * Compute seasonal multiplier from monthly search history.
+ * Returns the ratio of the most recent matching month to the annual average.
+ * Clamped to [0.25, 3.0] to prevent extreme outliers from distorting ROI.
+ */
+export function computeSeasonalMultiplier(
+  monthly: Array<{ year: number; month: number; search_volume: number }>
+): number {
+  if (!monthly || monthly.length < 3) return 1.0;
+
+  const currentMonth = new Date().getMonth() + 1; // 1–12
+  const currentYear = new Date().getFullYear();
+
+  // Sort descending so we find the most recent data point for the current month
+  const sorted = [...monthly].sort((a, b) =>
+    b.year !== a.year ? b.year - a.year : b.month - a.month
+  );
+
+  // Find the current month from this year, or last year's same month
+  const current =
+    sorted.find(m => m.month === currentMonth && m.year === currentYear) ??
+    sorted.find(m => m.month === currentMonth) ??
+    sorted[0]; // fallback: most recent data point
+
+  const avgVolume = monthly.reduce((s, m) => s + m.search_volume, 0) / monthly.length;
+  if (avgVolume === 0) return 1.0;
+
+  return Math.min(3.0, Math.max(0.25, current.search_volume / avgVolume));
+}
+
+/**
+ * Format city + state into DataForSEO location_name string.
+ * Returns null when city is empty (callers fall back to location_code 2840).
+ */
+export function formatLocationName(city: string, state?: string): string | null {
+  const c = city.trim();
+  if (!c) return null;
+  const parts = [c, state?.trim(), 'United States'].filter(Boolean);
+  return parts.join(',');
 }
 
 /** Convert DataForSEO competition score (0–1) to categorical tier */

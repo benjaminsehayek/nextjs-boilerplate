@@ -1,8 +1,9 @@
 // Unified 12-week content calendar builder
 // Reuses data from existing site_audits + off_page_audits — zero new DataForSEO calls
 
-import { calculateKeywordROI, calculateKeywordROIV2 } from './roi';
+import { calculateKeywordROI, calculateKeywordROIV2, matchService } from './roi';
 import { classifyFunnel } from './funnel';
+import { INDUSTRY_PROFILES } from './constants';
 import {
   detectCannibalizationConflicts,
   detectWrongPageRankings,
@@ -104,14 +105,18 @@ function buildGBPItems(
   cfg: SimpleStrategyConfig,
   count = 12,
   enrichedMap?: Map<string, EnrichedKeyword>,
+  services?: Array<{ name: string; profit: number; close: number }>,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
   const scored = keywords.map(item => {
     const kw = item.keyword_data.keyword;
     const vol = item.keyword_data.keyword_info?.search_volume ?? 0;
     const enriched = enrichedMap?.get(kw.toLowerCase());
     const funnel = enriched?.funnel ?? classifyFunnel(kw);
+    // Per-service economics — override cfg when a service match is found
+    const svc = services ? matchService(kw, services) : null;
+    const kwCfg = svc ? { ...cfg, profitPerJob: svc.profit, closeRate: svc.close } : cfg;
     const roi = enriched
-      ? calculateKeywordROIV2(vol, cfg, {
+      ? calculateKeywordROIV2(vol, kwCfg, {
           funnel: enriched.funnel,
           intent: enriched.intent,
           localType: enriched.localType,
@@ -120,7 +125,7 @@ function buildGBPItems(
           hasLocalPack: enriched.hasLocalPack,
           currentRank: enriched.currentRank,
         }).roi
-      : calculateKeywordROI(vol, funnel, cfg.conversionRate, cfg.profitPerJob, cfg.closeRate).roi;
+      : calculateKeywordROI(vol, funnel, kwCfg.conversionRate, kwCfg.profitPerJob, kwCfg.closeRate).roi;
     return { kw, vol, funnel, roi, enriched: enriched ?? null };
   });
 
@@ -211,6 +216,7 @@ function buildWebsiteAdditions(
   cfg: SimpleStrategyConfig,
   count = 8,
   enrichedMap?: Map<string, EnrichedKeyword>,
+  services?: Array<{ name: string; profit: number; close: number }>,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
   // Keywords where no site page is ranking in top 10
   const gaps = keywords
@@ -223,8 +229,11 @@ function buildWebsiteAdditions(
       const vol = item.keyword_data.keyword_info?.search_volume ?? 0;
       const enriched = enrichedMap?.get(kw.toLowerCase());
       const funnel = enriched?.funnel ?? classifyFunnel(kw);
+      // Per-service economics — override cfg when a service match is found
+      const svc = services ? matchService(kw, services) : null;
+      const kwCfg = svc ? { ...cfg, profitPerJob: svc.profit, closeRate: svc.close } : cfg;
       const roi = enriched
-        ? calculateKeywordROIV2(vol, cfg, {
+        ? calculateKeywordROIV2(vol, kwCfg, {
             funnel: enriched.funnel,
             intent: enriched.intent,
             localType: enriched.localType,
@@ -233,7 +242,7 @@ function buildWebsiteAdditions(
             hasLocalPack: enriched.hasLocalPack,
             currentRank: enriched.currentRank,
           }).roi
-        : calculateKeywordROI(vol, funnel, cfg.conversionRate, cfg.profitPerJob, cfg.closeRate).roi;
+        : calculateKeywordROI(vol, funnel, kwCfg.conversionRate, kwCfg.profitPerJob, kwCfg.closeRate).roi;
       return { kw, vol, funnel, roi, enriched: enriched ?? null };
     })
     .sort((a, b) => b.roi - a.roi)
@@ -532,7 +541,14 @@ export function buildUnifiedCalendar(
   offPageAudit: OffPageAuditData | null,
   cfg: SimpleStrategyConfig,
   enrichedKeywords?: EnrichedKeyword[],
+  industryKey?: string,
 ): CalendarItemV2[] {
+  // 0. Resolve per-service economics for this industry
+  const industryProfile = industryKey
+    ? INDUSTRY_PROFILES.find(p => p.key === industryKey || p.name.toLowerCase() === industryKey.toLowerCase())
+    : null;
+  const services = industryProfile?.services ?? undefined;
+
   // 1. Build keyword pool
   //    When enrichedKeywords provided: merge into MarketKeywordItem format + build lookup map
   //    When not provided: fall back to audit-only keywords (existing behaviour)
@@ -561,9 +577,9 @@ export function buildUnifiedCalendar(
   const pageUrls = buildPageUrlSet(siteAudit);
 
   // 3. Build each item pool
-  const gbpItems = buildGBPItems(keywords, cfg, 12, enrichedMap);
+  const gbpItems = buildGBPItems(keywords, cfg, 12, enrichedMap, services);
   const blogItems = buildBlogItems(keywords, cfg, 4, enrichedMap);
-  const addItems = buildWebsiteAdditions(keywords, pageUrls, cfg, 8, enrichedMap);
+  const addItems = buildWebsiteAdditions(keywords, pageUrls, cfg, 8, enrichedMap, services);
   const fixItems = buildPageFixTasks(siteAudit, 8);
   const opItems = buildOffPageItems(offPageAudit, 10);
 
