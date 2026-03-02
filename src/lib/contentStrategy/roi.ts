@@ -54,31 +54,35 @@ export function calculateKeywordROI(
 }
 
 /**
- * Multi-factor keyword ROI — extends the 2-axis model with five additional signals:
+ * Multi-factor keyword ROI with accurate, non-inflated multiplier model.
  *
- * CTR adjustments (factors that steal organic clicks):
- *   • Competition level  → fewer/more ads competing for the SERP
- *   • Local pack present → Maps box absorbs ~25% of organic clicks
+ * CTR adjustments (factors that steal organic clicks before reaching the site):
+ *   • Competition level  → more ads = lower organic CTR
+ *   • Local pack present → Maps box absorbs ~25% of remaining organic clicks
  *
- * ConvRate adjustments (factors that affect visitor quality):
- *   • Funnel stage       → bottom-funnel converts at 3× top-funnel rate
- *   • Intent type        → transactional visitors are purchase-ready
- *   • Local modifier     → "near me" signals immediate local urgency
+ * ConvRate adjustment (visitor purchase-readiness):
+ *   • Intent type  × Local modifier ONLY — these are two independent dimensions
+ *     (purchase urgency vs geographic specificity) that don't overlap.
+ *   NOTE: FUNNEL_MULT is intentionally omitted here. Funnel stage is a coarser
+ *   proxy for intent + local that would triple-count the same signal. Stacking
+ *   all three pushes convRates to 20%+ (unrealistic). With intent × local alone:
+ *     best case  (transactional + near_me) = 1.5 × 1.5 = 2.25× → ~6.75% conv
+ *     worst case (informational + none)    = 0.7 × 1.0 = 0.70× → ~2.10% conv
  *
  * Risk adjustment:
- *   • Keyword difficulty → probability of actually ranking (risk-adjusts ROI)
+ *   • Keyword difficulty → probability of ranking (expected value, not a conv adjustment)
  *
  * Formula:
- *   ctr            = baseCTR[rank] × COMPETITION_CTR_MULT × LOCAL_PACK_CTR_MULT
- *   convRate       = baseConv × FUNNEL_MULT × INTENT_CONV_MULT × LOCAL_CONV_MULT
- *   roi            = volume × ctr × convRate × (closeRate/100) × profitPerJob
- *                  × DIFFICULTY_PROB_MULT[kdBucket(difficulty)]
+ *   ctr    = baseCTR[rank] × COMPETITION_CTR_MULT × LOCAL_PACK_CTR_MULT
+ *   conv   = baseConv × INTENT_CONV_MULT × LOCAL_CONV_MULT
+ *   roi    = volume × ctr × conv × (closeRate/100) × profitPerJob
+ *          × DIFFICULTY_PROB_MULT[kdBucket(difficulty)]
  */
 export function calculateKeywordROIV2(
   volume: number,
   cfg: SimpleStrategyConfig,
   factors: {
-    funnel: FunnelStage;
+    funnel: FunnelStage;  // used for content categorisation, not the ROI formula
     intent: 'transactional' | 'commercial' | 'informational' | 'branded';
     localType: 'near_me' | 'city_name' | 'none';
     difficulty: number | null;
@@ -90,16 +94,16 @@ export function calculateKeywordROIV2(
   const position = Math.max(1, Math.min(15, factors.currentRank ?? 3));
   const baseCtr = CTR_BY_POSITION[position] ?? DEFAULT_CTR;
 
-  // CTR adjustments
+  // CTR adjustments (two independent factors that both reduce organic clicks)
   const ctr = baseCtr
     * COMPETITION_CTR_MULT[factors.competition ?? 'MEDIUM']
     * LOCAL_PACK_CTR_MULT[factors.hasLocalPack ? 'present' : 'absent'];
 
   const monthlyVisitors = volume * ctr;
 
-  // ConvRate adjustments
+  // ConvRate: intent × local only — no FUNNEL_MULT to avoid double-counting
+  // Max = 1.5 × 1.5 = 2.25× (transactional near-me), realistic cap ~6–7%
   const adjustedConvRate = cfg.conversionRate
-    * FUNNEL_MULT[factors.funnel]
     * INTENT_CONV_MULT[factors.intent]
     * LOCAL_CONV_MULT[factors.localType];
 
