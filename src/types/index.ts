@@ -135,7 +135,7 @@ export interface ContentStrategy {
   updated_at: string;
 }
 
-export type CalendarItemType = 'gbp_post' | 'offpage_post' | 'website_change' | 'website_addition';
+export type CalendarItemType = 'gbp_post' | 'blog_post' | 'offpage_post' | 'website_change' | 'website_addition';
 
 export interface CalendarItemV2 {
   id: string;

@@ -101,20 +101,20 @@ function buildGBPItems(
   cfg: SimpleStrategyConfig,
   count = 12,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
-  // Prefer bottom-funnel (near me, location + service) keywords
-  const scored = keywords
-    .map(item => {
-      const kw = item.keyword_data.keyword;
-      const vol = item.keyword_data.keyword_info?.search_volume ?? 0;
-      const funnel = classifyFunnel(kw);
-      const roi = calculateKeywordROI(vol, funnel, cfg.conversionRate, cfg.profitPerJob, cfg.closeRate);
-      return { item, kw, vol, funnel, roi: roi.roi };
-    })
-    .filter(k => k.funnel === 'bottom' || k.funnel === 'middle')
-    .sort((a, b) => b.roi - a.roi)
-    .slice(0, count);
+  const scored = keywords.map(item => {
+    const kw = item.keyword_data.keyword;
+    const vol = item.keyword_data.keyword_info?.search_volume ?? 0;
+    const funnel = classifyFunnel(kw);
+    const roi = calculateKeywordROI(vol, funnel, cfg.conversionRate, cfg.profitPerJob, cfg.closeRate);
+    return { item, kw, vol, funnel, roi: roi.roi };
+  });
 
-  return scored.map((k, i) => ({
+  // Prefer bottom-funnel; fall back to all keywords when pool is thin
+  let pool = scored.filter(k => k.funnel === 'bottom' || k.funnel === 'middle');
+  if (pool.length < Math.ceil(count / 2)) pool = scored;
+  pool = pool.slice().sort((a, b) => b.roi - a.roi).slice(0, count);
+
+  return pool.map((k, i) => ({
     id: makeId('gbp', i),
     type: 'gbp_post' as const,
     title: `GBP Post: ${k.kw}`,
@@ -125,6 +125,47 @@ function buildGBPItems(
     priority: i < 4 ? 'high' : i < 8 ? 'medium' : 'low',
     roiValue: k.roi,
   }));
+}
+
+// ─── Blog Posts (informational keywords → authority + top-funnel traffic) ───
+
+/**
+ * Blog posts target top-funnel informational keywords to build topical authority.
+ * Published every 3 weeks (weeks 3, 6, 9, 12). They feed internal links to
+ * service pages, strengthening the bottom-funnel conversion path.
+ */
+function buildBlogItems(
+  keywords: MarketKeywordItem[],
+  cfg: SimpleStrategyConfig,
+  count = 4,
+): Omit<CalendarItemV2, 'week' | 'status'>[] {
+  const scored = keywords.map(item => {
+    const kw = item.keyword_data.keyword;
+    const vol = item.keyword_data.keyword_info?.search_volume ?? 0;
+    const funnel = classifyFunnel(kw);
+    return { kw, vol, funnel };
+  });
+
+  // Prefer informational/top-funnel; fall back to middle-funnel if needed
+  const topPool = scored.filter(k => k.funnel === 'top').sort((a, b) => b.vol - a.vol);
+  const midPool = scored.filter(k => k.funnel === 'middle').sort((a, b) => b.vol - a.vol);
+  const pool = [...topPool, ...midPool].slice(0, count);
+
+  return pool.map((k, i) => {
+    const slug = k.kw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    return {
+      id: makeId('blog', i),
+      type: 'blog_post' as const,
+      title: `Blog: ${k.kw}`,
+      primaryKeyword: k.kw,
+      keywords: [k.kw],
+      action: `Write an 800–1,200 word blog post targeting "${k.kw}". Include an H1, 3–4 H2 sections, a FAQ block (3–5 questions), and at least one internal link to a relevant service page. Target URL: /blog/${slug}.`,
+      rationale: `${k.vol.toLocaleString()} searches/mo · ${k.funnel === 'top' ? 'Informational' : 'Evaluating'} intent — builds topical authority and feeds leads to service pages`,
+      priority: i < 2 ? 'high' : 'medium',
+      roiValue: Math.round(k.vol * 0.005 * cfg.conversionRate * cfg.profitPerJob * (cfg.closeRate / 100)),
+      targetUrl: `/blog/${slug}`,
+    };
+  });
 }
 
 // ─── Website Additions (keyword gaps) ────────────────────────────────
@@ -298,33 +339,48 @@ function buildPageFixTasks(
 
 // ─── Off-Page Posts (citations + link gaps) ───────────────────────────
 
+// Universal citations every local business should be on
+const UNIVERSAL_CITATIONS = [
+  'Google Business Profile', 'Yelp', 'Facebook Business', 'Angi',
+  'Better Business Bureau', 'Yellow Pages', 'Manta', 'Thumbtack',
+  'Nextdoor', 'Foursquare', 'Apple Maps', 'Bing Places',
+];
+
 function buildOffPageItems(
   offPage: OffPageAuditData | null,
   count = 10,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
   const items: Omit<CalendarItemV2, 'week' | 'status'>[] = [];
 
-  // Missing citations first (easiest wins)
+  // Missing citations from off-page audit
   const missingCitations = (offPage?.citations ?? []).filter(c => !c.found);
-  for (const citation of missingCitations.slice(0, Math.ceil(count * 0.6))) {
+
+  // If no off-page audit data, suggest universal citation list as fallback
+  const citationSources: string[] = missingCitations.length > 0
+    ? missingCitations.map(c => c.source)
+    : UNIVERSAL_CITATIONS;
+
+  for (const source of citationSources.slice(0, Math.ceil(count * 0.65))) {
     items.push({
       id: makeId('cit', items.length),
       type: 'offpage_post' as const,
-      title: `Submit to ${citation.source}`,
+      title: `Submit to ${source}`,
       primaryKeyword: '',
       keywords: [],
-      action: `Submit a business listing to ${citation.source}. Ensure NAP (Name, Address, Phone) matches your primary listing exactly.`,
-      rationale: `Missing citation on ${citation.source} — citations improve local ranking trust signals`,
+      action: `Create or claim your business listing on ${source}. Ensure NAP (Name, Address, Phone) matches your Google Business Profile exactly. Add photos, business hours, and a keyword-rich description.`,
+      rationale: missingCitations.length > 0
+        ? `Missing citation on ${source} — citations improve local ranking trust signals`
+        : `${source} is a high-authority citation source — consistent NAP improves local pack rankings`,
       priority: items.length < 3 ? 'high' : 'medium',
       roiValue: 0,
-      targetPlatform: citation.source,
+      targetPlatform: source,
     });
   }
 
   // Link gap opportunities
   const linkGaps = (offPage?.link_gaps ?? [])
     .sort((a, b) => b.domainRank - a.domainRank)
-    .slice(0, Math.floor(count * 0.4));
+    .slice(0, Math.floor(count * 0.35));
 
   for (const gap of linkGaps) {
     items.push({
@@ -347,12 +403,19 @@ function buildOffPageItems(
 // ─── Week Distribution ────────────────────────────────────────────────
 
 /**
- * Distribute items into 12 weeks.
- * Each week: 1 GBP + 1–2 website items + 0–1 off-page items
- * Weeks 1–4 get high-priority items first; 5–8 medium; 9–12 low/ongoing
+ * Optimal 12-week local SEO content schedule:
+ *
+ *  GBP Posts    — 1/week (every week, consistent presence in Maps/Search)
+ *  Blog Posts   — every 3 weeks (wks 3, 6, 9, 12) — builds topical authority
+ *  Page Fixes   — front-loaded (wks 1–6) — quick wins that compound early
+ *  New Pages    — spread wks 1–8 — keyword gap pages take time to rank
+ *  Off-Page     — 1/week starting wk 2 — citation + link-building cadence
+ *
+ * Target density: 3–4 tasks/week average, 2–5 range.
  */
 function distributeToWeeks(
   gbp: Omit<CalendarItemV2, 'week' | 'status'>[],
+  blogs: Omit<CalendarItemV2, 'week' | 'status'>[],
   webAdds: Omit<CalendarItemV2, 'week' | 'status'>[],
   webFixes: Omit<CalendarItemV2, 'week' | 'status'>[],
   offPage: Omit<CalendarItemV2, 'week' | 'status'>[],
@@ -360,30 +423,46 @@ function distributeToWeeks(
 ): CalendarItemV2[] {
   const result: CalendarItemV2[] = [];
 
-  // One GBP post per week (fill up to numWeeks, cycle if needed)
+  // GBP: 1 per week, every week
   for (let w = 1; w <= numWeeks; w++) {
     const item = gbp[w - 1];
-    if (item) {
-      result.push({ ...item, week: w, status: 'scheduled' });
-    }
+    if (item) result.push({ ...item, week: w, status: 'scheduled' });
   }
 
-  // Interleave website additions + fixes across all weeks
-  const webItems = [...webFixes, ...webAdds]; // fixes first (they're quick wins)
-  let webIdx = 0;
-  for (let w = 1; w <= numWeeks && webIdx < webItems.length; w++) {
-    result.push({ ...webItems[webIdx], week: w, status: 'scheduled' });
-    webIdx++;
-    // Add a second website item in early weeks if we have plenty
-    if (w <= 4 && webIdx < webItems.length && webItems.length > numWeeks) {
-      result.push({ ...webItems[webIdx], week: w, status: 'scheduled' });
-      webIdx++;
-    }
+  // Blogs: every 3 weeks starting at week 3 (3, 6, 9, 12)
+  let blogIdx = 0;
+  for (let w = 3; w <= numWeeks && blogIdx < blogs.length; w += 3) {
+    result.push({ ...blogs[blogIdx], week: w, status: 'scheduled' });
+    blogIdx++;
   }
 
-  // Off-page items spread across weeks, starting at week 2
+  // Page fixes: front-loaded (weeks 1–6), up to 2/week in first 4 weeks
+  let fixIdx = 0;
+  for (let w = 1; w <= Math.min(6, numWeeks) && fixIdx < webFixes.length; w++) {
+    result.push({ ...webFixes[fixIdx], week: w, status: 'scheduled' });
+    fixIdx++;
+    // Double up in weeks 1–4 if fixes are plentiful
+    if (w <= 4 && fixIdx < webFixes.length) {
+      result.push({ ...webFixes[fixIdx], week: w, status: 'scheduled' });
+      fixIdx++;
+    }
+  }
+  // Remaining fixes spread through weeks 7–10
+  for (let w = 7; w <= Math.min(10, numWeeks) && fixIdx < webFixes.length; w++) {
+    result.push({ ...webFixes[fixIdx], week: w, status: 'scheduled' });
+    fixIdx++;
+  }
+
+  // New pages: weeks 1–8 (they need months to rank — start early)
+  let addIdx = 0;
+  for (let w = 1; w <= Math.min(8, numWeeks) && addIdx < webAdds.length; w++) {
+    result.push({ ...webAdds[addIdx], week: w, status: 'scheduled' });
+    addIdx++;
+  }
+
+  // Off-page: 1/week starting week 2, spread across all 12 weeks
   let opIdx = 0;
-  for (let w = 2; w <= numWeeks && opIdx < offPage.length; w += 1) {
+  for (let w = 2; w <= numWeeks && opIdx < offPage.length; w++) {
     result.push({ ...offPage[opIdx], week: w, status: 'scheduled' });
     opIdx++;
   }
@@ -407,10 +486,11 @@ export function buildUnifiedCalendar(
 
   // 3. Build each item pool
   const gbpItems = buildGBPItems(keywords, cfg, 12);
+  const blogItems = buildBlogItems(keywords, cfg, 4);
   const addItems = buildWebsiteAdditions(keywords, pageUrls, cfg, 8);
   const fixItems = buildPageFixTasks(siteAudit, 8);
   const opItems = buildOffPageItems(offPageAudit, 10);
 
   // 4. Distribute to weeks
-  return distributeToWeeks(gbpItems, addItems, fixItems, opItems, 12);
+  return distributeToWeeks(gbpItems, blogItems, addItems, fixItems, opItems, 12);
 }

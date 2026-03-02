@@ -13,10 +13,11 @@ interface CalendarItemCardProps {
 }
 
 const TYPE_META: Record<CalendarItemType, { label: string; color: string; bg: string; icon: string }> = {
-  gbp_post:          { label: 'GBP Post',    color: 'text-sky-400',    bg: 'bg-sky-400/10 border-sky-400/20',    icon: '📍' },
+  gbp_post:          { label: 'GBP Post',    color: 'text-sky-400',     bg: 'bg-sky-400/10 border-sky-400/20',     icon: '📍' },
+  blog_post:         { label: 'Blog Post',   color: 'text-violet-400',  bg: 'bg-violet-400/10 border-violet-400/20', icon: '✍️' },
   offpage_post:      { label: 'Off-Page',    color: 'text-emerald-400', bg: 'bg-emerald-400/10 border-emerald-400/20', icon: '🔗' },
-  website_addition:  { label: 'New Page',    color: 'text-amber-400',  bg: 'bg-amber-400/10 border-amber-400/20',  icon: '📄' },
-  website_change:    { label: 'Fix Page',    color: 'text-orange-400', bg: 'bg-orange-400/10 border-orange-400/20', icon: '🔧' },
+  website_addition:  { label: 'New Page',    color: 'text-amber-400',   bg: 'bg-amber-400/10 border-amber-400/20',   icon: '📄' },
+  website_change:    { label: 'Fix Page',    color: 'text-orange-400',  bg: 'bg-orange-400/10 border-orange-400/20',  icon: '🔧' },
 };
 
 const STATUS_CYCLE: Record<string, 'scheduled' | 'done' | 'skipped'> = {
@@ -47,6 +48,9 @@ function buildPrompt(item: CalendarItemV2, businessName: string, domain: string,
 
     case 'website_addition':
       return `Write a comprehensive, SEO-optimized service page for ${businessName || '[COMPANY]'}, a ${industry || 'local'} business at ${domain}. Page targeting: "${item.primaryKeyword}". Requirements:\n- 800–1,200 words\n- Proper HTML headings (H1, H2, H3)\n- Meta description in an HTML comment at the top\n- FAQ section with 3–5 questions\n- Use [PHONE] and [COMPANY] as placeholders\n- Professional but approachable tone\n- Direct CTA in conclusion\nReturn ONLY the HTML body content (no <html>/<body> tags).`;
+
+    case 'blog_post':
+      return `Write an SEO-optimized blog post for ${businessName || '[COMPANY]'}, a ${industry || 'local'} business${city ? ` in ${city}` : ''}. Target keyword: "${item.primaryKeyword}". Requirements:\n- 800–1,200 words\n- H1 matching the keyword intent\n- 3–4 H2 sections covering related subtopics\n- FAQ section with 3–5 questions and concise answers\n- At least one internal link suggestion to a relevant service page (use [LINK TO SERVICE PAGE] as placeholder)\n- Authoritative but approachable tone\n- Conclude with a soft CTA mentioning ${businessName || '[COMPANY]'}\nReturn the blog post in plain text with markdown headings.`;
 
     case 'website_change':
       return `You are an SEO specialist for ${domain} (${industry || 'local business'}). Provide specific, copy-paste-ready fixes for each issue listed below. For meta titles stay under 60 characters; for meta descriptions stay under 160 characters. Output a numbered list matching the issues — give exact replacement text, not just advice.\n\n${item.action}`;

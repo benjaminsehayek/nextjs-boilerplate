@@ -22,20 +22,23 @@ type FilterType = 'all' | CalendarItemType;
 const FILTER_LABELS: Record<FilterType, string> = {
   all: 'All',
   gbp_post: 'GBP Posts',
+  blog_post: 'Blogs',
   website_addition: 'New Pages',
   website_change: 'Page Fixes',
   offpage_post: 'Off-Page',
 };
 
 const TYPE_META: Record<CalendarItemType, { label: string; chip: string; dot: string; icon: string }> = {
-  gbp_post:         { label: 'GBP Post',  chip: 'bg-sky-500/20 text-sky-300 border border-sky-500/30 hover:bg-sky-500/30',                dot: 'bg-sky-400',     icon: '📍' },
-  offpage_post:     { label: 'Off-Page',  chip: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30', dot: 'bg-emerald-400', icon: '🔗' },
-  website_addition: { label: 'New Page',  chip: 'bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30',         dot: 'bg-amber-400',   icon: '📄' },
-  website_change:   { label: 'Fix Page',  chip: 'bg-orange-500/20 text-orange-300 border border-orange-500/30 hover:bg-orange-500/30',     dot: 'bg-orange-400',  icon: '🔧' },
+  gbp_post:         { label: 'GBP Post',  chip: 'bg-sky-500/20 text-sky-300 border border-sky-500/30 hover:bg-sky-500/30',                  dot: 'bg-sky-400',     icon: '📍' },
+  blog_post:        { label: 'Blog Post', chip: 'bg-violet-500/20 text-violet-300 border border-violet-500/30 hover:bg-violet-500/30',        dot: 'bg-violet-400',  icon: '✍️' },
+  offpage_post:     { label: 'Off-Page',  chip: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30',    dot: 'bg-emerald-400', icon: '🔗' },
+  website_addition: { label: 'New Page',  chip: 'bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30',            dot: 'bg-amber-400',   icon: '📄' },
+  website_change:   { label: 'Fix Page',  chip: 'bg-orange-500/20 text-orange-300 border border-orange-500/30 hover:bg-orange-500/30',        dot: 'bg-orange-400',  icon: '🔧' },
 };
 
 const TYPE_DOT: Record<CalendarItemType, string> = {
   gbp_post: 'bg-sky-400',
+  blog_post: 'bg-violet-400',
   offpage_post: 'bg-emerald-400',
   website_addition: 'bg-amber-400',
   website_change: 'bg-orange-400',
@@ -118,7 +121,7 @@ export default function UnifiedCalendar({
   }, [items, filter]);
 
   const counts = useMemo(() => {
-    const c: Record<string, number> = { gbp_post: 0, website_addition: 0, website_change: 0, offpage_post: 0 };
+    const c: Record<string, number> = { gbp_post: 0, blog_post: 0, website_addition: 0, website_change: 0, offpage_post: 0 };
     for (const item of items) c[item.type] = (c[item.type] ?? 0) + 1;
     return c;
   }, [items]);
@@ -155,8 +158,8 @@ export default function UnifiedCalendar({
       )}
 
       {/* Summary tiles */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        {(['gbp_post', 'website_addition', 'website_change', 'offpage_post'] as CalendarItemType[]).map(type => (
+      <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+        {(['gbp_post', 'blog_post', 'website_addition', 'website_change', 'offpage_post'] as CalendarItemType[]).map(type => (
           <button
             key={type}
             onClick={() => setFilter(f => f === type ? 'all' : type)}
@@ -198,7 +201,7 @@ export default function UnifiedCalendar({
 
       {/* Filter chips */}
       <div className="flex flex-wrap gap-2">
-        {(['all', 'gbp_post', 'website_addition', 'website_change', 'offpage_post'] as FilterType[]).map(f => (
+        {(['all', 'gbp_post', 'blog_post', 'website_addition', 'website_change', 'offpage_post'] as FilterType[]).map(f => (
           <button
             key={f}
             onClick={() => setFilter(f)}
