@@ -73,6 +73,8 @@ function SettingsPageContent() {
   const [marketsLoading, setMarketsLoading] = useState(true);
   const [showMarketModal, setShowMarketModal] = useState(false);
   const [editingMarket, setEditingMarket] = useState<any | null>(null);
+  const [importingMarkets, setImportingMarkets] = useState(false);
+  const [importStatus, setImportStatus] = useState('');
 
   // Initialize business data when business loads
   useEffect(() => {
@@ -352,6 +354,83 @@ function SettingsPageContent() {
     } catch (error) {
       console.error('Error deleting market:', error);
       alert('Failed to delete market');
+    }
+  };
+
+  // Auto-populate markets from business locations using Nominatim county lookup
+  const importMarketsFromLocations = async () => {
+    if (!business?.id || locations.length === 0) return;
+    setImportingMarkets(true);
+    setImportStatus('Looking up counties…');
+
+    try {
+      const toInsert: Array<{ name: string; state: string; county: string; latitude: number; longitude: number }> = [];
+
+      for (let i = 0; i < locations.length; i++) {
+        const loc = locations[i];
+        if (!loc.latitude || !loc.longitude) continue;
+
+        setImportStatus(`Looking up county for ${loc.city || loc.location_name} (${i + 1}/${locations.length})…`);
+
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${loc.latitude}&lon=${loc.longitude}&format=json`,
+            { headers: { 'User-Agent': 'ScorchLocal/1.0' } }
+          );
+          if (!res.ok) continue;
+          const geo = await res.json();
+
+          // Nominatim returns county in address.county — strip trailing " County" suffix
+          const rawCounty = geo.address?.county ?? '';
+          const county = rawCounty.replace(/\s+county$/i, '').trim();
+          const state = loc.state || geo.address?.ISO3166_2_lvl4?.split('-')[1] || geo.address?.state_code || '';
+
+          if (!county || !state) continue;
+
+          const marketName = `${county} County, ${state}`;
+
+          // Skip if already in existing markets or already queued
+          const alreadyExists = markets.some(m => m.name.toLowerCase() === marketName.toLowerCase());
+          const alreadyQueued = toInsert.some(m => m.name.toLowerCase() === marketName.toLowerCase());
+          if (alreadyExists || alreadyQueued) continue;
+
+          toInsert.push({ name: marketName, state, county, latitude: loc.latitude, longitude: loc.longitude });
+        } catch {
+          // Non-fatal — skip this location if geocoding fails
+        }
+
+        // Nominatim ToS: max 1 request/second
+        if (i < locations.length - 1) await new Promise(r => setTimeout(r, 1100));
+      }
+
+      if (toInsert.length === 0) {
+        setImportStatus('All location counties are already in your markets list.');
+        setTimeout(() => setImportStatus(''), 3000);
+        return;
+      }
+
+      setImportStatus(`Adding ${toInsert.length} market${toInsert.length > 1 ? 's' : ''}…`);
+
+      for (const m of toInsert) {
+        await (supabase as any).from('markets').insert({
+          business_id: business.id,
+          name: m.name,
+          cities: [],
+          area_codes: [],
+          is_primary: false,
+          state: m.state,
+          latitude: m.latitude,
+          longitude: m.longitude,
+        });
+      }
+
+      window.location.reload();
+    } catch (error) {
+      console.error('Error importing markets from locations:', error);
+      setImportStatus('Failed to import markets. Try again.');
+      setTimeout(() => setImportStatus(''), 4000);
+    } finally {
+      setImportingMarkets(false);
     }
   };
 
@@ -776,18 +855,43 @@ function SettingsPageContent() {
 
           {/* Markets Card */}
           <div className="card p-6">
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-start justify-between mb-6 gap-4">
               <div>
                 <h2 className="font-display text-xl">Target Markets</h2>
                 <p className="text-sm text-ash-400">Define the markets you serve</p>
               </div>
-              <button
-                onClick={openAddMarketModal}
-                className="btn-primary text-sm"
-              >
-                + Add Market
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                {locations.length > 0 && (
+                  <button
+                    onClick={importMarketsFromLocations}
+                    disabled={importingMarkets}
+                    className="btn-secondary text-sm disabled:opacity-50"
+                    title="Find county for each of your locations and add them as markets"
+                  >
+                    {importingMarkets ? (
+                      <span className="flex items-center gap-1.5">
+                        <span className="inline-block w-3 h-3 border-2 border-ash-400/40 border-t-ash-300 rounded-full animate-spin" />
+                        Syncing…
+                      </span>
+                    ) : (
+                      'Sync from Locations'
+                    )}
+                  </button>
+                )}
+                <button
+                  onClick={openAddMarketModal}
+                  className="btn-primary text-sm"
+                >
+                  + Add Market
+                </button>
+              </div>
             </div>
+
+            {importStatus && (
+              <div className="mb-4 text-xs text-ash-400 bg-char-800 border border-char-700 rounded-btn px-3 py-2">
+                {importStatus}
+              </div>
+            )}
 
             {marketsLoading ? (
               <div className="h-32 bg-char-700 animate-pulse rounded-btn" />
