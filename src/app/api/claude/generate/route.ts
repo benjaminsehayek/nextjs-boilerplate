@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 
+export const maxDuration = 60; // seconds — Vercel Pro / self-hosted
+
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -32,9 +34,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'messages or prompt required' }, { status: 400 });
   }
 
+  const abort = new AbortController();
+  const timeout = setTimeout(() => abort.abort(), 55_000);
+
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      signal: abort.signal,
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': process.env.ANTHROPIC_API_KEY || '',
@@ -42,7 +48,7 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         model: body.model || 'claude-sonnet-4-6',
-        max_tokens: body.max_tokens || body.maxTokens || 1024,
+        max_tokens: Math.min(body.max_tokens || body.maxTokens || 1024, 2048),
         temperature: body.temperature ?? 0.7,
         ...(body.system ? { system: body.system } : {}),
         messages,
@@ -59,8 +65,13 @@ export async function POST(request: NextRequest) {
     // Normalise: expose top-level `text` for callers that do data.text
     const text = data.content?.[0]?.text ?? '';
     return NextResponse.json({ ...data, text });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      return NextResponse.json({ error: 'Generation timed out — try a shorter prompt' }, { status: 504 });
+    }
     console.error('Claude proxy error:', error);
     return NextResponse.json({ error: 'Failed to reach Claude API' }, { status: 502 });
+  } finally {
+    clearTimeout(timeout);
   }
 }

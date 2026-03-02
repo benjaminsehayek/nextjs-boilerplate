@@ -59,7 +59,7 @@ Requirements:
       if (!res.ok) throw new Error('Failed to generate content');
 
       const data = await res.json();
-      setGeneratedContent(data.content || data.text || '');
+      setGeneratedContent(data.text || data.content?.[0]?.text || '');
     } catch (err: any) {
       setError(err.message || 'Generation failed');
     } finally {
