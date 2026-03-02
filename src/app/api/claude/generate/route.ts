@@ -21,6 +21,17 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
 
+  // Support both { messages } and simple { prompt } formats
+  const messages = body.messages?.length
+    ? body.messages
+    : body.prompt
+      ? [{ role: 'user', content: body.prompt }]
+      : [];
+
+  if (!messages.length) {
+    return NextResponse.json({ error: 'messages or prompt required' }, { status: 400 });
+  }
+
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -30,11 +41,11 @@ export async function POST(request: NextRequest) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: body.model || 'claude-sonnet-4-20250514',
-        max_tokens: body.max_tokens || 300,
-        temperature: body.temperature || 0.7,
-        system: body.system || '',
-        messages: body.messages || [],
+        model: body.model || 'claude-sonnet-4-6',
+        max_tokens: body.max_tokens || body.maxTokens || 1024,
+        temperature: body.temperature ?? 0.7,
+        ...(body.system ? { system: body.system } : {}),
+        messages,
       }),
     });
 
@@ -45,7 +56,9 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await response.json();
-    return NextResponse.json(data);
+    // Normalise: expose top-level `text` for callers that do data.text
+    const text = data.content?.[0]?.text ?? '';
+    return NextResponse.json({ ...data, text });
   } catch (error) {
     console.error('Claude proxy error:', error);
     return NextResponse.json({ error: 'Failed to reach Claude API' }, { status: 502 });

@@ -497,11 +497,26 @@ CREATE TABLE IF NOT EXISTS public.content_strategies (
   industry TEXT,
   economics JSONB DEFAULT '{}', -- { conversionRate, averageOrderValue, leadValue, monthlyBudget }
 
-  -- Results data
+  -- Configuration (enhanced)
+  services_data JSONB DEFAULT '[]',      -- [{ name, enabled, conversionRate, avgValue }]
+  locations_data JSONB DEFAULT '[]',     -- [{ city, state, radius }]
+
+  -- Results data (legacy)
   clusters_data JSONB DEFAULT '[]', -- [{ id, name, intent, keywords: [...], totalVolume, avgDifficulty, opportunityScore }]
   opportunities_data JSONB DEFAULT '[]', -- [{ cluster, priority, estimatedTraffic, estimatedValue, competitorGaps, recommendedType }]
   calendar_data JSONB DEFAULT '[]', -- [{ id, title, cluster, targetKeywords, contentType, priority, estimatedTraffic, estimatedValue, publishDate, status }]
   cannibalization_data JSONB DEFAULT '[]', -- [{ id, keyword, searchVolume, competingPages, severity, recommendation }]
+
+  -- Results data (enhanced pipeline)
+  crawled_pages JSONB DEFAULT '[]',      -- raw on_page crawl results
+  enhanced_keywords JSONB DEFAULT '[]',  -- enriched keyword objects with ROI
+  content_map JSONB DEFAULT '{}',        -- { existing, gaps, cannibalized }
+  enhanced_calendar JSONB DEFAULT '[]',  -- 12-week phased calendar items
+  content_gaps JSONB DEFAULT '[]',       -- gap opportunities
+
+  -- Enhanced summary metrics
+  total_roi INTEGER DEFAULT 0,
+  total_leads DECIMAL(10, 1) DEFAULT 0,
 
   -- Summary metrics
   total_keywords INTEGER DEFAULT 0,
