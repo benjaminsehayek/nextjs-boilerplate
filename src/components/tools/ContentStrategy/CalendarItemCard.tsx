@@ -49,7 +49,7 @@ function buildPrompt(item: CalendarItemV2, businessName: string, domain: string,
       return `Write a comprehensive, SEO-optimized service page for ${businessName || '[COMPANY]'}, a ${industry || 'local'} business at ${domain}. Page targeting: "${item.primaryKeyword}". Requirements:\n- 800–1,200 words\n- Proper HTML headings (H1, H2, H3)\n- Meta description in an HTML comment at the top\n- FAQ section with 3–5 questions\n- Use [PHONE] and [COMPANY] as placeholders\n- Professional but approachable tone\n- Direct CTA in conclusion\nReturn ONLY the HTML body content (no <html>/<body> tags).`;
 
     case 'website_change':
-      return `You are an SEO expert. For the website ${domain} (${industry || 'local business'}), suggest improved versions of the following:\n\nIssue: ${item.title}\nAction needed: ${item.action}\n${item.targetUrl ? `Affected page: ${item.targetUrl}` : ''}\n\nProvide specific, copy-paste-ready fixes. Keep meta titles under 60 characters, meta descriptions under 160 characters. Format your response as a short bulleted list of specific changes.`;
+      return `You are an SEO specialist for ${domain} (${industry || 'local business'}). Provide specific, copy-paste-ready fixes for each issue listed below. For meta titles stay under 60 characters; for meta descriptions stay under 160 characters. Output a numbered list matching the issues — give exact replacement text, not just advice.\n\n${item.action}`;
   }
 }
 

@@ -36,7 +36,7 @@ interface SiteAuditData {
       affectedPages: number;
       category?: string;
     }>;
-    detailed?: Array<{ severity: string; urls?: Array<{ url: string }> }>;
+    detailed?: Array<{ severity: string; title?: string; fix?: string; urls?: Array<{ url: string }> }>;
   };
   pages_data?: { items: Array<{ url: string; meta?: { title?: string } }> };
   domain?: string | null;
@@ -168,33 +168,82 @@ function buildWebsiteAdditions(
 
 // ─── Website Changes (site audit issues) ─────────────────────────────
 
+type IssueEntry = { title: string; fix: string; impactScore: number };
+
 function buildWebsiteChanges(
   audit: SiteAuditData,
   count = 6,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
   const quickWins = (audit.issues_data?.quickWins ?? [])
     .slice()
-    .sort((a, b) => b.impactScore - a.impactScore)
+    .sort((a, b) => b.impactScore - a.impactScore);
+
+  if (quickWins.length === 0) return [];
+
+  const detailed = audit.issues_data?.detailed ?? [];
+
+  // Group issues by the specific page URL they affect.
+  // Each quickWin maps to detailed entries which have the affected URL list.
+  // Result: one task per page URL that bundles all its problems together.
+  const urlToIssues = new Map<string, IssueEntry[]>();
+
+  for (const qw of quickWins) {
+    // Match quickWin to a detailed entry by title overlap
+    const matched = detailed.find(d =>
+      d.urls?.length && d.title && (
+        qw.title.toLowerCase().startsWith(d.title.toLowerCase().slice(0, 14)) ||
+        d.title.toLowerCase().startsWith(qw.title.toLowerCase().slice(0, 14))
+      )
+    );
+
+    const urls = matched?.urls?.slice(0, 4).map(u => u.url) ?? [];
+
+    if (urls.length === 0) {
+      // No specific URL — bucket under a stable key for a site-wide task
+      const key = `__site__${qw.id || qw.title}`;
+      const existing = urlToIssues.get(key) ?? [];
+      existing.push({ title: qw.title, fix: qw.fix, impactScore: qw.impactScore });
+      urlToIssues.set(key, existing);
+    } else {
+      for (const url of urls) {
+        const existing = urlToIssues.get(url) ?? [];
+        existing.push({ title: qw.title, fix: qw.fix, impactScore: qw.impactScore });
+        urlToIssues.set(url, existing);
+      }
+    }
+  }
+
+  // Sort pages: most/highest-impact issues first
+  const pages = Array.from(urlToIssues.entries())
+    .map(([key, issues]) => ({
+      url: key.startsWith('__site__') ? undefined : key,
+      issues,
+      topImpact: Math.max(...issues.map(iss => iss.impactScore)),
+      totalImpact: issues.reduce((s, iss) => s + iss.impactScore, 0),
+    }))
+    .sort((a, b) => b.totalImpact - a.totalImpact || b.topImpact - a.topImpact)
     .slice(0, count);
 
-  return quickWins.map((qw, i) => {
-    // Get the first affected URL if available
-    const detailed = (audit.issues_data?.detailed ?? []).find(d =>
-      d.urls?.length && qw.title.toLowerCase().includes((d as any).title?.toLowerCase?.()?.slice(0, 10))
-    );
-    const targetUrl = (detailed as any)?.urls?.[0]?.url;
+  return pages.map(({ url, issues, topImpact }, i) => {
+    const pathLabel = url
+      ? url.replace(/^https?:\/\/[^/]+/, '') || '/'
+      : 'site-wide';
+    const n = issues.length;
+    const fixList = issues.map(iss => `• ${iss.fix}`).join('\n');
 
     return {
       id: makeId('fix', i),
       type: 'website_change' as const,
-      title: `Fix: ${qw.title}`,
+      title: `Fix ${n > 1 ? `${n} issues on` : 'issue on'} ${pathLabel}`,
       primaryKeyword: '',
       keywords: [],
-      action: qw.fix,
-      rationale: `Site audit issue · Impact score ${qw.impactScore}/10 · Affects ${qw.affectedPages} page(s)`,
-      priority: qw.impactScore >= 7 ? 'high' : qw.impactScore >= 4 ? 'medium' : 'low',
+      action: url
+        ? `Fix the following ${n} issue${n > 1 ? 's' : ''} on ${url}:\n${fixList}`
+        : `Fix the following ${n} site-wide issue${n > 1 ? 's' : ''}:\n${fixList}`,
+      rationale: `${n} audit issue${n > 1 ? 's' : ''} detected · Highest impact: ${issues[0].title} (${topImpact}/10)`,
+      priority: topImpact >= 7 ? 'high' : topImpact >= 4 ? 'medium' : 'low',
       roiValue: 0,
-      targetUrl,
+      targetUrl: url,
     };
   });
 }
