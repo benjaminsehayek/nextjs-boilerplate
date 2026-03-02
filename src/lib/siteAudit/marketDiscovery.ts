@@ -39,6 +39,33 @@ const CA_PROVINCE_NAMES = new Set(
   Object.values(CA_PROVINCE_ABBREV_TO_NAME).map((n) => n.toLowerCase())
 );
 
+// ─── Non-City Blocklist ───────────────────────────────────────────
+// Words that commonly appear before a state/province abbreviation in a URL
+// but are NOT city names. Prevents "about-bc" → city:"About", state:"British Columbia"
+const NON_CITY_WORDS = new Set([
+  'about','contact','service','services','area','areas','page','pages','policy',
+  'code','api','blockchain','online','web','app','mobile','tech','blog','news',
+  'global','local','national','central','main','home','index','sitemap','map',
+  'content','search','help','support','terms','privacy','faq','get','our',
+  'all','best','top','free','pro','test','demo','pricing','careers','jobs',
+  'ab','bc','mb','nb','nl','ns','nt','nu','on','pe','qc','sk','yt', // provinces themselves
+]);
+
+/**
+ * Return true only if the city-candidate parts look like a real place name.
+ * Rejects: empty, too short, or all-blocklist words.
+ */
+function isLikelyCityName(cityParts: string[]): boolean {
+  if (!cityParts.length) return false;
+  const joined = cityParts.join('');
+  if (joined.length < 3) return false;
+  // Every part is a non-city word → reject
+  if (cityParts.every(p => NON_CITY_WORDS.has(p.toLowerCase()))) return false;
+  // Single part that is a non-city word → reject
+  if (cityParts.length === 1 && NON_CITY_WORDS.has(cityParts[0].toLowerCase())) return false;
+  return true;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────
 
 /**
@@ -67,17 +94,16 @@ function extractLocationFromSegment(
   // Check if the last part is a 2-letter state abbreviation
   if (parts.length >= 2) {
     const tail = parts[parts.length - 1].toLowerCase();
+    const cityParts = parts.slice(0, -1);
 
-    // US state abbreviation
-    if (US_STATE_ABBREV_TO_NAME[tail]) {
-      const cityParts = parts.slice(0, -1);
+    // US state abbreviation — only accept if city part looks like a real place
+    if (US_STATE_ABBREV_TO_NAME[tail] && isLikelyCityName(cityParts)) {
       const city = segmentToCity(cityParts.join('-'));
       return { city, state: US_STATE_ABBREV_TO_NAME[tail], country: 'United States' };
     }
 
-    // Canadian province abbreviation
-    if (CA_PROVINCE_ABBREV_TO_NAME[tail]) {
-      const cityParts = parts.slice(0, -1);
+    // Canadian province abbreviation — only accept if city part looks like a real place
+    if (CA_PROVINCE_ABBREV_TO_NAME[tail] && isLikelyCityName(cityParts)) {
       const city = segmentToCity(cityParts.join('-'));
       return { city, state: CA_PROVINCE_ABBREV_TO_NAME[tail], country: 'Canada' };
     }
@@ -201,9 +227,13 @@ export function discoverMarketsFromCrawl(
  * Scans page titles, H1s, and descriptions for city name mentions.
  * Uses frequency-based approach — most mentioned city wins.
  * Only returns a result if confidence threshold is met (>3 mentions).
+ *
+ * businessInfo is used to anchor the country when a city name exists in both the US and Canada
+ * (e.g. "Vancouver" → prefer Washington if businessInfo says United States, British Columbia if Canada).
  */
 export function detectCityFromContent(
-  pages: CrawledPage[]
+  pages: CrawledPage[],
+  businessInfo?: DetectedBusiness | null,
 ): { location: string; city: string; confidence: number; sources: string[] } | null {
   // Build a frequency map of potential city names
   const cityMentions = new Map<string, { count: number; state: string; sources: Set<string> }>();
@@ -270,6 +300,23 @@ export function detectCityFromContent(
       } else {
         cityMentions.set(key, { count: 1, state: normalizedState, sources: new Set([page.url]) });
       }
+    }
+  }
+
+  // ── Country-bias filtering ──────────────────────────────────────────
+  // If we know the business's country, remove states/provinces from the wrong country.
+  // This prevents "Vancouver, BC" winning over "Vancouver, WA" for a US business.
+  const bizCountry = businessInfo?.country?.toLowerCase() ?? '';
+  const isUSBiz = bizCountry === 'us' || bizCountry === 'united states';
+  const isCABiz = bizCountry === 'ca' || bizCountry === 'canada';
+
+  if (isUSBiz || isCABiz) {
+    for (const [key, data] of cityMentions.entries()) {
+      const stateIsCanadian = CA_PROVINCE_NAMES.has(data.state.toLowerCase());
+      // For US business, remove Canadian province matches
+      if (isUSBiz && stateIsCanadian) { cityMentions.delete(key); continue; }
+      // For CA business, remove US state matches
+      if (isCABiz && !stateIsCanadian) { cityMentions.delete(key); continue; }
     }
   }
 

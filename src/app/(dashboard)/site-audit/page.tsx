@@ -469,7 +469,7 @@ export default function SiteAuditPage() {
         // Content fallback if still no markets
         if (markets.length === 0) {
           log('No markets found — scanning page content...');
-          const detected = detectCityFromContent(pages);
+          const detected = detectCityFromContent(pages, detectedBusiness);
           if (detected) {
             markets.push(detected.location);
             log('Content-based detection: ' + detected.location, 'success');

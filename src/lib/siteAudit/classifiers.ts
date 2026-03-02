@@ -14,6 +14,27 @@ const STATE_ABBREVS = new Set([
   'ab','bc','mb','nb','nl','ns','nt','nu','on','pe','qc','sk','yt',
 ]);
 
+// Words that are NOT city names — prevent "about-bc" → location, "services-wa" → location, etc.
+const NON_CITY_SLUG_WORDS = new Set([
+  'about','contact','service','services','area','areas','page','pages','policy',
+  'code','api','blockchain','online','web','app','mobile','tech','blog','news',
+  'global','local','national','central','main','home','index','sitemap','map',
+  'content','search','help','support','terms','privacy','faq','get','our',
+  'all','best','top','free','pro','test','demo','pricing','careers','jobs',
+  // Province abbreviations themselves aren't city names
+  'ab','bc','mb','nb','nl','ns','nt','nu','on','pe','qc','sk','yt',
+]);
+
+/** Return true only if slug parts before the state abbreviation look like a real place name. */
+function hasCityLikeParts(parts: string[]): boolean {
+  if (!parts.length) return false;
+  const joined = parts.join('');
+  if (joined.length < 3) return false;
+  // All parts are non-city words → reject
+  if (parts.every(p => NON_CITY_SLUG_WORDS.has(p.toLowerCase()))) return false;
+  return true;
+}
+
 /**
  * Classify a URL into a page type based on path patterns.
  */
@@ -83,10 +104,13 @@ export function classifyUrlType(url: string): UrlType {
     return 'location';
   }
   // Slug ends with a state abbreviation (e.g., plumber-dallas-tx)
+  // Require at least one city-like part before the abbreviation to avoid false positives
+  // like "about-bc", "services-wa", "blockchain-on" being classified as location pages.
   const lastSegParts = lastSeg.split('-');
   if (lastSegParts.length >= 2) {
     const tail = lastSegParts[lastSegParts.length - 1];
-    if (STATE_ABBREVS.has(tail)) {
+    const cityParts = lastSegParts.slice(0, -1);
+    if (STATE_ABBREVS.has(tail) && hasCityLikeParts(cityParts)) {
       return 'location';
     }
   }
