@@ -374,11 +374,20 @@ function buildWebsiteAdditions(
   enrichedMap?: Map<string, EnrichedKeyword>,
   services?: Array<{ name: string; profit: number; close: number }>,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
-  // Keywords where no site page is ranking in top 10
+  // Keywords where no site page is ranking in top 10.
+  // Informational/top-funnel keywords (e.g. "cost of paint job", "how to X") are excluded —
+  // those belong in blog posts, not service pages. Service pages target transactional or
+  // commercial intent where the visitor is ready to hire, not just researching.
   const gapsSorted = keywords
     .filter(item => {
       const rank = item.ranked_serp_element?.serp_item?.rank_group;
-      return rank === undefined || rank === null || rank > 10;
+      if (rank !== undefined && rank !== null && rank <= 10) return false;
+      const kw = item.keyword_data.keyword.toLowerCase();
+      const enriched = enrichedMap?.get(kw);
+      const funnel = enriched?.funnel ?? classifyFunnel(item.keyword_data.keyword);
+      const intent = enriched?.intent;
+      // Skip informational-intent keywords — they become blog posts, not service pages
+      return funnel !== 'top' && intent !== 'informational';
     })
     .map(item => {
       const kw = item.keyword_data.keyword;
