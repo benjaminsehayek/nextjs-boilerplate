@@ -170,14 +170,37 @@ function buildSyntheticKeywords(
     }
   }
 
-  // Informational: cost + how-to for top 6 services → blog post candidates
-  const INFO_PREFIXES: Array<[string, EnrichedKeyword['funnel'], EnrichedKeyword['intent']]> = [
-    ['cost of', 'top', 'informational'],
-    ['how to', 'top', 'informational'],
+  // "Near me" variants for top 5 services — extra GBP candidates when a city is also set
+  // (users in "dallas" still search "plumber near me" — both forms are needed)
+  if (city) {
+    for (const svc of services.slice(0, 5)) {
+      const kw = `${svc.name.toLowerCase()} near me`;
+      const kwLower = kw.toLowerCase();
+      if (!seen.has(kwLower)) {
+        keywords.push({
+          keyword_data: { keyword: kw, keyword_info: { search_volume: 80, cpc: 3 } },
+        });
+        enrichedEntries.push([kwLower, {
+          keyword: kw, volume: 80, avgVolume: 80, seasonalMultiplier: 1.0,
+          difficulty: null, competition: 'MEDIUM' as const, cpc: 3,
+          isExternal: false, currentRank: null, hasLocalPack: true,
+          funnel: 'bottom' as const, intent: 'transactional' as const, localType: 'near_me' as const,
+        }]);
+        seen.add(kwLower);
+      }
+    }
+  }
+
+  // Informational: two grammatically-safe templates for top 6 services → blog candidates.
+  // "how to [service]" is intentionally omitted — it's grammatically wrong for most service
+  // names (e.g. "how to collision repair", "how to paint job").
+  const INFO_TEMPLATES: Array<[(svc: string) => string, EnrichedKeyword['funnel'], EnrichedKeyword['intent']]> = [
+    [svc => `cost of ${svc}`, 'top', 'informational'],
+    [svc => `${svc} pricing`, 'top', 'informational'],
   ];
   for (const svc of services.slice(0, 6)) {
-    for (const [prefix, funnel, intent] of INFO_PREFIXES) {
-      const kw = `${prefix} ${svc.name.toLowerCase()}`;
+    for (const [template, funnel, intent] of INFO_TEMPLATES) {
+      const kw = template(svc.name.toLowerCase());
       const kwLower = kw.toLowerCase();
       if (!seen.has(kwLower)) {
         keywords.push({
@@ -199,6 +222,12 @@ function buildSyntheticKeywords(
 
 // ─── GBP Posts ────────────────────────────────────────────────────────
 
+// Words that indicate editorial/informational content — not suitable for GBP service posts.
+// Matched as whole words (split by whitespace) so "guidelines" doesn't trip on "guide".
+const GBP_NOISE_WORDS = new Set([
+  'information', 'news', 'article', 'faq', 'learn', 'guide', 'tips', 'blog', 'tutorial',
+]);
+
 function buildGBPItems(
   keywords: MarketKeywordItem[],
   cfg: SimpleStrategyConfig,
@@ -206,7 +235,14 @@ function buildGBPItems(
   enrichedMap?: Map<string, EnrichedKeyword>,
   services?: Array<{ name: string; profit: number; close: number }>,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
-  const scored = keywords.map(item => {
+  // Exclude editorial/informational keywords — they make poor GBP service posts.
+  // e.g. "important insurance information near me" → filtered out.
+  const isServiceQuery = (kw: string) => {
+    const words = new Set(kw.toLowerCase().split(/\s+/));
+    return !GBP_NOISE_WORDS.has([...words].find(w => GBP_NOISE_WORDS.has(w)) ?? '');
+  };
+
+  const scored = keywords.filter(item => isServiceQuery(item.keyword_data.keyword)).map(item => {
     const kw = item.keyword_data.keyword;
     const vol = item.keyword_data.keyword_info?.search_volume ?? 0;
     const enriched = enrichedMap?.get(kw.toLowerCase());
@@ -757,10 +793,25 @@ export function buildUnifiedCalendar(
   // 3. Build each item pool
   const gbpItems = buildGBPItems(keywords, cfg, 12, enrichedMap, services);
   const addItems = buildWebsiteAdditions(keywords, pageUrls, cfg, 8, enrichedMap, services);
-  const blogItems = buildBlogItems(keywords, cfg, 4, enrichedMap);
+  const blogItems = buildBlogItems(keywords, cfg, 6, enrichedMap);
   const fixItems = buildPageFixTasks(siteAudit, 8);
   const opItems = buildOffPageItems(offPageAudit, 10);
 
+  // 3b. Reframe GBP posts that share a keyword with a new service page as
+  //     "Promote New Page" announcements — this turns the overlap into a
+  //     coordinated launch instead of a duplicate recommendation.
+  const addKeywords = new Set(addItems.map(i => i.primaryKeyword.toLowerCase()));
+  const gbpItemsFinal = gbpItems.map(item => {
+    if (!item.primaryKeyword || !addKeywords.has(item.primaryKeyword.toLowerCase())) return item;
+    const slug = item.primaryKeyword.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    return {
+      ...item,
+      title: `GBP: Promote New "${item.primaryKeyword}" Page`,
+      action: `After publishing the new "${item.primaryKeyword}" service page, announce it on Google Business Profile. Link to /services/${slug}, include a photo of recent work, highlight key benefits, and end with a call-to-action to book or call.`,
+      rationale: `New page launch announcement · ${item.rationale}`,
+    };
+  });
+
   // 4. Distribute to weeks
-  return distributeToWeeks(gbpItems, blogItems, addItems, fixItems, opItems, 12);
+  return distributeToWeeks(gbpItemsFinal, blogItems, addItems, fixItems, opItems, 12);
 }
