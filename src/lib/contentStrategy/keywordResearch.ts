@@ -23,6 +23,10 @@ export interface EnrichedKeyword {
   funnel: 'bottom' | 'middle' | 'top';
   intent: 'transactional' | 'commercial' | 'informational' | 'branded';
   localType: 'near_me' | 'city_name' | 'none';
+  /** Which physical location/market this keyword was researched for.
+   *  Short label, e.g. "Vancouver, WA". Routes GBP posts to the right location's GBP.
+   *  Undefined for national keywords or when location is unknown. */
+  locationName?: string;
 }
 
 export interface SiteAuditKeyword {

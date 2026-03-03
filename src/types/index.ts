@@ -152,6 +152,9 @@ export interface CalendarItemV2 {
   generatedContent?: string;
   targetUrl?: string;
   targetPlatform?: string;
+  /** GBP posts only — which physical location's GBP this post belongs to (e.g. "Vancouver, WA").
+   *  Website and off-page items are domain-level and leave this undefined. */
+  locationName?: string;
 }
 
 export interface SimpleStrategyConfig {

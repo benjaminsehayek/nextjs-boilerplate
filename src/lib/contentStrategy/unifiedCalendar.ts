@@ -21,6 +21,10 @@ interface MarketKeywordItem {
   ranked_serp_element?: {
     serp_item?: { rank_group: number; url: string };
   };
+  /** Which site-audit market (location) this keyword came from.
+   *  Full DataForSEO location string, e.g. "Vancouver, WA, United States".
+   *  Used to route GBP posts to the correct physical location's GBP. */
+  _market?: string;
 }
 
 interface SiteAuditData {
@@ -98,14 +102,14 @@ function overlapsTopically(kw1: string, kw2: string, minOverlap = 2): boolean {
   return false;
 }
 
-/** Collect all MarketKeywordItems from crawl_data.keywords.markets */
+/** Collect all MarketKeywordItems from crawl_data.keywords.markets, preserving market attribution. */
 function collectAuditKeywords(audit: SiteAuditData): MarketKeywordItem[] {
   const markets = audit.crawl_data?.keywords?.markets;
   if (!markets) return [];
   const all: MarketKeywordItem[] = [];
-  for (const market of Object.values(markets)) {
-    for (const item of market.items || []) {
-      all.push(item);
+  for (const [market, mData] of Object.entries(markets)) {
+    for (const item of mData.items || []) {
+      all.push({ ...item, _market: market });
     }
   }
   return all;
@@ -231,7 +235,7 @@ const GBP_NOISE_WORDS = new Set([
 function buildGBPItems(
   keywords: MarketKeywordItem[],
   cfg: SimpleStrategyConfig,
-  count = 12,
+  countPerLocation = 12,
   enrichedMap?: Map<string, EnrichedKeyword>,
   services?: Array<{ name: string; profit: number; close: number }>,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
@@ -242,56 +246,80 @@ function buildGBPItems(
     return !GBP_NOISE_WORDS.has([...words].find(w => GBP_NOISE_WORDS.has(w)) ?? '');
   };
 
-  const scored = keywords.filter(item => isServiceQuery(item.keyword_data.keyword)).map(item => {
-    const kw = item.keyword_data.keyword;
-    const vol = item.keyword_data.keyword_info?.search_volume ?? 0;
-    const enriched = enrichedMap?.get(kw.toLowerCase());
-    const funnel = enriched?.funnel ?? classifyFunnel(kw);
-    // Per-service economics — override cfg when a service match is found
-    const svc = services ? matchService(kw, services) : null;
-    const kwCfg = svc ? { ...cfg, profitPerJob: svc.profit, closeRate: svc.close } : cfg;
-    const roi = enriched
-      ? calculateKeywordROIV2(vol, kwCfg, {
-          funnel: enriched.funnel,
-          intent: enriched.intent,
-          localType: enriched.localType,
-          difficulty: enriched.difficulty,
-          competition: enriched.competition,
-          hasLocalPack: enriched.hasLocalPack,
-          currentRank: enriched.currentRank,
-        }).roi
-      : calculateKeywordROI(vol, funnel, kwCfg.conversionRate, kwCfg.profitPerJob, kwCfg.closeRate).roi;
-    return { kw, vol, funnel, roi, enriched: enriched ?? null };
-  });
+  // GBP posts are location-level: group keywords by their source market so each
+  // physical location gets its own set of posts targeting its local queries.
+  // Keywords without market attribution (synthetics) go to a shared default group.
+  const byMarket = new Map<string, MarketKeywordItem[]>();
+  for (const item of keywords) {
+    const market = item._market ?? '__default__';
+    if (!byMarket.has(market)) byMarket.set(market, []);
+    byMarket.get(market)!.push(item);
+  }
 
-  // Prefer bottom-funnel; fall back to all keywords when pool is thin
-  let pool = scored.filter(k => k.funnel === 'bottom' || k.funnel === 'middle');
-  if (pool.length < Math.ceil(count / 2)) pool = scored;
-  pool = pool.slice().sort((a, b) => b.roi - a.roi).slice(0, count);
+  const result: Omit<CalendarItemV2, 'week' | 'status'>[] = [];
 
-  return pool.map((k, i) => {
-    const signals = k.enriched
-      ? [
-          `${k.enriched.intent.charAt(0).toUpperCase() + k.enriched.intent.slice(1)} intent`,
-          k.enriched.competition ? `Competition: ${k.enriched.competition}` : null,
-          k.enriched.difficulty != null ? `KD: ${k.enriched.difficulty}` : null,
-        ].filter(Boolean).join(' · ')
-      : null;
+  for (const [market, mKeywords] of byMarket.entries()) {
+    // Shorten "Vancouver, WA, United States" → "Vancouver, WA" for display
+    const locationLabel = market !== '__default__'
+      ? market.split(',').slice(0, 2).map(s => s.trim()).join(', ')
+      : undefined;
 
-    return {
-      id: makeId('gbp', k.kw),
-      type: 'gbp_post' as const,
-      title: `GBP Post: ${k.kw}`,
-      primaryKeyword: k.kw,
-      keywords: [k.kw],
-      action: `Publish a Google Business Profile post targeting "${k.kw}". Include a specific offer or callout and a direct CTA (call, book, or visit).`,
-      rationale: signals
-        ? `Est. ${k.vol.toLocaleString()} searches/mo · $${k.roi}/mo ROI · ${signals}`
-        : `Est. ${k.vol.toLocaleString()} searches/mo · $${k.roi}/mo ROI potential at position 3`,
-      priority: (i < 4 ? 'high' : i < 8 ? 'medium' : 'low') as 'high' | 'medium' | 'low',
-      roiValue: k.roi,
-    };
-  });
+    const scored = mKeywords.filter(item => isServiceQuery(item.keyword_data.keyword)).map(item => {
+      const kw = item.keyword_data.keyword;
+      const vol = item.keyword_data.keyword_info?.search_volume ?? 0;
+      const enriched = enrichedMap?.get(kw.toLowerCase());
+      const funnel = enriched?.funnel ?? classifyFunnel(kw);
+      const svc = services ? matchService(kw, services) : null;
+      const kwCfg = svc ? { ...cfg, profitPerJob: svc.profit, closeRate: svc.close } : cfg;
+      const roi = enriched
+        ? calculateKeywordROIV2(vol, kwCfg, {
+            funnel: enriched.funnel,
+            intent: enriched.intent,
+            localType: enriched.localType,
+            difficulty: enriched.difficulty,
+            competition: enriched.competition,
+            hasLocalPack: enriched.hasLocalPack,
+            currentRank: enriched.currentRank,
+          }).roi
+        : calculateKeywordROI(vol, funnel, kwCfg.conversionRate, kwCfg.profitPerJob, kwCfg.closeRate).roi;
+      return { kw, vol, funnel, roi, enriched: enriched ?? null };
+    });
+
+    // Prefer bottom-funnel; fall back to all when pool is thin
+    let pool = scored.filter(k => k.funnel === 'bottom' || k.funnel === 'middle');
+    if (pool.length < Math.ceil(countPerLocation / 2)) pool = scored;
+    pool = pool.slice().sort((a, b) => b.roi - a.roi).slice(0, countPerLocation);
+
+    for (const [i, k] of pool.entries()) {
+      const signals = k.enriched
+        ? [
+            `${k.enriched.intent.charAt(0).toUpperCase() + k.enriched.intent.slice(1)} intent`,
+            k.enriched.competition ? `Competition: ${k.enriched.competition}` : null,
+            k.enriched.difficulty != null ? `KD: ${k.enriched.difficulty}` : null,
+          ].filter(Boolean).join(' · ')
+        : null;
+
+      const locSuffix = locationLabel ? ` — ${locationLabel}` : '';
+      const actionLoc = locationLabel ? ` for your ${locationLabel} location` : '';
+
+      result.push({
+        id: makeId('gbp', `${locationLabel ?? 'gbp'}-${k.kw}`),
+        type: 'gbp_post' as const,
+        title: `GBP Post${locSuffix}: ${k.kw}`,
+        primaryKeyword: k.kw,
+        keywords: [k.kw],
+        locationName: locationLabel,
+        action: `Publish a Google Business Profile post${actionLoc} targeting "${k.kw}". Include a specific offer or callout and a direct CTA (call, book, or visit).`,
+        rationale: signals
+          ? `Est. ${k.vol.toLocaleString()} searches/mo · $${k.roi}/mo ROI · ${signals}`
+          : `Est. ${k.vol.toLocaleString()} searches/mo · $${k.roi}/mo ROI potential at position 3`,
+        priority: (i < 4 ? 'high' : i < 8 ? 'medium' : 'low') as 'high' | 'medium' | 'low',
+        roiValue: k.roi,
+      });
+    }
+  }
+
+  return result;
 }
 
 // ─── Blog Posts (informational keyword gaps only) ────────────────────
@@ -727,10 +755,20 @@ function distributeToWeeks(
 ): CalendarItemV2[] {
   const result: CalendarItemV2[] = [];
 
-  // GBP: 1 per week, every week (consistent cadence)
+  // GBP: 1 post per location per week (location-level cadence).
+  // Single location → same as before. Multiple locations → each location gets
+  // 1 post/week in its own slot so operators know exactly which GBP to post to.
+  const gbpByLoc = new Map<string, typeof gbp>();
+  for (const item of gbp) {
+    const loc = item.locationName ?? '__default__';
+    if (!gbpByLoc.has(loc)) gbpByLoc.set(loc, []);
+    gbpByLoc.get(loc)!.push(item);
+  }
   for (let w = 1; w <= numWeeks; w++) {
-    const item = gbp[w - 1];
-    if (item) result.push({ ...item, week: w, status: 'scheduled' });
+    for (const locItems of gbpByLoc.values()) {
+      const item = locItems[w - 1];
+      if (item) result.push({ ...item, week: w, status: 'scheduled' });
+    }
   }
 
   // Track non-GBP slots filled per week
@@ -810,7 +848,8 @@ export function buildUnifiedCalendar(
   let enrichedMap: Map<string, EnrichedKeyword> | undefined;
 
   if (enrichedKeywords && enrichedKeywords.length > 0) {
-    // Convert enriched keywords to MarketKeywordItem shape so builders work unchanged
+    // Convert enriched keywords to MarketKeywordItem shape so builders work unchanged.
+    // Preserve locationName as _market so GBP posts are routed to the right location's GBP.
     keywords = enrichedKeywords.map(ek => ({
       keyword_data: {
         keyword: ek.keyword,
@@ -819,6 +858,7 @@ export function buildUnifiedCalendar(
       ranked_serp_element: ek.currentRank != null
         ? { serp_item: { rank_group: ek.currentRank, url: '' } }
         : undefined,
+      _market: ek.locationName,
     }));
     // Lookup map for enriched-ROI calculations inside builders
     enrichedMap = new Map(enrichedKeywords.map(ek => [ek.keyword.toLowerCase(), ek]));

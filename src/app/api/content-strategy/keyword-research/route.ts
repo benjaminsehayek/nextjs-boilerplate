@@ -411,6 +411,12 @@ ${kwList}`,
         !key.includes('what ') &&
         !key.includes('vs '));
 
+    // Short location label so GBP posts know which GBP to target.
+    // "Vancouver,Washington,United States" → "Vancouver, WA"
+    const locationLabel = city
+      ? [city.trim(), state.trim()].filter(Boolean).join(', ')
+      : undefined;
+
     return {
       keyword: k.keyword,
       volume,
@@ -425,6 +431,7 @@ ${kwList}`,
       funnel,
       intent,
       localType,
+      locationName: locationLabel,
     };
   });
 
