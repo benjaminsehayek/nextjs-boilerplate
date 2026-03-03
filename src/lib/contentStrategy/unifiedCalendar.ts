@@ -238,6 +238,7 @@ function buildGBPItems(
   countPerLocation = 12,
   enrichedMap?: Map<string, EnrichedKeyword>,
   services?: Array<{ name: string; profit: number; close: number }>,
+  physicalLocations?: Array<{ city?: string; name?: string }>,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
   // Exclude editorial/informational keywords — they make poor GBP service posts.
   // e.g. "important insurance information near me" → filtered out.
@@ -246,23 +247,52 @@ function buildGBPItems(
     return !GBP_NOISE_WORDS.has([...words].find(w => GBP_NOISE_WORDS.has(w)) ?? '');
   };
 
-  // GBP posts are location-level: group keywords by their source market so each
-  // physical location gets its own set of posts targeting its local queries.
-  // Keywords without market attribution (synthetics) go to a shared default group.
-  const byMarket = new Map<string, MarketKeywordItem[]>();
-  for (const item of keywords) {
-    const market = item._market ?? '__default__';
-    if (!byMarket.has(market)) byMarket.set(market, []);
-    byMarket.get(market)!.push(item);
+  // GBP posts are location-level: route keywords to physical GBP locations.
+  //
+  // When physicalLocations is provided (from offPage.location_data):
+  //   - Each entry represents one real physical GBP (one address, one GMB listing).
+  //   - A keyword is assigned to a location if the keyword text contains that location's
+  //     city name (e.g. "plumber vancouver" → Vancouver location).
+  //   - Keywords with no city match (generic terms, "near me") go to the primary location
+  //     (first entry), which is the main/headquarters GBP.
+  //
+  // Fallback (legacy): when no physical locations are available, group by _market string
+  // (DataForSEO keyword research market), same as previous behaviour.
+  type LocGroup = { label: string | undefined; items: MarketKeywordItem[] };
+  const locGroups = new Map<string, LocGroup>();
+
+  if (physicalLocations && physicalLocations.length > 0) {
+    for (const item of keywords) {
+      const kw = item.keyword_data.keyword.toLowerCase();
+      let matched: typeof physicalLocations[0] | undefined;
+      for (const loc of physicalLocations) {
+        if (loc.city && kw.includes(loc.city.toLowerCase())) {
+          matched = loc;
+          break;
+        }
+      }
+      // Unmatched (generic/"near me") → primary location (first in list)
+      const loc = matched ?? physicalLocations[0];
+      const key = loc.city ?? loc.name ?? '__primary__';
+      const label = loc.city ?? loc.name ?? undefined;
+      if (!locGroups.has(key)) locGroups.set(key, { label, items: [] });
+      locGroups.get(key)!.items.push(item);
+    }
+  } else {
+    // Legacy fallback: group by DataForSEO market string
+    for (const item of keywords) {
+      const market = item._market ?? '__default__';
+      const label = market !== '__default__'
+        ? market.split(',').slice(0, 2).map(s => s.trim()).join(', ')
+        : undefined;
+      if (!locGroups.has(market)) locGroups.set(market, { label, items: [] });
+      locGroups.get(market)!.items.push(item);
+    }
   }
 
   const result: Omit<CalendarItemV2, 'week' | 'status'>[] = [];
 
-  for (const [market, mKeywords] of byMarket.entries()) {
-    // Shorten "Vancouver, WA, United States" → "Vancouver, WA" for display
-    const locationLabel = market !== '__default__'
-      ? market.split(',').slice(0, 2).map(s => s.trim()).join(', ')
-      : undefined;
+  for (const { label: locationLabel, items: mKeywords } of locGroups.values()) {
 
     const scored = mKeywords.filter(item => isServiceQuery(item.keyword_data.keyword)).map(item => {
       const kw = item.keyword_data.keyword;
@@ -889,8 +919,18 @@ export function buildUnifiedCalendar(
   // 2. Page URL set for gap detection
   const pageUrls = buildPageUrlSet(siteAudit);
 
-  // 3. Build each item pool
-  const gbpItems = buildGBPItems(keywords, cfg, 12, enrichedMap, services);
+  // 3. Derive physical GBP locations for location-level GBP post routing.
+  //    offPage.location_data is the authoritative list of real GBPs (one entry = one address).
+  //    If no off-page audit exists, fall back to a single location using the site audit city.
+  const physicalLocations: Array<{ city?: string; name?: string }> =
+    offPageAudit?.location_data && offPageAudit.location_data.length > 0
+      ? offPageAudit.location_data
+      : city
+        ? [{ city }]
+        : [];
+
+  // 4. Build each item pool
+  const gbpItems = buildGBPItems(keywords, cfg, 12, enrichedMap, services, physicalLocations);
   const addItems = buildWebsiteAdditions(keywords, pageUrls, cfg, 8, enrichedMap, services, city);
   const blogItems = buildBlogItems(keywords, cfg, 6, enrichedMap);
   const fixItems = buildPageFixTasks(siteAudit, 8);
