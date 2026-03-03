@@ -373,11 +373,47 @@ function buildWebsiteAdditions(
   count = 8,
   enrichedMap?: Map<string, EnrichedKeyword>,
   services?: Array<{ name: string; profit: number; close: number }>,
+  city?: string,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
+  // City stem used to strip location words from topic comparisons.
+  // Without this, "dent repair vancouver" and "bumper repair vancouver" would share
+  // "repai" + "vanco" (2 words) — incorrectly blocking a new "bumper repair" page
+  // just because "dent repair" is already ranking.
+  const cityStem = city && city.length >= 3
+    ? (city.length >= 6 ? city.toLowerCase().slice(0, 5) : city.toLowerCase())
+    : undefined;
+
+  // Topic words stripped of location — service terms only.
+  const coreTopics = (kw: string): string[] =>
+    topicWords(kw).filter(w => !cityStem || w !== cityStem);
+
+  // Build topic sets for keywords the site currently ranks for (positions 1–20).
+  // We only include 1-20: below that, the signal is too weak to block a new page.
+  const rankedTopicSets: string[][] = keywords
+    .filter(item => {
+      const rank = item.ranked_serp_element?.serp_item?.rank_group;
+      return rank != null && rank >= 1 && rank <= 20;
+    })
+    .map(item => coreTopics(item.keyword_data.keyword));
+
+  // Returns true when a gap keyword overlaps topically (≥2 core service words)
+  // with any already-ranked keyword — creating a new page would cannibalize it.
+  const alreadyCoveredByRankedPage = (kw: string): boolean => {
+    const candidateSet = new Set(coreTopics(kw));
+    if (candidateSet.size < 2) return false; // too short to be meaningful
+    return rankedTopicSets.some(rankedTopics => {
+      let matches = 0;
+      for (const w of rankedTopics) {
+        if (candidateSet.has(w) && ++matches >= 2) return true;
+      }
+      return false;
+    });
+  };
+
   // Keywords where no site page is ranking in top 10.
-  // Informational/top-funnel keywords (e.g. "cost of paint job", "how to X") are excluded —
-  // those belong in blog posts, not service pages. Service pages target transactional or
-  // commercial intent where the visitor is ready to hire, not just researching.
+  // Informational/top-funnel keywords (e.g. "cost of paint job") are excluded —
+  // those belong in blog posts. Topically covered keywords are also excluded
+  // (existing ranked page should be optimised instead of replaced by a new one).
   const gapsSorted = keywords
     .filter(item => {
       const rank = item.ranked_serp_element?.serp_item?.rank_group;
@@ -386,8 +422,10 @@ function buildWebsiteAdditions(
       const enriched = enrichedMap?.get(kw);
       const funnel = enriched?.funnel ?? classifyFunnel(item.keyword_data.keyword);
       const intent = enriched?.intent;
-      // Skip informational-intent keywords — they become blog posts, not service pages
-      return funnel !== 'top' && intent !== 'informational';
+      if (funnel === 'top' || intent === 'informational') return false;
+      // Skip gap candidates whose topic is already covered by a ranking page
+      if (alreadyCoveredByRankedPage(item.keyword_data.keyword)) return false;
+      return true;
     })
     .map(item => {
       const kw = item.keyword_data.keyword;
@@ -785,9 +823,10 @@ export function buildUnifiedCalendar(
   //       - Bottom-funnel "[service] [city]" → GBP posts + new service pages
   //       - Informational "cost of [service]" / "how to [service]" → blog posts
   //     Conservative default volumes (100 / 50) ensure real keywords always rank higher.
+  const city = siteAudit.crawl_data?.business?.city ?? '';
+
   const MIN_KEYWORD_POOL = 15;
   if (keywords.length < MIN_KEYWORD_POOL && services) {
-    const city = siteAudit.crawl_data?.business?.city ?? '';
     const existingKwSet = new Set(keywords.map(k => k.keyword_data.keyword.toLowerCase()));
     const { keywords: synKws, enrichedEntries } = buildSyntheticKeywords(services, city, existingKwSet);
     keywords = [...keywords, ...synKws];
@@ -801,7 +840,7 @@ export function buildUnifiedCalendar(
 
   // 3. Build each item pool
   const gbpItems = buildGBPItems(keywords, cfg, 12, enrichedMap, services);
-  const addItems = buildWebsiteAdditions(keywords, pageUrls, cfg, 8, enrichedMap, services);
+  const addItems = buildWebsiteAdditions(keywords, pageUrls, cfg, 8, enrichedMap, services, city);
   const blogItems = buildBlogItems(keywords, cfg, 6, enrichedMap);
   const fixItems = buildPageFixTasks(siteAudit, 8);
   const opItems = buildOffPageItems(offPageAudit, 10);
