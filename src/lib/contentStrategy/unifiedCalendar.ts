@@ -375,17 +375,16 @@ function buildWebsiteAdditions(
   services?: Array<{ name: string; profit: number; close: number }>,
   city?: string,
 ): Omit<CalendarItemV2, 'week' | 'status'>[] {
-  // City stem used to strip location words from topic comparisons.
-  // Without this, "dent repair vancouver" and "bumper repair vancouver" would share
-  // "repai" + "vanco" (2 words) — incorrectly blocking a new "bumper repair" page
-  // just because "dent repair" is already ranking.
-  const cityStem = city && city.length >= 3
-    ? (city.length >= 6 ? city.toLowerCase().slice(0, 5) : city.toLowerCase())
-    : undefined;
+  // City stems: run the city name through topicWords() so multi-word cities work correctly.
+  // "Los Angeles" → topicWords → ["angel"] (not "los a" which never matches anything).
+  // "Vancouver" → ["vanco"]. Used to strip location words before comparing service terms,
+  // so "dent repair vancouver" and "bumper repair vancouver" compare as ["dent","repai"]
+  // vs ["bumpe","repai"] (1 overlap) — correctly treated as different service pages.
+  const cityStems = city ? new Set(topicWords(city)) : null;
 
   // Topic words stripped of location — service terms only.
   const coreTopics = (kw: string): string[] =>
-    topicWords(kw).filter(w => !cityStem || w !== cityStem);
+    topicWords(kw).filter(w => !cityStems || !cityStems.has(w));
 
   // Build topic sets for keywords the site currently ranks for (positions 1–20).
   // We only include 1-20: below that, the signal is too weak to block a new page.
@@ -452,9 +451,21 @@ function buildWebsiteAdditions(
 
   // Topically deduplicate — no two new service pages should target the same semantic topic.
   // Higher-ROI keyword wins; same-topic duplicates are dropped.
+  // City is stripped before comparison so "dent repair vancouver" and
+  // "bumper repair vancouver" are correctly treated as different services.
+  const gapCoreTopics = (kw: string) => coreTopics(kw); // reuse city-stripped fn from above
   const gaps: typeof gapsSorted = [];
   for (const g of gapsSorted) {
-    if (!gaps.some(d => overlapsTopically(d.kw, g.kw, 2))) gaps.push(g);
+    const gTopics = new Set(gapCoreTopics(g.kw));
+    const isDupe = gaps.some(d => {
+      const dTopics = gapCoreTopics(d.kw);
+      let matches = 0;
+      for (const w of dTopics) {
+        if (gTopics.has(w) && ++matches >= 2) return true;
+      }
+      return false;
+    });
+    if (!isDupe) gaps.push(g);
     if (gaps.length >= count) break;
   }
 
