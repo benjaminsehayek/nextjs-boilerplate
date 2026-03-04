@@ -606,16 +606,30 @@ export default function CannibalizationTab({ results }: TabProps) {
     );
   }
 
-  if (!hasAnyData) {
+  if (!hasAnyData && !gscLoading && !gscConnLoading) {
     return (
-      <div className="card p-12 text-center">
-        <div className="text-4xl mb-4">✅</div>
-        <h3 className="text-xl font-display text-ash-300 mb-2">No Competing Pages Found</h3>
-        <p className="text-ash-400 text-sm max-w-lg mx-auto">
-          {hasKeywordData
-            ? 'Each page on this site appears to target a distinct topic. No pages are competing against each other for the same searches.'
-            : 'Pages have been checked for overlapping content. No pages are targeting the same topic with duplicate titles or headings.'}
-        </p>
+      <div className="space-y-4">
+        {!gscConnection?.connected && (
+          <div className="flex items-start gap-3 rounded-lg border border-char-600 bg-char-800 p-4">
+            <span className="text-2xl shrink-0">📊</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-ash-200 mb-0.5">Connect Google Search Console for definitive cannibalization data</p>
+              <p className="text-xs text-ash-500">GSC shows exactly which queries trigger multiple pages — the most accurate cannibalization signal available.</p>
+            </div>
+            <Link href="/settings?tab=integrations" className="shrink-0 px-3 py-1.5 text-xs font-display bg-flame-500 hover:bg-flame-400 text-white rounded-full transition-colors">
+              Connect GSC
+            </Link>
+          </div>
+        )}
+        <div className="card p-12 text-center">
+          <div className="text-4xl mb-4">✅</div>
+          <h3 className="text-xl font-display text-ash-300 mb-2">No Competing Pages Found</h3>
+          <p className="text-ash-400 text-sm max-w-lg mx-auto">
+            {hasKeywordData
+              ? 'Each page on this site appears to target a distinct topic. No pages are competing against each other for the same searches.'
+              : 'Pages have been checked for overlapping content. No pages are targeting the same topic with duplicate titles or headings.'}
+          </p>
+        </div>
       </div>
     );
   }
