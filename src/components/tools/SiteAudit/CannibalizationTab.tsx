@@ -519,20 +519,29 @@ export default function CannibalizationTab({ results }: TabProps) {
   const { connection: gscConnection, loading: gscConnLoading } = useGSCConnection(business?.id);
   const [gscConflicts, setGscConflicts] = useState<CannibalizationConflict[]>([]);
   const [gscLoading, setGscLoading] = useState(false);
+  const [gscError, setGscError] = useState<string | null>(null);
+  const [gscRowCount, setGscRowCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!gscConnection?.connected || !business?.id) return;
     setGscLoading(true);
+    setGscError(null);
     fetch('/api/gsc/analytics', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ businessId: business.id }),
     })
-      .then((r) => r.ok ? r.json() : Promise.reject())
-      .then((data: { rows: GSCRow[] }) => {
-        setGscConflicts(detectCannibalizationFromGSC(data.rows || [], results.domain));
+      .then(async (r) => {
+        const json = await r.json();
+        if (!r.ok) throw new Error(json.error || `HTTP ${r.status}`);
+        return json;
       })
-      .catch(() => { /* non-fatal */ })
+      .then((data: { rows: GSCRow[] }) => {
+        const rows = data.rows || [];
+        setGscRowCount(rows.length);
+        setGscConflicts(detectCannibalizationFromGSC(rows, results.domain));
+      })
+      .catch((e: Error) => setGscError(e.message || 'Failed to load GSC data'))
       .finally(() => setGscLoading(false));
   }, [gscConnection?.connected, business?.id, results.domain]);
 
@@ -681,6 +690,21 @@ export default function CannibalizationTab({ results }: TabProps) {
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
           </svg>
           Loading Google Search Console data…
+        </div>
+      )}
+
+      {/* GSC error */}
+      {gscError && (
+        <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-xs text-danger">
+          <span className="shrink-0">⚠</span>
+          <span>GSC error: {gscError}</span>
+        </div>
+      )}
+
+      {/* GSC debug: rows loaded but no conflicts */}
+      {!gscLoading && !gscError && gscRowCount !== null && gscConflicts.length === 0 && (
+        <div className="text-xs text-ash-500 bg-char-800 border border-char-600 rounded-lg px-4 py-3">
+          GSC loaded {gscRowCount} rows — no queries with 2+ competing pages found in the last 90 days.
         </div>
       )}
 
