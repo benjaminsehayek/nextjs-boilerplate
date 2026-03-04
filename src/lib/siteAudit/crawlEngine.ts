@@ -171,7 +171,7 @@ interface EndpointConfig {
 }
 
 const ENDPOINTS: EndpointConfig[] = [
-  { key: 'pages', path: 'on_page/pages', label: 'Pages', filters: [['resource_type', '=', 'html']], limit: 1000 },
+  { key: 'pages', path: 'on_page/pages', label: 'Pages', limit: 1000 },
   { key: 'resources', path: 'on_page/resources', label: 'Resources', limit: 1000 },
   { key: 'links', path: 'on_page/links', label: 'Links', limit: 1000 },
   { key: 'duplicateTags', path: 'on_page/duplicate_tags', label: 'Duplicate Tags', limit: 500 },
