@@ -94,7 +94,6 @@ export async function GET(request: NextRequest) {
       const sitesData = await sitesRes.json();
       const siteEntries: Array<{ siteUrl: string; permissionLevel: string }> = sitesData.siteEntry || [];
       console.log('[GSC callback] Properties found:', JSON.stringify(siteEntries.map(s => s.siteUrl)));
-      console.log('[GSC callback] Business domain:', domain);
 
       // Fetch business domain to auto-select matching property
       const supabase = await createClient();
@@ -105,6 +104,7 @@ export async function GET(request: NextRequest) {
         .single();
 
       const domain = biz?.domain?.replace(/^https?:\/\//, '').replace(/\/$/, '') || '';
+      console.log('[GSC callback] Business domain:', domain);
 
       // Prefer sc-domain: property matching business domain
       const domainProp = siteEntries.find((s) =>
