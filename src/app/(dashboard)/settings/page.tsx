@@ -109,6 +109,7 @@ function SettingsPageContent() {
     const gscParam = searchParams.get('gsc');
     if (gscParam === 'connected') toast.success('Google Search Console connected!');
     if (gscParam === 'error') toast.error('Failed to connect Google Search Console. Please try again.');
+    if (gscParam === 'noproperty') toast.error('No Search Console property found. Make sure the site is verified in Google Search Console and try again.');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

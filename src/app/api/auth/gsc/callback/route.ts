@@ -124,7 +124,13 @@ export async function GET(request: NextRequest) {
     }
   } catch (e) {
     console.error('[GSC callback] Sites fetch error:', e);
-    // Non-fatal — store tokens even without property auto-select
+    return NextResponse.redirect(`${settingsUrl}&gsc=error`);
+  }
+
+  // Require a property — no point storing tokens without one
+  if (!accountId) {
+    console.error('[GSC callback] No GSC property found for this account');
+    return NextResponse.redirect(`${settingsUrl}&gsc=noproperty`);
   }
 
   // Upsert platform_connections
