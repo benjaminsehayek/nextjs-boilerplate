@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
   const siteUrl = encodeURIComponent(conn.account_id);
-  const analyticsUrl = `https://www.googleapis.com/webmaster-tools/v3/sites/${siteUrl}/searchAnalytics/query`;
+  const analyticsUrl = `https://www.googleapis.com/webmasters/v3/sites/${siteUrl}/searchAnalytics/query`;
 
   try {
     const res = await fetch(analyticsUrl, {

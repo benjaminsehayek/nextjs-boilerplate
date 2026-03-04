@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
   let accountName = '';
 
   try {
-    const sitesRes = await fetch('https://www.googleapis.com/webmaster-tools/v3/sites', {
+    const sitesRes = await fetch('https://www.googleapis.com/webmasters/v3/sites', {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
