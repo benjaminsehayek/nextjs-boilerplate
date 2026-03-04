@@ -630,6 +630,17 @@ export default function CannibalizationTab({ results }: TabProps) {
             </Link>
           </div>
         )}
+        {gscError && (
+          <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-xs text-danger">
+            <span className="shrink-0">⚠</span>
+            <span>GSC error: {gscError}</span>
+          </div>
+        )}
+        {!gscError && gscRowCount !== null && (
+          <div className="text-xs text-ash-500 bg-char-800 border border-char-600 rounded-lg px-4 py-3">
+            GSC loaded {gscRowCount} rows — no queries with 2+ competing pages found in the last 90 days.
+          </div>
+        )}
         <div className="card p-12 text-center">
           <div className="text-4xl mb-4">✅</div>
           <h3 className="text-xl font-display text-ash-300 mb-2">No Competing Pages Found</h3>
