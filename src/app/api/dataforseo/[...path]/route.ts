@@ -4,10 +4,13 @@ import { z } from 'zod';
 import { apiError } from '@/lib/apiError';
 import { createHash } from 'crypto';
 
-// Validate that the POST body is a JSON object (tasks array is optional)
-const DataForSeoBodySchema = z.looseObject({
-  tasks: z.array(z.looseObject({})).optional(),
-});
+// DataForSEO API expects a top-level array of task objects e.g. [{...}].
+// Some callers also wrap tasks in an object { tasks: [...] }.
+// Accept both formats.
+const DataForSeoBodySchema = z.union([
+  z.array(z.looseObject({})),
+  z.looseObject({ tasks: z.array(z.looseObject({})).optional() }),
+]);
 
 const DFS_BASE = 'https://api.dataforseo.com';
 
