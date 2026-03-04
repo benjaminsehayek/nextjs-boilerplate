@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
+import Link from 'next/link';
 import type { TabProps, CannibalizationConflict, KeywordIntent, UrlType } from './types';
 import { PAGE_TYPE_LABELS, INTENT_LABELS } from './types';
 import {
@@ -8,12 +9,16 @@ import {
   detectWrongPageRankings,
   detectMarketKeywordConflicts,
   detectTitleConflicts,
+  detectCannibalizationFromGSC,
   buildRankingPageMap,
   type WrongPageRanking,
   type MarketKeywordConflict,
   type TitleConflict,
   type RankingPage,
+  type GSCRow,
 } from '@/lib/siteAudit/cannibalizationDetection';
+import { useGSCConnection } from '@/lib/hooks/useGSCConnection';
+import { useAuth } from '@/lib/context/AuthContext';
 import { StatGrid } from './shared/StatGrid';
 
 // ─── Shared Sub-components ──────────────────────────────────────────
@@ -503,11 +508,33 @@ function RankingPageCard({
 
 // ─── Main Tab ────────────────────────────────────────────────────────
 
-type ActiveSection = 'all' | 'serp' | 'wrongpage' | 'ngram' | 'content' | 'rankings';
+type ActiveSection = 'all' | 'serp' | 'wrongpage' | 'ngram' | 'content' | 'rankings' | 'gsc';
 
 export default function CannibalizationTab({ results }: TabProps) {
   const keywordsData = results.crawlData.keywords;
   const pages = results.crawlData.pages?.items || [];
+
+  // GSC integration
+  const { business } = useAuth();
+  const { connection: gscConnection, loading: gscConnLoading } = useGSCConnection(business?.id);
+  const [gscConflicts, setGscConflicts] = useState<CannibalizationConflict[]>([]);
+  const [gscLoading, setGscLoading] = useState(false);
+
+  useEffect(() => {
+    if (!gscConnection?.connected || !business?.id) return;
+    setGscLoading(true);
+    fetch('/api/gsc/analytics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ businessId: business.id }),
+    })
+      .then((r) => r.ok ? r.json() : Promise.reject())
+      .then((data: { rows: GSCRow[] }) => {
+        setGscConflicts(detectCannibalizationFromGSC(data.rows || [], results.domain));
+      })
+      .catch(() => { /* non-fatal */ })
+      .finally(() => setGscLoading(false));
+  }, [gscConnection?.connected, business?.id, results.domain]);
 
   const serpConflicts = useMemo(() => {
     if (!keywordsData?.markets) return [];
@@ -564,12 +591,12 @@ export default function CannibalizationTab({ results }: TabProps) {
 
   const [activeSection, setActiveSection] = useState<ActiveSection>('all');
 
-  const totalIssues = serpConflicts.length + wrongPageRankings.length + marketConflicts.length + contentOverlaps.length;
+  const totalIssues = serpConflicts.length + wrongPageRankings.length + marketConflicts.length + contentOverlaps.length + gscConflicts.length;
   const hasKeywordData = !!keywordsData?.markets;
   const hasAnyData = totalIssues > 0;
 
   // No data at all
-  if (!hasKeywordData && pages.length === 0) {
+  if (!hasKeywordData && pages.length === 0 && gscConflicts.length === 0 && !gscLoading) {
     return (
       <div className="card p-12 text-center">
         <div className="text-4xl mb-4">🔍</div>
@@ -595,6 +622,7 @@ export default function CannibalizationTab({ results }: TabProps) {
 
   const sections: Array<{ id: ActiveSection; label: string; count: number; title: string }> = [
     { id: 'all', label: 'All Issues', count: totalIssues, title: '' },
+    { id: 'gsc', label: '📊 GSC Confirmed', count: gscConflicts.length, title: 'GSC Confirmed' },
     { id: 'serp', label: '✅ Confirmed Conflicts', count: serpConflicts.length, title: 'Confirmed Conflicts' },
     { id: 'wrongpage', label: '🎯 Wrong Page Showing Up', count: wrongPageRankings.length, title: 'Wrong Page Ranking' },
     { id: 'ngram', label: '⚔ Same Keywords', count: marketConflicts.length, title: 'Same Keywords' },
@@ -614,6 +642,34 @@ export default function CannibalizationTab({ results }: TabProps) {
   return (
     <div className="space-y-6">
 
+      {/* GSC Connect Banner — shown when not connected */}
+      {!gscConnLoading && !gscConnection?.connected && (
+        <div className="flex items-start gap-3 rounded-lg border border-char-600 bg-char-800 p-4">
+          <span className="text-2xl shrink-0">📊</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-ash-200 mb-0.5">Connect Google Search Console for definitive cannibalization data</p>
+            <p className="text-xs text-ash-500">GSC shows exactly which queries trigger multiple pages — the most accurate cannibalization signal available. Current results are based on title analysis only.</p>
+          </div>
+          <Link
+            href="/dashboard/settings?tab=integrations"
+            className="shrink-0 px-3 py-1.5 text-xs font-display bg-flame-500 hover:bg-flame-400 text-white rounded-full transition-colors"
+          >
+            Connect GSC
+          </Link>
+        </div>
+      )}
+
+      {/* GSC Loading indicator */}
+      {gscLoading && (
+        <div className="flex items-center gap-2 text-xs text-ash-400 bg-char-800 border border-char-600 rounded-lg px-4 py-3">
+          <svg className="animate-spin h-3.5 w-3.5 text-flame-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          Loading Google Search Console data…
+        </div>
+      )}
+
       {/* Summary */}
       <div>
         <h3 className="font-display text-lg mb-1">Page Competition Analysis</h3>
@@ -624,6 +680,7 @@ export default function CannibalizationTab({ results }: TabProps) {
           stats={[
             { value: totalIssues, label: 'Total Issues Found', isWarning: totalIssues > 0 },
             { value: criticalCount, label: 'High Priority', isWarning: criticalCount > 0 },
+            ...(gscConflicts.length > 0 ? [{ value: gscConflicts.length, label: 'GSC Confirmed', isWarning: true }] : []),
             { value: serpConflicts.length, label: 'Confirmed by Google', isWarning: serpConflicts.length > 0 },
             { value: wrongPageRankings.length, label: 'Wrong Page Ranking', isWarning: wrongPageRankings.length > 0 },
             { value: exactConflictCount, label: 'Local Keyword Conflicts', isWarning: exactConflictCount > 0 },
@@ -655,6 +712,23 @@ export default function CannibalizationTab({ results }: TabProps) {
           </button>
         ))}
       </div>
+
+      {/* ── GSC Confirmed Conflicts ── */}
+      {(activeSection === 'all' || activeSection === 'gsc') && gscConflicts.length > 0 && (
+        <div>
+          <SectionHeader
+            title="Google Search Console: Pages Competing for the Same Queries"
+            count={gscConflicts.length}
+            badge="GSC Data"
+            description="These conflicts come directly from your Google Search Console data. Google is showing multiple pages from your site for the same search query — confirmed cannibalization from the last 90 days of actual search traffic."
+          />
+          <div className="space-y-4">
+            {gscConflicts.map((c, idx) => (
+              <SerpConflictCard key={`gsc-${c.keyword}-${idx}`} conflict={c} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Confirmed Conflicts (SERP-verified) ── */}
       {(activeSection === 'all' || activeSection === 'serp') && serpConflicts.length > 0 && (

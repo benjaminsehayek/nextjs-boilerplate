@@ -20,6 +20,7 @@ import { ServicesList } from '@/components/settings/ServicesList';
 import { MarketModal } from '@/components/settings/MarketModal';
 import { MarketsList } from '@/components/settings/MarketsList';
 import { profileUpdateSchema } from '@/lib/validations/profile';
+import { useGSCConnection } from '@/lib/hooks/useGSCConnection';
 import { z } from 'zod';
 import type { BusinessLocation } from '@/types';
 
@@ -33,6 +34,7 @@ function SettingsPageContent() {
   const { locations, loading: locationsLoading } = useLocations(business?.id);
   const { toast } = useToast();
   const supabase = createClient();
+  const { connection: gscConnection, loading: gscLoading, connect: gscConnect, disconnect: gscDisconnect } = useGSCConnection(business?.id);
 
   // Tab state - get from URL or default to 'personal'
   const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'personal');
@@ -101,6 +103,14 @@ function SettingsPageContent() {
       // ignore parse errors
     }
   }, [business?.id]);
+
+  // Show toast after GSC OAuth redirect
+  useEffect(() => {
+    const gscParam = searchParams.get('gsc');
+    if (gscParam === 'connected') toast.success('Google Search Console connected!');
+    if (gscParam === 'error') toast.error('Failed to connect Google Search Console. Please try again.');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Initialize business data when business loads
   useEffect(() => {
@@ -1016,6 +1026,63 @@ function SettingsPageContent() {
       {/* Integrations Tab */}
       {activeTab === 'integrations' && (
         <div className="space-y-6">
+          {/* Google Search Console Integration Card */}
+          <div className="card p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-btn bg-heat-500/10 border border-heat-500/20 flex items-center justify-center text-sm">
+                  🔍
+                </div>
+                <div>
+                  <h2 className="font-display text-xl">Google Search Console</h2>
+                  <p className="text-sm text-ash-400">Detect keyword cannibalization from real Google ranking data</p>
+                </div>
+              </div>
+              {gscConnection?.connected && (
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-success/10 text-success border border-success/20">
+                  Connected
+                </span>
+              )}
+            </div>
+
+            {gscLoading ? (
+              <div className="text-sm text-ash-500">Loading…</div>
+            ) : gscConnection?.connected ? (
+              <div className="space-y-3">
+                <div className="bg-char-700 rounded-btn px-4 py-3 text-sm space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-ash-400">Property</span>
+                    <span className="text-ash-200 font-mono text-xs">{gscConnection.account_name || gscConnection.account_id}</span>
+                  </div>
+                  {gscConnection.last_sync && (
+                    <div className="flex justify-between">
+                      <span className="text-ash-400">Last sync</span>
+                      <span className="text-ash-300 text-xs">{new Date(gscConnection.last_sync).toLocaleDateString()}</span>
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={async () => { await gscDisconnect(); toast.success('Google Search Console disconnected.'); }}
+                  className="btn-secondary text-sm text-danger border-danger/30 hover:bg-danger/10"
+                >
+                  Disconnect
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-ash-400">
+                  Connect your Google Search Console to see which pages compete for the same search queries — the most accurate cannibalization signal available.
+                </p>
+                <button
+                  onClick={gscConnect}
+                  className="btn-primary text-sm"
+                >
+                  Connect Google Search Console
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* WordPress Integration Card */}
           <div className="card p-6">
             <div className="flex items-center justify-between mb-4">

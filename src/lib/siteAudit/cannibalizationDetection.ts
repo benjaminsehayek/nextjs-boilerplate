@@ -660,3 +660,111 @@ export function buildRankingPageMap(
   // Return sorted by ETV descending
   return [...pageMap.values()].sort((a, b) => b.totalEtv - a.totalEtv);
 }
+
+// ─── GSC-Sourced Cannibalization Detection ───────────────────────────────────
+
+export interface GSCRow {
+  keys: string[];        // [query, page]
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+/**
+ * Detects cannibalization from Google Search Console Search Analytics data.
+ * Groups rows by query — any query where 2+ distinct pages appear = confirmed
+ * cannibalization backed by real Google data (not estimated).
+ *
+ * @param rows   Raw rows from /api/gsc/analytics (dimensions: query × page)
+ * @param domain Business domain (e.g. "fivestarvancouver.com"), used for URL classification
+ */
+export function detectCannibalizationFromGSC(
+  rows: GSCRow[],
+  domain: string,
+): CannibalizationConflict[] {
+  const MIN_IMPRESSIONS = 10; // Filter out noise / near-zero queries
+
+  // Group by query → list of {page, clicks, impressions, position}
+  const queryMap = new Map<string, Array<{ url: string; clicks: number; impressions: number; position: number }>>();
+
+  for (const row of rows) {
+    const query = row.keys[0];
+    const page = row.keys[1];
+    if (!query || !page) continue;
+    if (row.impressions < MIN_IMPRESSIONS) continue;
+
+    const existing = queryMap.get(query) ?? [];
+    existing.push({ url: page, clicks: row.clicks, impressions: row.impressions, position: row.position });
+    queryMap.set(query, existing);
+  }
+
+  const conflicts: CannibalizationConflict[] = [];
+
+  for (const [query, pages] of queryMap.entries()) {
+    if (pages.length < 2) continue;
+
+    // Sort by position ascending (best rank first)
+    const sorted = [...pages].sort((a, b) => a.position - b.position);
+    const primary = sorted[0];
+    const competitors = sorted.slice(1);
+
+    const primaryType = classifyUrlType(primary.url);
+    const topCompetitor = competitors[0];
+    const competitorType = classifyUrlType(topCompetitor.url);
+    const intent = classifyKeywordIntent(query, domain, []);
+    const conflictResult = classifyConflictType(primaryType, competitorType, intent);
+
+    // Severity: based on impressions (proxy for search volume) + position
+    const impressions = primary.impressions;
+    let severity: 'critical' | 'high' | 'medium';
+    if (impressions >= 1000 || primary.position <= 3) severity = 'critical';
+    else if (impressions >= 100 || primary.position <= 10) severity = 'high';
+    else severity = 'medium';
+
+    conflicts.push({
+      keyword: query,
+      volume: impressions, // GSC impressions used as volume proxy
+      cpc: 0,             // Not available from GSC
+      market: 'GSC Data',
+      primary: {
+        url: primary.url,
+        path: (() => { try { return new URL(primary.url).pathname; } catch { return primary.url; } })(),
+        position: Math.round(primary.position),
+        title: '',
+        pageType: primaryType,
+      },
+      competitors: competitors.map((c) => ({
+        url: c.url,
+        path: (() => { try { return new URL(c.url).pathname; } catch { return c.url; } })(),
+        position: Math.round(c.position),
+        title: '',
+        pageType: classifyUrlType(c.url),
+      })),
+      positionGap: Math.round(competitors[competitors.length - 1].position - primary.position),
+      allMatches: sorted.map((p) => ({
+        url: p.url,
+        path: (() => { try { return new URL(p.url).pathname; } catch { return p.url; } })(),
+        position: Math.round(p.position),
+        title: '',
+        description: '',
+      })),
+      severity,
+      intent,
+      conflictType: conflictResult.type,
+      conflictIcon: conflictResult.icon,
+      conflictDescription: conflictResult.description,
+      conflictFix: conflictResult.fix,
+      primaryType,
+      competitorType,
+      wrongPageWinning: false,
+    });
+  }
+
+  // Sort by severity then impressions
+  const sevOrder: Record<string, number> = { critical: 0, high: 1, medium: 2 };
+  return conflicts.sort((a, b) => {
+    const sev = sevOrder[a.severity] - sevOrder[b.severity];
+    return sev !== 0 ? sev : b.volume - a.volume;
+  });
+}
