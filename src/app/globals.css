@@ -284,8 +284,92 @@ body {
   .rounded-card {
     border-radius: var(--radius-card);
   }
+
+  .animate-fade-in {
+    animation: fade-in 0.2s ease-out forwards;
+  }
+
+  .btn-danger {
+    background: var(--color-danger);
+    color: white;
+    font-weight: 600;
+    padding: 0.625rem 1.25rem;
+    border-radius: var(--radius-btn);
+    transition: all 0.2s;
+    border: none;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-danger) 85%, white);
+    transform: translateY(-0.125rem);
+  }
+
+  .btn-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .animate-modal-overlay {
+    animation: modal-overlay-in 0.15s ease-out forwards;
+  }
+
+  .animate-modal-card {
+    animation: modal-card-in 0.2s ease-out forwards;
+  }
+}
+
+@layer utilities {
+  @media print {
+    /* Hide sidebar, header, nav, buttons */
+    aside, nav, .sidebar, header, .no-print, [data-no-print] { display: none !important; }
+    /* Clean background */
+    body, main { background: white !important; color: black !important; }
+    /* Full width content */
+    main { width: 100% !important; padding: 0 !important; }
+    /* Issue cards: clean borders */
+    .card { border: 1px solid #ccc !important; background: white !important; break-inside: avoid; }
+    /* Text colors for print */
+    .text-ash-100, .text-ash-200, .text-ash-300 { color: #111 !important; }
+    .text-ash-500 { color: #555 !important; }
+    /* Local grid print container */
+    .print-grid-container { width: 100% !important; }
+    .print-grid-container > * { break-inside: avoid; }
+  }
+}
+
+/* ─── Light Mode Overrides (B9-15) ──────────────────────────────────────────
+   Applied when the <html> element has the .light class.
+   NOTE: char-* / ash-* colors are defined as CSS custom properties in @theme above,
+   so overriding them here works correctly with all component classes that reference them.
+   ─────────────────────────────────────────────────────────────────────────── */
+html.light {
+  --color-char-900: #f9fafb;
+  --color-char-800: #ffffff;
+  --color-char-700: #f3f4f6;
+  --color-char-600: #e5e7eb;
+  --color-char-500: #9ca3af;
+  --color-ash-100: #111827;
+  --color-ash-200: #1f2937;
+  --color-ash-300: #374151;
+  --color-ash-400: #4b5563;
+  --color-ash-500: #6b7280;
 }
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes modal-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes modal-card-in {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
 }

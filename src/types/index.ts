@@ -15,6 +15,14 @@ export interface Profile {
   content_tokens_limit: number;
   scan_credits_used: number;
   scan_credits_limit: number;
+  onboarding_completed: boolean;
+  onboarding_steps_completed: string[];
+  notification_prefs: {
+    weekly_digest: boolean;
+    scan_complete: boolean;
+    campaign_sent: boolean;
+    billing_reminder: boolean;
+  } | null;
   created_at: string;
   updated_at: string;
 }

@@ -5,6 +5,7 @@ import { ScoreRing } from '@/components/ui/ScoreRing';
 import type { LocationTabProps } from './types';
 import ReviewsPanel from './ReviewsPanel';
 import GBPCompleteness from './GBPCompleteness';
+import GBPPostsCard from './GBPPostsCard';
 import NAPConsistency from './NAPConsistency';
 import Recommendations from './Recommendations';
 
@@ -144,6 +145,11 @@ export default function LocationTab({ location, domainScore, businessName, busin
         <Section id="gbp" title="GBP Completeness" open={openSections.has('gbp')} onToggle={toggle}
           badge={`${location.gbpScore}%`}>
           <GBPCompleteness gbp={location.gbp} />
+        </Section>
+
+        <Section id="gbp-posts" title="Recent GBP Posts" open={openSections.has('gbp-posts')} onToggle={toggle}
+          badge={location.gbpPosts && location.gbpPosts.length > 0 ? `${location.gbpPosts.length}` : undefined}>
+          <GBPPostsCard posts={location.gbpPosts} />
         </Section>
 
         <Section id="nap" title="NAP Consistency" open={openSections.has('nap')} onToggle={toggle}

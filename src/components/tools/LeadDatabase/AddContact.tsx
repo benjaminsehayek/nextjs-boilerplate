@@ -472,6 +472,30 @@ export default function AddContact({ contact, onSave, onCancel }: AddContactProp
                 className="input min-h-[100px]"
                 placeholder="Add any additional notes..."
               />
+
+              {/* Notes History — only shown when editing an existing contact */}
+              {isEditing && contact?.notesHistory && contact.notesHistory.length > 0 && (
+                <div className="mt-3 border border-char-700 rounded-btn p-3 bg-char-900/30">
+                  <p className="text-xs font-semibold text-ash-400 uppercase tracking-wider mb-2">
+                    Notes History
+                  </p>
+                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                    {contact.notesHistory.slice(0, 5).map((entry, idx) => (
+                      <p key={idx} className="text-ash-500 text-xs leading-relaxed">
+                        <span className="text-ash-400 font-medium">
+                          {new Date(entry.timestamp).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                          })}
+                          :
+                        </span>{' '}
+                        {entry.content}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </form>

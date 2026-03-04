@@ -258,6 +258,15 @@ export interface Recommendation {
   description: string;
 }
 
+export interface GbpPost {
+  title?: string;
+  summary?: string;
+  create_time?: string;
+  update_time?: string;
+  callToAction?: { actionType: string };
+  media?: { mediaFormat: string; sourceUrl: string }[];
+}
+
 export interface LocationAuditData {
   locationId: string;
   name: string;
@@ -274,6 +283,7 @@ export interface LocationAuditData {
   reviews: ReviewData;
   nap: NAPData;
   gbp: GBPData;
+  gbpPosts?: GbpPost[];
   brandMentions: BrandMention[];
   recommendations: Recommendation[];
 }

@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAuth } from '@/lib/context/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 import type { CalendarItemV2, SimpleStrategyConfig, SiteAudit } from '@/types';
 import type { EnrichedKeyword, SiteAuditKeyword } from '@/lib/contentStrategy/keywordResearch';
 import dynamic from 'next/dynamic';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 
 const SimpleConfigForm = dynamic(() => import('@/components/tools/ContentStrategy/SimpleConfigForm'), { ssr: false });
 const UnifiedCalendar = dynamic(() => import('@/components/tools/ContentStrategy/UnifiedCalendar'), { ssr: false });
@@ -26,6 +27,20 @@ const AUTO_REFRESH_DAYS: Partial<Record<string, number>> = {
   growth: 7,
   marketing: 30,
 };
+
+// B6-10: Time-ago helper
+function timeAgo(date: Date | null): string {
+  if (!date) return '';
+  const diffMs = Date.now() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return 'just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} minute${diffMin !== 1 ? 's' : ''} ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr} hour${diffHr !== 1 ? 's' : ''} ago`;
+  const diffDays = Math.floor(diffHr / 24);
+  return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+}
 
 function autoRefreshDue(lastGeneratedAt: string | null, tier: string): boolean {
   const days = AUTO_REFRESH_DAYS[tier];
@@ -49,6 +64,14 @@ export default function ContentStrategyPage() {
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [generationStep, setGenerationStep] = useState('');
+
+  // B6-10: Refresh indicator state
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
+  const [showRefreshToast, setShowRefreshToast] = useState(false);
+  const [refreshToastError, setRefreshToastError] = useState(false);
+
+  // B13-09: Lock to prevent concurrent generate() calls (manual + auto-refresh race)
+  const generatingRef = useRef(false);
 
   // Debounce status saves
   const statusDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -149,6 +172,8 @@ export default function ContentStrategyPage() {
     const auditToUse = opts?.auditData ?? siteAudit;
     const offPageToUse = opts?.offPageData ?? offPageAudit;
     if (!auditToUse || !business?.id) return;
+    if (generatingRef.current) return;
+    generatingRef.current = true;
 
     setError('');
     if (!opts?.silent) setPhase('generating');
@@ -230,6 +255,7 @@ export default function ContentStrategyPage() {
           .from('content_strategies')
           .update(upsertData)
           .eq('id', strategyId)
+          .eq('business_id', business!.id)
           .select('id, calendar_v2, item_statuses, source_audit_id, last_generated_at, economics')
           .single();
       } else {
@@ -248,39 +274,82 @@ export default function ContentStrategyPage() {
       setStoredEconomics(cfg);
       setHasNewerAudit(false);
       if (!opts?.silent) setPhase('complete');
+
+      // B6-10: Track refresh time and show toast (both silent and manual refreshes)
+      setLastRefreshedAt(new Date());
+      setRefreshToastError(false);
+      setShowRefreshToast(true);
+      setTimeout(() => setShowRefreshToast(false), 3000);
     } catch (err: any) {
       setError(err.message || 'Failed to generate strategy');
       if (!opts?.silent) setPhase(strategy ? 'complete' : 'config');
+      // Show error toast on silent background refresh failure so user knows data may be stale
+      if (opts?.silent) {
+        setRefreshToastError(true);
+        setShowRefreshToast(true);
+        setTimeout(() => setShowRefreshToast(false), 5000);
+      }
     } finally {
+      generatingRef.current = false;
       setRefreshing(false);
     }
   }
 
   // Save AI-generated content back to DB so it persists across sessions
-  async function handleContentGenerated(id: string, content: string) {
+  const handleContentGenerated = useCallback(async (id: string, content: string) => {
     const updated = calendarItems.map(item =>
       item.id === id ? { ...item, generatedContent: content } : item
     );
     setCalendarItems(updated);
-    if (strategy?.id) {
+    if (strategy?.id && business?.id) {
       await (supabase as any)
         .from('content_strategies')
         .update({ calendar_v2: updated })
-        .eq('id', strategy.id);
+        .eq('id', strategy.id)
+        .eq('business_id', business.id);
     }
-  }
+  }, [calendarItems, strategy?.id, business?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist week change after drag-and-drop
+  const weekChangeDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup debounce timers on unmount to prevent state updates on unmounted component
+  useEffect(() => {
+    return () => {
+      if (weekChangeDebounce.current) clearTimeout(weekChangeDebounce.current);
+      if (statusDebounce.current) clearTimeout(statusDebounce.current);
+    };
+  }, []);
+
+  const handleWeekChange = useCallback((id: string, newWeek: number) => {
+    const updated = calendarItems.map(item =>
+      item.id === id ? { ...item, week: newWeek } : item
+    );
+    setCalendarItems(updated);
+
+    if (weekChangeDebounce.current) clearTimeout(weekChangeDebounce.current);
+    weekChangeDebounce.current = setTimeout(async () => {
+      if (strategy?.id && business?.id) {
+        await (supabase as any)
+          .from('content_strategies')
+          .update({ calendar_v2: updated })
+          .eq('id', strategy.id)
+          .eq('business_id', business.id);
+      }
+    }, 800);
+  }, [calendarItems, strategy?.id, business?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // If economics are already stored, refresh inline — no config form needed
-  function handleRefresh() {
+  const handleRefresh = useCallback(() => {
     if (storedEconomics) {
       generate(storedEconomics, { silent: true });
     } else {
       setPhase('config');
     }
-  }
+  }, [storedEconomics]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Item status toggle ─────────────────────────────────────────────
-  function handleStatusChange(id: string, status: 'scheduled' | 'done' | 'skipped') {
+  const handleStatusChange = useCallback((id: string, status: 'scheduled' | 'done' | 'skipped') => {
     const next: Record<string, 'done' | 'skipped'> = { ...itemStatuses };
     if (status === 'scheduled') {
       delete next[id];
@@ -292,19 +361,21 @@ export default function ContentStrategyPage() {
 
     if (statusDebounce.current) clearTimeout(statusDebounce.current);
     statusDebounce.current = setTimeout(async () => {
-      if (strategy?.id) {
+      if (strategy?.id && business?.id) {
         await (supabase as any)
           .from('content_strategies')
           .update({ item_statuses: next })
-          .eq('id', strategy.id);
+          .eq('id', strategy.id)
+          .eq('business_id', business.id);
       }
     }, 800);
-  }
+  }, [itemStatuses, strategy?.id, business?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const itemsWithStatus = calendarItems.map(item => ({
+  // Memoized — recomputes only when [calendarItems, itemStatuses] change
+  const itemsWithStatus = useMemo(() => calendarItems.map(item => ({
     ...item,
     status: (itemStatuses[item.id] as any) ?? item.status,
-  }));
+  })), [calendarItems, itemStatuses]);
 
   // ── Loading ────────────────────────────────────────────────────────
   if (authLoading || phase === 'checking') {
@@ -331,12 +402,26 @@ export default function ContentStrategyPage() {
         and produces one unified plan. Location-specific grids belong in Local Grid.
         Do NOT add a LocationSelector to this page.
       */}
+
+      {/* B6-10: Refresh toast — fixed overlay, auto-hides after 3s (5s on error) */}
+      {showRefreshToast && (
+        <div className={`fixed top-4 right-4 px-4 py-2 rounded-btn text-sm animate-fade-in z-50 shadow-card ${refreshToastError ? 'bg-danger/20 border border-danger text-danger' : 'bg-char-700 text-ash-100'}`}>
+          {refreshToastError ? 'Auto-refresh failed — data may be stale' : 'Strategy refreshed'}
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl text-ash-100">Content Strategy</h1>
           <p className="text-ash-500 mt-1 text-sm">
             Keyword research + 12-week content plan — finds what to target, generates what to publish.
           </p>
+          {/* B6-10: Last refreshed indicator */}
+          {lastRefreshedAt && (
+            <p className="text-ash-500 text-sm mt-1">
+              Strategy refreshed {timeAgo(lastRefreshedAt)}
+            </p>
+          )}
         </div>
         {domain && (
           <div className="flex items-center gap-1.5 text-xs text-ash-500 bg-char-700 border border-char-600 px-3 py-1.5 rounded-btn shrink-0 mt-1">
@@ -480,19 +565,22 @@ export default function ContentStrategyPage() {
 
       {/* ── Calendar ── */}
       {phase === 'complete' && (
-        <UnifiedCalendar
-          items={itemsWithStatus}
-          businessName={businessName}
-          domain={domain}
-          industry={industry}
-          city={city}
-          lastGeneratedAt={strategy?.last_generated_at ?? null}
-          hasNewerAudit={hasNewerAudit}
-          onRefresh={handleRefresh}
-          onStatusChange={handleStatusChange}
-          onContentGenerated={handleContentGenerated}
-          refreshing={refreshing}
-        />
+        <ErrorBoundary fallbackLabel="Calendar failed to render">
+          <UnifiedCalendar
+            items={itemsWithStatus}
+            businessName={businessName}
+            domain={domain}
+            industry={industry}
+            city={city}
+            lastGeneratedAt={strategy?.last_generated_at ?? null}
+            hasNewerAudit={hasNewerAudit}
+            onRefresh={handleRefresh}
+            onStatusChange={handleStatusChange}
+            onContentGenerated={handleContentGenerated}
+            onWeekChange={handleWeekChange}
+            refreshing={refreshing}
+          />
+        </ErrorBoundary>
       )}
     </div>
   );

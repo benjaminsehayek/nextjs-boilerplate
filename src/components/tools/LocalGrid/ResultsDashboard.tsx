@@ -1,9 +1,57 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { MapDisplay } from './MapDisplay';
-import type { GridScanResult, HeatmapData } from './types';
+import type { GridScanResult, HeatmapData, GridPoint } from './types';
+
+const LS_HEATMAP_KEY = 'local-grid-heatmap';
+
+function getRankStyle(rank: number | null | undefined): { bg: string; text: string } {
+  if (rank == null) return { bg: 'bg-red-900/60', text: 'text-red-400' };
+  if (rank <= 3) return { bg: 'bg-emerald-900/60', text: 'text-emerald-300' };
+  if (rank <= 10) return { bg: 'bg-yellow-900/60', text: 'text-yellow-300' };
+  if (rank <= 20) return { bg: 'bg-orange-900/60', text: 'text-orange-300' };
+  return { bg: 'bg-red-900/60', text: 'text-red-400' };
+}
+
+function CssHeatmapGrid({ gridPoints, gridSize, heatmapData }: {
+  gridPoints: GridPoint[];
+  gridSize: number;
+  heatmapData?: HeatmapData;
+}) {
+  // Build rank lookup from heatmapData for correct per-keyword ranks
+  const rankLookup = new Map<string, number | null>();
+  if (heatmapData) {
+    heatmapData.points.forEach((p) => {
+      rankLookup.set(`${p.lat.toFixed(7)},${p.lng.toFixed(7)}`, p.rank);
+    });
+  }
+
+  return (
+    <div
+      className="grid gap-1"
+      style={{ gridTemplateColumns: `repeat(${gridSize}, minmax(0, 1fr))` }}
+    >
+      {gridPoints.map((point, idx) => {
+        const rank = heatmapData
+          ? (rankLookup.get(`${point.lat.toFixed(7)},${point.lng.toFixed(7)}`) ?? null)
+          : point.rank ?? null;
+        const { bg, text } = getRankStyle(rank);
+        return (
+          <div
+            key={idx}
+            title={rank != null ? `Rank #${rank}` : 'Not ranking'}
+            className={`${bg} ${text} flex items-center justify-center rounded text-xs font-bold aspect-square min-w-0`}
+            style={{ fontSize: `clamp(8px, ${Math.min(14, 60 / gridSize)}px, 14px)` }}
+          >
+            {rank != null ? rank : '—'}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 interface ResultsDashboardProps {
   scan: GridScanResult;
@@ -15,7 +63,30 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
   const [selectedKeyword, setSelectedKeyword] = useState(
     scan.config.keywords[0]?.text || ''
   );
+  const [heatmapMode, setHeatmapMode] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
+
+  // Load heatmap preference from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(LS_HEATMAP_KEY);
+      if (saved === 'true') setHeatmapMode(true);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  function toggleHeatmapMode() {
+    setHeatmapMode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(LS_HEATMAP_KEY, String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }
 
   const currentHeatmap = heatmapData[selectedKeyword];
   const totalPoints = scan.config.size * scan.config.size;
@@ -47,7 +118,7 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 print-grid-container">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -55,13 +126,31 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
           <p className="text-sm text-ash-300">{scan.business_info.name}</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={handleExportPng} className="btn-ghost text-sm">
+          <button
+            onClick={toggleHeatmapMode}
+            data-no-print
+            className={`text-sm px-3 py-1.5 rounded-btn border transition-all ${
+              heatmapMode
+                ? 'bg-char-700 text-ash-100 border-char-600'
+                : 'text-ash-500 border-char-700 hover:text-ash-300 hover:border-char-600'
+            }`}
+          >
+            {heatmapMode ? 'Map View' : 'Heatmap'}
+          </button>
+          <button onClick={handleExportPng} data-no-print className="btn-ghost text-sm">
             📄 Export PNG
           </button>
-          <Link href="/local-grid/reports" className="btn-secondary text-sm">
+          <button
+            data-no-print
+            onClick={() => window.print()}
+            className="btn-ghost text-sm"
+          >
+            🖨️ Print Grid
+          </button>
+          <Link href="/local-grid/reports" data-no-print className="btn-secondary text-sm">
             Saved Reports
           </Link>
-          <button onClick={onNewScan} className="btn-primary">
+          <button onClick={onNewScan} data-no-print className="btn-primary">
             New Scan
           </button>
         </div>
@@ -139,23 +228,54 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
         </div>
       </div>
 
-      {/* Map (wrapped in export ref) */}
+      {/* Map / Heatmap (wrapped in export ref) */}
       <div ref={exportRef}>
         {currentHeatmap && (
           <div className="card p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-display">Ranking Heatmap</h3>
+              <h3 className="text-lg font-display">
+                {heatmapMode ? 'Heatmap Grid' : 'Ranking Map'}
+              </h3>
               <div className="text-sm text-ash-300">
                 Showing results for &quot;{selectedKeyword}&quot;
               </div>
             </div>
 
-            <MapDisplay
-              business={scan.business_info}
-              gridPoints={scan.points}
-              heatmapData={currentHeatmap}
-              showHeatmap={true}
-            />
+            {heatmapMode ? (
+              <div className="space-y-4">
+                <CssHeatmapGrid
+                  gridPoints={scan.points}
+                  gridSize={scan.config.size}
+                  heatmapData={currentHeatmap}
+                />
+                {/* Legend */}
+                <div className="flex flex-wrap gap-4 text-xs mt-2">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded bg-emerald-900/60 border border-emerald-700/40" />
+                    <span className="text-emerald-300">Top 3</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded bg-yellow-900/60 border border-yellow-700/40" />
+                    <span className="text-yellow-300">4–10</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded bg-orange-900/60 border border-orange-700/40" />
+                    <span className="text-orange-300">11–20</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded bg-red-900/60 border border-red-700/40" />
+                    <span className="text-red-400">Not Ranking</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <MapDisplay
+                business={scan.business_info}
+                gridPoints={scan.points}
+                heatmapData={currentHeatmap}
+                showHeatmap={true}
+              />
+            )}
           </div>
         )}
       </div>

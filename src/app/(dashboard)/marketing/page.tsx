@@ -10,6 +10,9 @@ import type { Campaign, DashboardStats, MessageTemplate, CreateCampaignInput } f
 import type { Contact, Segment } from '@/components/tools/LeadDatabase/types';
 import { DEFAULT_SEGMENTS } from '@/components/tools/LeadDatabase/types';
 
+import { EmptyState } from '@/components/ui/EmptyState';
+import { useToast } from '@/components/ui/Toast';
+
 // Dynamic imports for heavy components
 import dynamic from 'next/dynamic';
 const MarketingDashboard = dynamic(() => import('@/components/tools/Marketing/MarketingDashboard'), { ssr: false });
@@ -19,6 +22,7 @@ export default function MarketingPage() {
   const { user, loading: authLoading } = useUser();
   const { business } = useBusiness();
   const { canAccessFeature } = useSubscription();
+  const { toast } = useToast();
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -41,9 +45,14 @@ export default function MarketingPage() {
   const loadData = useCallback(async () => {
     if (!business?.id) return;
 
+    // B16-03: Clear stale data before fetch so old business data doesn't show briefly
+    setCampaigns([]);
+    setTemplates([]);
+    setContacts([]);
     setLoading(true);
     try {
       // Load campaigns, templates, contacts in parallel
+      // B16-01/02/04: Reduced limits + metadata-only columns for templates; contacts limited to 1000
       const [campaignsRes, templatesRes, contactsRes] = await Promise.all([
         (supabase as any).from('campaigns')
           .select('*')
@@ -51,13 +60,15 @@ export default function MarketingPage() {
           .order('created_at', { ascending: false })
           .limit(50),
         (supabase as any).from('message_templates')
-          .select('*')
+          .select('id, name, channel, created_at, subject')
           .eq('business_id', business.id)
-          .order('created_at', { ascending: false }),
-        (supabase as any).from('contacts')
-          .select('*')
           .order('created_at', { ascending: false })
-          .limit(5000),
+          .limit(100),
+        (supabase as any).from('contacts')
+          .select('id, first_name, last_name, email, phone, opted_email, opted_sms, tags, lists, elv_score')
+          .eq('business_id', business.id)
+          .order('created_at', { ascending: false })
+          .limit(1000),
       ]);
 
       const loadedCampaigns = (campaignsRes.data || []) as Campaign[];
@@ -86,6 +97,7 @@ export default function MarketingPage() {
       });
     } catch (err) {
       console.error('Failed to load marketing data:', err);
+      toast.error('Failed to load campaigns and contacts. Please refresh the page.'); // B16-09
     } finally {
       setLoading(false);
     }
@@ -95,8 +107,8 @@ export default function MarketingPage() {
     if (business?.id) loadData();
   }, [business?.id, loadData]);
 
-  const handleSaveCampaign = async (input: CreateCampaignInput) => {
-    if (!business?.id) return;
+  const handleSaveCampaign = async (input: CreateCampaignInput): Promise<string | undefined> => {
+    if (!business?.id) return undefined;
 
     const { data, error } = await (supabase as any)
       .from('campaigns')
@@ -118,30 +130,51 @@ export default function MarketingPage() {
       .select()
       .single();
 
-    if (!error && data) {
-      setCampaigns((prev) => [data as Campaign, ...prev]);
-      setShowComposer(false);
+    if (error) {
+      toast.error('Failed to save campaign. Please try again.');
+      return undefined;
     }
+    if (data) {
+      setCampaigns((prev) => [data as Campaign, ...prev]);
+      // Do NOT close composer — user may want to send a preview or proceed to send
+      return (data as Campaign).id;
+    }
+    return undefined;
   };
 
-  const handleSendCampaign = async (campaignId: string) => {
+  const handleSendCampaign = async (
+    campaignId: string,
+    options?: { schedule?: boolean; scheduledAt?: string },
+  ) => {
     try {
       const res = await fetch('/api/marketing/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ campaign_id: campaignId }),
+        body: JSON.stringify({
+          campaign_id: campaignId,
+          ...(options?.schedule ? { schedule: true, scheduledAt: options.scheduledAt } : {}),
+        }),
       });
 
       if (!res.ok) {
         const err = await res.json();
-        alert(`Send failed: ${err.error}`);
+        toast.error(`Send failed: ${err.error}`);
         return;
       }
 
+      const result = await res.json();
+      if (result.scheduled) {
+        const scheduledDate = new Date(result.scheduledAt);
+        toast.success(
+          `Campaign scheduled for ${scheduledDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+        );
+      }
+
       await loadData();
+      setShowComposer(false);
     } catch (err) {
       console.error('Send campaign error:', err);
-      alert('Failed to send campaign');
+      toast.error('Failed to send campaign');
     }
   };
 
@@ -224,6 +257,12 @@ export default function MarketingPage() {
             </div>
             <div className="h-64 bg-char-700 rounded-card animate-pulse" />
           </div>
+        ) : campaigns.length === 0 ? (
+          <EmptyState
+            icon="📧"
+            title="No campaigns yet"
+            description="Create your first email or SMS campaign."
+          />
         ) : (
           <MarketingDashboard
             stats={stats}

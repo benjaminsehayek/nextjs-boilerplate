@@ -269,6 +269,7 @@ export interface ContentGeneratorProps {
   items: ContentMapItem[];
   domain: string;
   industry?: string;
+  businessId?: string;
 }
 
 export interface EnhancedCalendarProps {

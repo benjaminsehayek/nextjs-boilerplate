@@ -276,12 +276,10 @@ export function BusinessLookup({ onBusinessFound, initialBusiness }: BusinessLoo
       const query = encodeURIComponent(
         `${formData.address}${formData.city ? ', ' + formData.city : ''}${formData.state ? ', ' + formData.state : ''}`
       );
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${query}&limit=1`
-      );
+      const response = await fetch(`/api/geocode?q=${query}`);
       const data = await response.json();
 
-      if (data.length === 0) {
+      if (!Array.isArray(data) || data.length === 0) {
         setError('Address not found. Please check and try again.');
         return;
       }

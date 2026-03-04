@@ -33,20 +33,30 @@ export async function GET(request: NextRequest) {
 
   const { contactId, campaignId, channel } = decoded;
 
-  // Update contact unsubscribe status
-  const updateField = channel === 'email' ? 'unsubscribed_email' : 'unsubscribed_sms';
+  // Update contact unsubscribe status (authoritative column names: unsub_email, unsub_sms)
+  const updateField = channel === 'email' ? 'unsub_email' : 'unsub_sms';
   await (supabase as any)
     .from('contacts')
     .update({ [updateField]: true })
     .eq('id', contactId);
 
-  // Log the unsubscribe
-  await (supabase as any).from('unsubscribe_log').insert({
-    contact_id: contactId,
-    campaign_id: campaignId,
-    channel,
-    reason: 'one_click_unsubscribe',
-  });
+  // Log the unsubscribe — idempotency: skip if already logged for this contact/campaign/channel
+  const { data: existingLog } = await (supabase as any)
+    .from('unsubscribe_log')
+    .select('id')
+    .eq('contact_id', contactId)
+    .eq('campaign_id', campaignId)
+    .eq('channel', channel)
+    .maybeSingle();
+
+  if (!existingLog) {
+    await (supabase as any).from('unsubscribe_log').insert({
+      contact_id: contactId,
+      campaign_id: campaignId,
+      channel,
+      reason: 'one_click_unsubscribe',
+    });
+  }
 
   // Update campaign recipient status if applicable
   if (campaignId) {

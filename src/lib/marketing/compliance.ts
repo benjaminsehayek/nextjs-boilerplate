@@ -39,8 +39,11 @@ export function validateEmailCompliance(
     errors.push('Email body cannot be empty');
   }
 
-  // Warnings
-  if (htmlBody && !htmlBody.includes('{{first_name}}')) {
+  // Warnings — check both HTML and text bodies for personalization
+  const hasPersonalization =
+    (htmlBody && htmlBody.includes('{{first_name}}')) ||
+    textBody.includes('{{first_name}}');
+  if (!hasPersonalization) {
     warnings.push('Consider personalizing with {{first_name}} for better engagement');
   }
 

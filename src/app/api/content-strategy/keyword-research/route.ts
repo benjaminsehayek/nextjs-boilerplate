@@ -74,6 +74,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Subscription check: keyword research requires an active subscription
+  const { data: profile } = await (supabase as any)
+    .from('profiles')
+    .select('subscription_status')
+    .eq('id', user.id)
+    .single();
+
+  if (!profile || profile.subscription_status !== 'active') {
+    return NextResponse.json({ error: 'Active subscription required' }, { status: 403 });
+  }
+
   const body = await request.json() as {
     industry?: string;
     city?: string;
@@ -82,6 +93,14 @@ export async function POST(request: NextRequest) {
     siteAuditKeywords?: SiteAuditKeyword[];
     businessName?: string;
   };
+
+  // Input validation — truncate/limit fields to prevent oversized payloads
+  if (body.industry) body.industry = body.industry.slice(0, 200);
+  if (body.city) body.city = body.city.slice(0, 200);
+  if (body.state) body.state = body.state.slice(0, 200);
+  if (body.businessName) body.businessName = body.businessName.slice(0, 200);
+  if (body.siteAuditKeywords) body.siteAuditKeywords = body.siteAuditKeywords.slice(0, 100);
+  if (body.locations) body.locations = body.locations.slice(0, 20);
 
   const industry = body.industry ?? '';
   const city = body.city ?? '';

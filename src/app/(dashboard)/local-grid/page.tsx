@@ -50,8 +50,8 @@ function LocalGridInner() {
   const searchParams = useSearchParams();
   const { user } = useUser();
   const { business } = useBusiness();
-  const { locations, selectedLocation, selectLocation, loading: locationsLoading } = useLocations(business?.id);
-  const { scansRemaining, profile } = useSubscription();
+  const { locations, selectedLocation, selectLocation, refreshLocations, loading: locationsLoading } = useLocations(business?.id);
+  const { scansRemaining } = useSubscription();
   const supabase = createClient();
 
   const [scanState, setScanState] = useState<ScanState>('location');
@@ -87,6 +87,7 @@ function LocalGridInner() {
         .select('*')
         .eq('id', id)
         .eq('business_id', business!.id)
+        .is('deleted_at', null)
         .maybeSingle();
 
       if (data && data.status === 'complete') {
@@ -117,6 +118,7 @@ function LocalGridInner() {
         },
         (payload: any) => {
           const updatedScan = payload.new as GridScanResult;
+          if (updatedScan.business_id !== business?.id) return;
           setCurrentScan(updatedScan);
 
           if (updatedScan.status === 'complete') {
@@ -151,6 +153,8 @@ function LocalGridInner() {
       return;
     }
 
+    // Set scanning state immediately to prevent double-click creating duplicate scans
+    setScanState('scanning');
     setError(null);
 
     // Build businessInfo with the potentially-adjusted scanCenter
@@ -189,14 +193,13 @@ function LocalGridInner() {
       if (dbError) throw dbError;
 
       setCurrentScan(scan as GridScanResult);
-      setScanState('scanning');
 
       const heatmap = await runGridScan(
         scan.id,
         effectiveBizInfo,
         config,
         gridPoints,
-        profile?.id,
+        user?.id,
         (progress) => setCurrentScan((prev) => (prev ? { ...prev, progress } : prev))
       );
 
@@ -225,7 +228,8 @@ function LocalGridInner() {
       await (supabase as any)
         .from('grid_scans')
         .update({ status: 'scanning' })
-        .eq('id', scanId);
+        .eq('id', scanId)
+        .eq('business_id', business!.id);
 
       addLog(`Business: ${bizInfo.name}`, 'info');
       addLog(`Grid: ${config.size}×${config.size}, Radius: ${config.radius} mi, Keywords: ${config.keywords.length}`, 'info');
@@ -248,7 +252,8 @@ function LocalGridInner() {
         await (supabase as any)
           .from('grid_scans')
           .update({ progress: kwStartProgress })
-          .eq('id', scanId);
+          .eq('id', scanId)
+          .eq('business_id', business!.id);
         onProgress?.(kwStartProgress);
 
         for (let batchStart = 0; batchStart < gridPoints.length; batchStart += BATCH_SIZE) {
@@ -357,7 +362,8 @@ function LocalGridInner() {
           await (supabase as any)
             .from('grid_scans')
             .update({ progress: batchProgress })
-            .eq('id', scanId);
+            .eq('id', scanId)
+            .eq('business_id', business!.id);
           onProgress?.(batchProgress);
 
           await new Promise((resolve) => setTimeout(resolve, 200));
@@ -411,12 +417,15 @@ function LocalGridInner() {
             total: config.keywords.length,
           },
         })
-        .eq('id', scanId);
+        .eq('id', scanId)
+        .eq('business_id', business!.id);
 
       if (userId) {
         await (supabase as any).rpc('decrement_scan_credits', {
           p_user_id: userId,
         });
+      } else {
+        console.error('[LocalGrid] Cannot deduct scan credit: userId missing');
       }
 
       addLog('Scan complete!', 'success');
@@ -430,7 +439,8 @@ function LocalGridInner() {
       await (supabase as any)
         .from('grid_scans')
         .update({ status: 'failed' })
-        .eq('id', scanId);
+        .eq('id', scanId)
+        .eq('business_id', business!.id);
       throw err; // re-throw so handleStartScan can catch it
     }
   };
@@ -481,7 +491,14 @@ function LocalGridInner() {
         {scanState === 'configure' && locationNeedsCoords && activeLocation && (
           <LocationCoordsSetup
             location={activeLocation}
-            onUpdated={() => window.location.reload()}
+            onUpdated={async () => {
+              // Refresh locations to get updated coordinates without a full page reload
+              await refreshLocations();
+              // selectedLocation is now updated in useLocations (preserves current selection)
+              if (selectedLocation?.id) {
+                selectLocation(selectedLocation.id);
+              }
+            }}
           />
         )}
 
@@ -546,10 +563,10 @@ function LocationStep({
 
     try {
       const resp = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`
+        `/api/geocode?q=${encodeURIComponent(query)}`
       );
       const data = await resp.json();
-      if (data.length > 0) {
+      if (Array.isArray(data) && data.length > 0) {
         const lat = parseFloat(data[0].lat);
         const lng = parseFloat(data[0].lon);
         const { error } = await updateLocationCoords({ location_id: loc.id, latitude: lat, longitude: lng });
@@ -672,9 +689,9 @@ function LocationCoordsSetup({ location, onUpdated }: { location: BusinessLocati
       setLoading(true);
       setError(null);
       try {
-        const resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`);
+        const resp = await fetch(`/api/geocode?q=${encodeURIComponent(query)}`);
         const data = await resp.json();
-        if (data.length === 0) { setError('Address not found'); return; }
+        if (!Array.isArray(data) || data.length === 0) { setError('Address not found'); return; }
         const { error: saveErr } = await updateLocationCoords({
           location_id: location.id,
           latitude: parseFloat(data[0].lat),

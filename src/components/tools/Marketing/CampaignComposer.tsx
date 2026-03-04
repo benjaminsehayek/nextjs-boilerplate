@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import type {
   Channel,
   AudienceType,
@@ -14,6 +14,8 @@ import {
   filterEligibleContacts,
 } from '@/lib/marketing/compliance';
 import { AVAILABLE_TAGS, previewTemplate } from '@/lib/marketing/merge-tags';
+import { CAMPAIGN_TEMPLATES } from '@/lib/marketing/templates';
+import { useAuth } from '@/lib/context/AuthContext';
 import AudienceSelector from './AudienceSelector';
 
 interface CampaignComposerProps {
@@ -22,8 +24,8 @@ interface CampaignComposerProps {
   segments: Segment[];
   lists: string[];
   tags: string[];
-  onSave: (input: CreateCampaignInput) => void;
-  onSend: (campaignId: string) => void;
+  onSave: (input: CreateCampaignInput) => Promise<string | undefined> | void;
+  onSend: (campaignId: string, options?: { schedule?: boolean; scheduledAt?: string }) => void;
   onCancel: () => void;
   isSaving?: boolean;
   isSending?: boolean;
@@ -50,6 +52,10 @@ export default function CampaignComposer({
   isSaving = false,
   isSending = false,
 }: CampaignComposerProps) {
+  // Local loading state (props isSaving/isSending are accepted for compat but never set by parent)
+  const [isSavingLocal, setIsSavingLocal] = useState(false);
+  const [isSendingLocal, setIsSendingLocal] = useState(false);
+
   // Step state
   const [currentStep, setCurrentStep] = useState<Step>(1);
 
@@ -63,17 +69,40 @@ export default function CampaignComposer({
   const [subject, setSubject] = useState('');
   const [htmlBody, setHtmlBody] = useState('');
   const [textBody, setTextBody] = useState('');
+  const textBodyRef = useRef<HTMLTextAreaElement>(null);
   const [senderName, setSenderName] = useState('');
   const [senderEmail, setSenderEmail] = useState('');
   const [senderPhone, setSenderPhone] = useState('');
   const [showPreview, setShowPreview] = useState(false);
 
+  // A/B testing
+  const [abTestEnabled, setAbTestEnabled] = useState(false);
+  const [subjectA, setSubjectA] = useState('');
+  const [subjectB, setSubjectB] = useState('');
+
   // Step 3: Audience
   const [audienceType, setAudienceType] = useState<AudienceType>('all');
   const [audienceValue, setAudienceValue] = useState('');
 
+  // Campaign template loading
+  const [templateLoaded, setTemplateLoaded] = useState(false);
+
   // Step 4: saved campaign id (returned from onSave)
   const [savedCampaignId, setSavedCampaignId] = useState<string | null>(null);
+
+  // Step 4: scheduling
+  const [sendMode, setSendMode] = useState<'now' | 'later'>('now');
+  const [scheduledAt, setScheduledAt] = useState('');
+  const [scheduleError, setScheduleError] = useState('');
+
+  // Step 4: preview email
+  const { user, business } = useAuth();
+  const [previewEmail, setPreviewEmail] = useState(user?.email || '');
+  useEffect(() => {
+    if (user?.email && !previewEmail) setPreviewEmail(user.email);
+  }, [user?.email]);
+  const [previewSending, setPreviewSending] = useState(false);
+  const [previewStatus, setPreviewStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   // Filter templates by channel
   const channelTemplates = useMemo(
@@ -88,6 +117,7 @@ export default function CampaignComposer({
       const tpl = templates.find((t) => t.id === templateId);
       if (tpl) {
         setSubject(tpl.subject || '');
+        setSubjectA(tpl.subject || '');
         setHtmlBody(tpl.html_body || '');
         setTextBody(tpl.text_body);
       }
@@ -113,11 +143,28 @@ export default function CampaignComposer({
     setSenderName('');
     setSenderEmail('');
     setSenderPhone('');
+    setAbTestEnabled(false);
+    setSubjectA('');
+    setSubjectB('');
   };
 
-  // Insert merge tag at cursor (simplified: append to body)
+  // Insert merge tag at cursor position in textBody textarea
   const insertMergeTag = (tag: string) => {
-    setTextBody((prev) => prev + tag);
+    const el = textBodyRef.current;
+    if (el) {
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      const updated = el.value.substring(0, start) + tag + el.value.substring(end);
+      setTextBody(updated);
+      // Restore cursor after the inserted tag
+      requestAnimationFrame(() => {
+        el.selectionStart = start + tag.length;
+        el.selectionEnd = start + tag.length;
+        el.focus();
+      });
+    } else {
+      setTextBody((prev) => prev + tag);
+    }
     if (channel === 'email') {
       setHtmlBody((prev) => prev + tag);
     }
@@ -177,10 +224,10 @@ export default function CampaignComposer({
     () => previewTemplate(textBody),
     [textBody],
   );
-  const previewSubject = useMemo(
-    () => (subject ? previewTemplate(subject) : ''),
-    [subject],
-  );
+  const previewSubject = useMemo(() => {
+    if (abTestEnabled) return subjectA ? previewTemplate(subjectA) : '';
+    return subject ? previewTemplate(subject) : '';
+  }, [subject, subjectA, abTestEnabled]);
 
   // SMS char counter
   const smsCharCount = textBody.length;
@@ -195,7 +242,12 @@ export default function CampaignComposer({
 
     // Step 2
     if (channel === 'email') {
-      if (!subject.trim()) errors[2].push('Subject line is required');
+      if (abTestEnabled) {
+        if (!subjectA.trim()) errors[2].push('Subject A is required');
+        if (!subjectB.trim()) errors[2].push('Subject B is required');
+      } else {
+        if (!subject.trim()) errors[2].push('Subject line is required');
+      }
       if (!textBody.trim()) errors[2].push('Email body is required');
     } else {
       if (!textBody.trim()) errors[2].push('SMS body is required');
@@ -212,7 +264,7 @@ export default function CampaignComposer({
     errors[4] = [...complianceResult.errors];
 
     return errors;
-  }, [name, channel, subject, textBody, audienceType, audienceValue, audienceStats, complianceResult]);
+  }, [name, channel, subject, subjectA, subjectB, abTestEnabled, textBody, audienceType, audienceValue, audienceStats, complianceResult]);
 
   const canAdvance = (step: Step): boolean => stepErrors[step].length === 0;
 
@@ -227,29 +279,103 @@ export default function CampaignComposer({
     }
   };
 
-  const handleSave = () => {
-    const input: CreateCampaignInput = {
-      name,
-      channel,
-      template_id: selectedTemplateId || undefined,
-      subject: channel === 'email' ? subject : undefined,
-      html_body: channel === 'email' ? htmlBody : undefined,
-      text_body: textBody,
-      sender_name: senderName || undefined,
-      sender_email: channel === 'email' ? senderEmail || undefined : undefined,
-      sender_phone: channel === 'sms' ? senderPhone || undefined : undefined,
-      audience_type: audienceType,
-      audience_value: audienceValue || undefined,
-    };
-    onSave(input);
+  const handleSave = async (): Promise<string | undefined> => {
+    setIsSavingLocal(true);
+    try {
+      const input: CreateCampaignInput = {
+        name,
+        channel,
+        template_id: selectedTemplateId || undefined,
+        subject: channel === 'email' ? (abTestEnabled ? subjectA : subject) : undefined,
+        html_body: channel === 'email' ? htmlBody : undefined,
+        text_body: textBody,
+        sender_name: senderName || undefined,
+        sender_email: channel === 'email' ? senderEmail || undefined : undefined,
+        sender_phone: channel === 'sms' ? senderPhone || undefined : undefined,
+        audience_type: audienceType,
+        audience_value: audienceValue || undefined,
+        ab_test_enabled: channel === 'email' ? abTestEnabled : false,
+        subject_a: channel === 'email' && abTestEnabled ? subjectA : undefined,
+        subject_b: channel === 'email' && abTestEnabled ? subjectB : undefined,
+      };
+      const result = await onSave(input);
+      const campaignId = result || undefined;
+      if (campaignId) {
+        setSavedCampaignId(campaignId);
+      }
+      return campaignId;
+    } finally {
+      setIsSavingLocal(false);
+    }
   };
 
-  const handleSend = () => {
-    if (savedCampaignId) {
-      onSend(savedCampaignId);
-    } else {
-      // Save first, then the parent should set savedCampaignId via a callback
-      handleSave();
+  const handleSend = async () => {
+    setScheduleError('');
+
+    if (sendMode === 'later') {
+      if (!scheduledAt) {
+        setScheduleError('Please select a date and time to schedule.');
+        return;
+      }
+      const scheduledDate = new Date(scheduledAt);
+      if (isNaN(scheduledDate.getTime()) || scheduledDate <= new Date()) {
+        setScheduleError('Scheduled time must be in the future.');
+        return;
+      }
+    }
+
+    setIsSendingLocal(true);
+    try {
+      if (savedCampaignId) {
+        await onSend(
+          savedCampaignId,
+          sendMode === 'later'
+            ? { schedule: true, scheduledAt: new Date(scheduledAt).toISOString() }
+            : undefined,
+        );
+      } else {
+        // Save first, then send with the returned ID
+        const newId = await handleSave();
+        if (typeof newId === 'string') {
+          await onSend(
+            newId,
+            sendMode === 'later'
+              ? { schedule: true, scheduledAt: new Date(scheduledAt).toISOString() }
+              : undefined,
+          );
+        }
+      }
+    } finally {
+      setIsSendingLocal(false);
+    }
+  };
+
+  const handleSendPreview = async () => {
+    if (!savedCampaignId || !previewEmail) return;
+    setPreviewSending(true);
+    setPreviewStatus('idle');
+    try {
+      const res = await fetch('/api/marketing/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          campaign_id: savedCampaignId,
+          previewMode: true,
+          previewEmail,
+          sampleMergeValues: {
+            first_name: 'John',
+            last_name: 'Doe',
+            business_name: business?.name || 'Your Business',
+            company: 'Sample Co.',
+          },
+        }),
+      });
+      const data = await res.json();
+      setPreviewStatus(data.success ? 'success' : 'error');
+    } catch {
+      setPreviewStatus('error');
+    } finally {
+      setPreviewSending(false);
     }
   };
 
@@ -381,6 +507,12 @@ export default function CampaignComposer({
                   <div className="text-sm font-medium">SMS</div>
                 </button>
               </div>
+              {/* B14-19: Warn user SMS sending is not yet available */}
+              {channel === 'sms' && (
+                <p className="mt-2 text-xs text-amber-400">
+                  SMS sending is not yet available. You can draft your campaign now and send it once SMS support launches.
+                </p>
+              )}
             </div>
 
             {/* Template or Scratch */}
@@ -449,6 +581,34 @@ export default function CampaignComposer({
         {/* ─── Step 2: Content ─── */}
         {currentStep === 2 && (
           <div className="space-y-6">
+            {/* Load Template */}
+            {channel === 'email' && (
+              <div>
+                <label className="input-label">Start with a template</label>
+                <div className="flex flex-wrap gap-2">
+                  {CAMPAIGN_TEMPLATES.map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => {
+                        setSubject(tpl.subject);
+                        setSubjectA(tpl.subject);
+                        setHtmlBody(tpl.body);
+                        setTextBody(tpl.body.replace(/<[^>]+>/g, ''));
+                        setTemplateLoaded(true);
+                        setTimeout(() => setTemplateLoaded(false), 2000);
+                      }}
+                      className="btn-secondary text-xs py-1 px-3"
+                    >
+                      {tpl.name}
+                    </button>
+                  ))}
+                  {templateLoaded && (
+                    <span className="text-xs text-success self-center ml-1">Template loaded</span>
+                  )}
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Editor Side */}
               <div className="space-y-4">
@@ -495,14 +655,55 @@ export default function CampaignComposer({
                 {/* Subject (Email only) */}
                 {channel === 'email' && (
                   <div>
-                    <label className="input-label">Subject Line</label>
-                    <input
-                      type="text"
-                      value={subject}
-                      onChange={(e) => setSubject(e.target.value)}
-                      placeholder="e.g. Don't miss our spring special!"
-                      className="input"
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="input-label mb-0">Subject Line</label>
+                      <button
+                        type="button"
+                        onClick={() => setAbTestEnabled(!abTestEnabled)}
+                        className={`text-xs px-2 py-0.5 rounded-btn border transition-colors ${
+                          abTestEnabled
+                            ? 'border-flame-500 bg-flame-500/10 text-flame-500'
+                            : 'border-char-600 bg-char-800 text-ash-400 hover:border-flame-500 hover:text-flame-500'
+                        }`}
+                      >
+                        A/B Test
+                      </button>
+                    </div>
+                    {abTestEnabled ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-flame-500 text-white text-xs font-bold">A</span>
+                          <input
+                            type="text"
+                            value={subjectA}
+                            onChange={(e) => setSubjectA(e.target.value)}
+                            placeholder="Subject variant A"
+                            className="input flex-1"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-char-600 text-ash-200 text-xs font-bold">B</span>
+                          <input
+                            type="text"
+                            value={subjectB}
+                            onChange={(e) => setSubjectB(e.target.value)}
+                            placeholder="Subject variant B"
+                            className="input flex-1"
+                          />
+                        </div>
+                        <p className="text-xs text-ash-500">
+                          Recipients will be split 50/50 between Subject A and Subject B
+                        </p>
+                      </div>
+                    ) : (
+                      <input
+                        type="text"
+                        value={subject}
+                        onChange={(e) => setSubject(e.target.value)}
+                        placeholder="e.g. Don't miss our spring special!"
+                        className="input"
+                      />
+                    )}
                   </div>
                 )}
 
@@ -530,6 +731,7 @@ export default function CampaignComposer({
                     {channel === 'email' ? 'Email Body' : 'SMS Body'}
                   </label>
                   <textarea
+                    ref={textBodyRef}
                     value={textBody}
                     onChange={(e) => setTextBody(e.target.value)}
                     placeholder={
@@ -644,7 +846,14 @@ export default function CampaignComposer({
             <div className="rounded-btn border border-char-700 bg-char-900 divide-y divide-char-700">
               <SummaryRow label="Campaign" value={name} />
               <SummaryRow label="Channel" value={channel === 'email' ? 'Email' : 'SMS'} />
-              {channel === 'email' && <SummaryRow label="Subject" value={subject || '(none)'} />}
+              {channel === 'email' && !abTestEnabled && <SummaryRow label="Subject" value={subject || '(none)'} />}
+              {channel === 'email' && abTestEnabled && (
+                <>
+                  <SummaryRow label="Subject A" value={subjectA || '(none)'} />
+                  <SummaryRow label="Subject B" value={subjectB || '(none)'} />
+                  <SummaryRow label="A/B Split" value="50% / 50%" highlight />
+                </>
+              )}
               {channel === 'email' && <SummaryRow label="Sender" value={senderName && senderEmail ? `${senderName} <${senderEmail}>` : '(not set)'} />}
               {channel === 'sms' && <SummaryRow label="Sender Phone" value={senderPhone || '(not set)'} />}
               <SummaryRow label="Audience" value={audienceLabel} />
@@ -660,6 +869,90 @@ export default function CampaignComposer({
                 />
               )}
             </div>
+
+            {/* Schedule Toggle */}
+            <div className="rounded-btn border border-char-700 bg-char-900 p-4 space-y-3">
+              <p className="text-sm font-display text-ash-200">Send Options</p>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setSendMode('now'); setScheduleError(''); }}
+                  className={`flex-1 py-2.5 px-4 rounded-btn border text-sm transition-colors ${
+                    sendMode === 'now'
+                      ? 'border-flame-500 bg-flame-500/5 text-ash-100'
+                      : 'border-char-700 bg-char-800 text-ash-400 hover:border-char-600'
+                  }`}
+                >
+                  Send Now
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setSendMode('later'); setScheduleError(''); }}
+                  className={`flex-1 py-2.5 px-4 rounded-btn border text-sm transition-colors ${
+                    sendMode === 'later'
+                      ? 'border-flame-500 bg-flame-500/5 text-ash-100'
+                      : 'border-char-700 bg-char-800 text-ash-400 hover:border-char-600'
+                  }`}
+                >
+                  Schedule for Later
+                </button>
+              </div>
+              {sendMode === 'later' && (
+                <div>
+                  <label className="input-label">Send Date &amp; Time</label>
+                  <input
+                    type="datetime-local"
+                    value={scheduledAt}
+                    onChange={(e) => { setScheduledAt(e.target.value); setScheduleError(''); }}
+                    min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                    className="input"
+                  />
+                  {scheduleError && (
+                    <p className="text-xs text-red-400 mt-1">{scheduleError}</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Send Preview to Me */}
+            {channel === 'email' && savedCampaignId && (
+              <div className="rounded-btn border border-char-700 bg-char-900 p-4 space-y-3">
+                <p className="text-sm font-display text-ash-200">Send Preview to Me</p>
+                <p className="text-xs text-ash-500">
+                  Sends a preview with sample data filled in. Must save campaign first.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={previewEmail}
+                    onChange={(e) => { setPreviewEmail(e.target.value); setPreviewStatus('idle'); }}
+                    placeholder="your@email.com"
+                    className="input flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSendPreview}
+                    disabled={previewSending || !previewEmail}
+                    className="btn-ghost text-sm whitespace-nowrap"
+                  >
+                    {previewSending ? (
+                      <span className="flex items-center gap-2">
+                        <span className="spinner-sm" />
+                        Sending...
+                      </span>
+                    ) : (
+                      'Send Preview'
+                    )}
+                  </button>
+                </div>
+                {previewStatus === 'success' && (
+                  <p className="text-xs text-success">Preview sent to {previewEmail}</p>
+                )}
+                {previewStatus === 'error' && (
+                  <p className="text-xs text-danger">Failed to send preview. Please try again.</p>
+                )}
+              </div>
+            )}
 
             {/* Compliance Banner */}
             {complianceResult.errors.length > 0 && (
@@ -753,10 +1046,10 @@ export default function CampaignComposer({
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={isSaving}
+                disabled={isSaving || isSavingLocal}
                 className="btn-ghost text-sm"
               >
-                {isSaving ? (
+                {(isSaving || isSavingLocal) ? (
                   <span className="flex items-center gap-2">
                     <span className="spinner-sm" />
                     Saving...
@@ -768,14 +1061,16 @@ export default function CampaignComposer({
               <button
                 type="button"
                 onClick={handleSend}
-                disabled={!complianceResult.valid || audienceStats.eligible.length === 0 || isSending}
+                disabled={!complianceResult.valid || audienceStats.eligible.length === 0 || isSending || isSendingLocal}
                 className="btn-primary text-sm"
               >
-                {isSending ? (
+                {(isSending || isSendingLocal) ? (
                   <span className="flex items-center gap-2">
                     <span className="spinner-sm" />
-                    Sending...
+                    {sendMode === 'later' ? 'Scheduling...' : 'Sending...'}
                   </span>
+                ) : sendMode === 'later' ? (
+                  `Schedule for ${audienceStats.eligible.length} recipient${audienceStats.eligible.length !== 1 ? 's' : ''}`
                 ) : (
                   `Send to ${audienceStats.eligible.length} recipient${audienceStats.eligible.length !== 1 ? 's' : ''}`
                 )}

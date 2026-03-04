@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { CalendarItemV2, CalendarItemType } from '@/types';
+import ContentBriefModal from './ContentBriefModal';
 
 interface CalendarItemCardProps {
   item: CalendarItemV2;
@@ -9,6 +10,7 @@ interface CalendarItemCardProps {
   domain: string;
   industry: string;
   city?: string;
+  state?: string;
   onStatusChange: (id: string, status: 'scheduled' | 'done' | 'skipped') => void;
   onContentGenerated?: (id: string, content: string) => void;
 }
@@ -58,8 +60,12 @@ function buildPrompt(item: CalendarItemV2, businessName: string, domain: string,
   }
 }
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export default function CalendarItemCard({
-  item, businessName, domain, industry, city = '', onStatusChange, onContentGenerated,
+  item, businessName, domain, industry, city = '', state = '', onStatusChange, onContentGenerated,
 }: CalendarItemCardProps) {
   const meta = TYPE_META[item.type];
   const [expanded, setExpanded] = useState(false);
@@ -67,6 +73,12 @@ export default function CalendarItemCard({
   const [content, setContent] = useState(item.generatedContent ?? '');
   const [genError, setGenError] = useState('');
   const [copied, setCopied] = useState(false);
+
+  // Brief generation state
+  const [generatingBrief, setGeneratingBrief] = useState(false);
+  const [briefContent, setBriefContent] = useState('');
+  const [briefError, setBriefError] = useState('');
+  const [showBriefModal, setShowBriefModal] = useState(false);
 
   async function handleGenerate() {
     setGenerating(true);
@@ -89,6 +101,62 @@ export default function CalendarItemCard({
     } finally {
       setGenerating(false);
     }
+  }
+
+  async function handleGenerateBrief() {
+    setGeneratingBrief(true);
+    setBriefError('');
+    setBriefContent('');
+
+    const location = [city, state].filter(Boolean).join(', ');
+    const secondaryKeywords = item.keywords.filter(k => k !== item.primaryKeyword).slice(0, 5);
+    // Estimate word count based on type
+    const wordCount = item.type === 'blog_post' ? 1200 : item.type === 'website_addition' ? 900 : 600;
+
+    const prompt = `Generate a structured content brief for a local SEO blog post.
+Business: ${businessName || '[COMPANY]'} in ${location || '[CITY, STATE]'}
+Service: ${item.type === 'website_addition' || item.type === 'blog_post' ? (item.primaryKeyword || item.title) : item.title}
+Target Keyword: ${item.primaryKeyword}
+Secondary Keywords: ${secondaryKeywords.join(', ') || 'none'}
+
+Provide exactly:
+- Meta Title (55-60 chars, include keyword)
+- Meta Description (150-160 chars)
+- Suggested H2 Headings (5-7, include secondary keywords naturally)
+- Estimated Word Count: ${wordCount}
+- Internal Link Opportunities: 3 suggestions based on service
+- Call to Action: localized CTA
+
+Format as clean structured text, no markdown beyond headers.`;
+
+    const delays = [0, 2000, 4000];
+    let lastError = '';
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (delays[attempt] > 0) await sleep(delays[attempt]);
+      try {
+        const res = await fetch('/api/claude/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, maxTokens: 1024 }),
+        });
+        if (!res.ok) throw new Error(`Error ${res.status}`);
+        const data = await res.json();
+        const generated = data.text || data.content?.[0]?.text || '';
+        if (generated) {
+          setBriefContent(generated);
+          setShowBriefModal(true);
+          setGeneratingBrief(false);
+          return;
+        }
+        lastError = 'Empty response from API';
+      } catch (err: any) {
+        lastError = err.message || 'Brief generation failed';
+      }
+    }
+
+    setBriefError(lastError || 'Brief generation failed after 3 attempts');
+    setGeneratingBrief(false);
   }
 
   function handleCopy() {
@@ -165,9 +233,9 @@ export default function CalendarItemCard({
         </div>
       )}
 
-      {/* Generate button */}
+      {/* Generate buttons */}
       {!isSkipped && (
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex items-center flex-wrap gap-2">
           <button
             onClick={handleGenerate}
             disabled={generating}
@@ -175,7 +243,17 @@ export default function CalendarItemCard({
           >
             {generating ? 'Generating…' : content ? 'Regenerate Content' : 'Generate Content'}
           </button>
+          {(item.type === 'blog_post' || item.type === 'website_addition') && (
+            <button
+              onClick={handleGenerateBrief}
+              disabled={generatingBrief}
+              className="btn-ghost text-xs py-1.5"
+            >
+              {generatingBrief ? 'Generating Brief…' : 'Generate Brief'}
+            </button>
+          )}
           {genError && <span className="text-xs text-danger">{genError}</span>}
+          {briefError && <span className="text-xs text-danger">{briefError}</span>}
         </div>
       )}
 
@@ -198,6 +276,15 @@ export default function CalendarItemCard({
             </div>
           )}
         </div>
+      )}
+
+      {/* Content Brief Modal */}
+      {showBriefModal && briefContent && (
+        <ContentBriefModal
+          keyword={item.primaryKeyword || item.title}
+          briefContent={briefContent}
+          onClose={() => setShowBriefModal(false)}
+        />
       )}
     </div>
   );

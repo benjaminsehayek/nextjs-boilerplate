@@ -1,15 +1,45 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import type { ContentGeneratorProps, ContentMapItem } from './types';
 import { fmtN } from '@/lib/dataforseo';
+import { useAuth } from '@/lib/context/AuthContext';
+import { CONTENT_TEMPLATES } from '@/lib/contentStrategy/contentTemplates';
 
-export default function ContentGenerator({ items, domain, industry }: ContentGeneratorProps) {
+/** Strip dangerous HTML tags and attributes before rendering via dangerouslySetInnerHTML */
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<iframe\b[^>]*>.*?<\/iframe>/gi, '')
+    .replace(/\s+on\w+="[^"]*"/gi, '')
+    .replace(/\s+on\w+='[^']*'/gi, '')
+    .replace(/javascript:/gi, '');
+}
+
+export default function ContentGenerator({ items, domain, industry, businessId }: ContentGeneratorProps) {
+  const { business } = useAuth();
   const [selectedItem, setSelectedItem] = useState<ContentMapItem | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generatedContent, setGeneratedContent] = useState<string>('');
   const [contentTab, setContentTab] = useState<'preview' | 'html' | 'text'>('preview');
   const [error, setError] = useState<string | null>(null);
+  const [promptText, setPromptText] = useState<string>('');
+
+  // Check if WordPress integration is configured
+  // Reads from localStorage (temporary until business_integrations JSONB column is added)
+  const [wpConfigured, setWpConfigured] = useState(false);
+  useEffect(() => {
+    if (!businessId) return;
+    try {
+      const raw = localStorage.getItem(`wp_integration_${businessId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setWpConfigured(!!(parsed.wpUrl));
+      }
+    } catch {
+      // ignore
+    }
+  }, [businessId]);
 
   const gapItems = useMemo(() => {
     return items
@@ -79,8 +109,59 @@ Requirements:
 
   const typeIcon = (t: string) => t === 'service' ? '\uD83D\uDD27' : t === 'location' ? '\uD83D\uDCCD' : '\uD83D\uDCDD';
 
+  function applyTemplate(templateId: string) {
+    const template = CONTENT_TEMPLATES.find(t => t.id === templateId);
+    if (!template) return;
+
+    const businessName = business?.name ?? '[Business Name]';
+    const city = (business as any)?.city ?? '[City]';
+    const service = selectedItem
+      ? (selectedItem.type === 'service' ? selectedItem.title : industry || '[Service]')
+      : (industry || '[Service]');
+    const keyword = selectedItem?.primaryKeyword ?? '[Keyword]';
+
+    const filled = template.promptTemplate
+      .replace(/\{\{BUSINESS_NAME\}\}/g, businessName)
+      .replace(/\{\{CITY\}\}/g, city)
+      .replace(/\{\{SERVICE\}\}/g, service)
+      .replace(/\{\{KEYWORD\}\}/g, keyword);
+
+    setPromptText(filled);
+  }
+
   return (
     <div className="space-y-6">
+      {/* Templates chip row */}
+      <div>
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-xs font-semibold text-ash-400 uppercase tracking-wider">Templates</span>
+          <span className="text-xs text-ash-600">Click to pre-fill prompt</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {CONTENT_TEMPLATES.map((tpl) => (
+            <button
+              key={tpl.id}
+              onClick={() => applyTemplate(tpl.id)}
+              title={tpl.description}
+              className="text-xs px-3 py-1.5 rounded-btn border border-char-600 bg-char-700 text-ash-300 hover:border-flame-500 hover:text-ash-100 transition-colors"
+            >
+              {tpl.name}
+            </button>
+          ))}
+        </div>
+        {promptText && (
+          <div className="mt-3">
+            <label className="input-label">Prompt (editable)</label>
+            <textarea
+              value={promptText}
+              onChange={(e) => setPromptText(e.target.value)}
+              rows={5}
+              className="input font-mono text-xs resize-y"
+            />
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Queue */}
         <div className="lg:col-span-1 space-y-3">
@@ -163,7 +244,18 @@ Requirements:
               <div className="card p-4">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="font-display text-ash-200">{selectedItem.title}</h3>
-                  <span className="text-xs text-ash-500">{stripHtml(generatedContent).split(/\s+/).length} words</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-ash-500">{stripHtml(generatedContent).split(/\s+/).length} words</span>
+                    {/* WordPress publish button — enabled only when WP integration is configured */}
+                    <button
+                      disabled={!wpConfigured}
+                      onClick={() => wpConfigured && alert('WordPress publish coming soon')}
+                      title={wpConfigured ? 'Publish to WordPress' : 'Connect your WordPress site in Settings to publish'}
+                      className="btn-ghost text-xs py-1.5 px-3 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {wpConfigured ? 'Publish to WordPress' : 'WordPress (not connected)'}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Sub-tabs */}
@@ -184,7 +276,7 @@ Requirements:
                 {contentTab === 'preview' && (
                   <div
                     className="prose prose-invert max-w-none text-ash-300 [&_h1]:text-ash-100 [&_h2]:text-ash-200 [&_h3]:text-ash-200"
-                    dangerouslySetInnerHTML={{ __html: generatedContent }}
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(generatedContent) }}
                   />
                 )}
 

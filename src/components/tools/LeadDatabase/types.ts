@@ -53,6 +53,9 @@ export interface Contact {
   state?: string;
   zip?: string;
 
+  // Pipeline status
+  status?: 'lead' | 'prospect' | 'customer' | 'inactive';
+
   // Lead Information
   source: ContactSource;
   leadType?: LeadType;
@@ -78,6 +81,7 @@ export interface Contact {
 
   // Metadata
   notes?: string;
+  notesHistory?: Array<{ timestamp: string; content: string }>;
   createdAt: string;
   updatedAt: string;
   lastActivity?: string;

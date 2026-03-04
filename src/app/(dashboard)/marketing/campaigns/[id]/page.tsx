@@ -40,11 +40,13 @@ export default function CampaignDetailPage({
     if (!id) return;
     setLoading(true);
 
-    // Load campaign
+    // Load campaign — scope by business_id to prevent cross-tenant access
+    if (!business?.id) { setLoading(false); return; }
     const { data: campData } = await (supabase as any)
       .from('campaigns')
       .select('*')
       .eq('id', id)
+      .eq('business_id', business.id)
       .single();
 
     if (campData) {
@@ -59,12 +61,13 @@ export default function CampaignDetailPage({
         .limit(200);
 
       if (recipData) {
-        // Load contact names for recipients
+        // Load contact names for recipients — scope by business_id
         const contactIds = recipData.map((r: CampaignRecipient) => r.contact_id);
         const { data: contactData } = await (supabase as any)
           .from('contacts')
           .select('id, first_name, last_name, email')
-          .in('id', contactIds);
+          .in('id', contactIds)
+          .eq('business_id', business?.id);
 
         const contactMap = new Map(
           (contactData || []).map((c: { id: string; first_name: string; last_name: string; email: string }) => [

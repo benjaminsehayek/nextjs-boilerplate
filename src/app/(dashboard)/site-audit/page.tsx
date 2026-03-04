@@ -35,6 +35,8 @@ import type {
   QuickWin,
 } from '@/components/tools/SiteAudit/types';
 
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import dynamic from 'next/dynamic';
 
 const ScanInput = dynamic(() => import('@/components/tools/SiteAudit/ScanInput'));
@@ -64,7 +66,13 @@ export default function SiteAuditPage() {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [error, setError] = useState<string | null>(null);
 
+  // History section state
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyScans, setHistoryScans] = useState<any[]>([]);
+
   const supabase = createClient();
+  const scanFormRef = useRef<HTMLDivElement>(null);
   const crawlStartRef = useRef<number>(0);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -118,30 +126,54 @@ export default function SiteAuditPage() {
     };
   }, []);
 
-  // Check for existing audit on mount
+  // Check for existing audit on mount (or when location changes)
   useEffect(() => {
     async function checkExistingAudit() {
       if (!business?.id) return;
 
-      const { data: existingAudit } = await (supabase as any)
+      let query = (supabase as any)
         .from('site_audits')
         .select('*')
         .eq('business_id', business.id)
         .in('status', ['complete'])
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
+
+      // Filter by location when one is selected (prevents loading wrong location's audit)
+      if (selectedLocation?.id) {
+        query = query.eq('location_id', selectedLocation.id);
+      }
+
+      const { data: existingAudit } = await query.maybeSingle();
 
       if (existingAudit?.status === 'complete') {
         loadAuditResults(existingAudit);
+      } else if (selectedLocation?.id) {
+        // No audit for this location yet — reset to idle
+        setResults(null);
+        setScanState('idle');
       }
     }
 
     checkExistingAudit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [business?.id]);
+  }, [business?.id, selectedLocation?.id]);
 
   function loadAuditResults(audit: any) {
+    if (!audit.crawl_data || typeof audit.crawl_data !== 'object') {
+      setError('Audit data is corrupted. Please run a new scan.');
+      return;
+    }
+    if (audit.issues_data !== null && audit.issues_data !== undefined && typeof audit.issues_data !== 'object') {
+      setError('Audit data is corrupted. Please run a new scan.');
+      return;
+    }
+    if (audit.pages_data !== null && audit.pages_data !== undefined && typeof audit.pages_data !== 'object') {
+      setError('Audit data is corrupted. Please run a new scan.');
+      return;
+    }
+
     const crawlData: CrawlData = audit.crawl_data || {};
     const categoryScores: CategoryScores = audit.category_scores || { _overall: 0 };
     const issues: DetailedIssue[] = (audit.issues_data as any)?.detailed || [];
@@ -178,6 +210,58 @@ export default function SiteAuditPage() {
     setDomain(audit.domain || '');
     setResults(results);
     setScanState('complete');
+  }
+
+  async function loadHistory() {
+    if (!business?.id) return;
+    setHistoryLoading(true);
+    try {
+      let query = (supabase as any)
+        .from('site_audits')
+        .select('id, location_id, status, created_at, domain, page_count, issues_critical, issues_warning, issues_notice')
+        .eq('business_id', business.id)
+        .eq('status', 'complete')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      // Filter by selected location so history only shows scans for the current location
+      if (selectedLocation?.id) {
+        query = query.eq('location_id', selectedLocation.id);
+      }
+
+      const { data } = await query;
+
+      // Exclude the currently-displayed audit
+      const filtered = (data || []).filter((s: any) => s.id !== results?.auditId);
+      setHistoryScans(filtered);
+    } catch (err) {
+      console.error('Error loading audit history:', err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function loadHistoryScan(scanId: string) {
+    setHistoryLoading(true);
+    try {
+      const { data: audit } = await (supabase as any)
+        .from('site_audits')
+        .select('*')
+        .eq('id', scanId)
+        .eq('business_id', business?.id)
+        .single();
+
+      if (!audit) {
+        setError('Could not load scan — it may have been deleted or you lack access.');
+        return;
+      }
+
+      loadAuditResults(audit);
+      setHistoryOpen(false);
+    } finally {
+      setHistoryLoading(false);
+    }
   }
 
   async function startAudit(inputDomain: string, maxPages = 250) {
@@ -266,7 +350,8 @@ export default function SiteAuditPage() {
       await (supabase as any)
         .from('site_audits')
         .update({ status: 'crawling' })
-        .eq('id', auditId);
+        .eq('id', auditId)
+        .eq('business_id', business!.id);
 
       // ── Step 2: Submit Lighthouse (desktop + mobile) + Detect business (all parallel) ──
       let lhTaskId: string | null = null;
@@ -358,6 +443,9 @@ export default function SiteAuditPage() {
       const finalStatus = await pollCrawlStatus(taskId);
       crawlData.summary = finalStatus.summary || undefined;
       crawlData.business = detectedBusiness;
+
+      // Estimate API cost: ~$0.0001 per page crawled + $0.003 base task cost
+      totalApiCost = (finalStatus.pagesCrawled || 0) * 0.0001 + 0.003;
 
       if (abortRef.current) return;
 
@@ -595,7 +683,8 @@ export default function SiteAuditPage() {
           api_cost: totalApiCost,
           completed_tasks: progress.tasks,
         })
-        .eq('id', auditId);
+        .eq('id', auditId)
+        .eq('business_id', business!.id);
 
       // Deduct scan credit
       if (user?.id) {
@@ -633,11 +722,33 @@ export default function SiteAuditPage() {
       await (supabase as any)
         .from('site_audits')
         .update({ status: 'failed' })
-        .eq('id', auditId);
+        .eq('id', auditId)
+        .eq('business_id', business!.id);
 
       setScanState('error');
       setError(err.message || 'Audit failed');
     }
+  }
+
+  function exportIssuesToCsv(issues: DetailedIssue[], auditDomain: string) {
+    const header = 'Issue Type,Severity,Category,Affected URLs,Recommendation\n';
+    const rows = issues.map((issue) => {
+      const urls = issue.urls.map((u) => u.url).join(' | ');
+      return [
+        `"${issue.title ?? ''}"`,
+        `"${issue.severity ?? ''}"`,
+        `"${issue.category ?? ''}"`,
+        `"${urls}"`,
+        `"${(issue.fix ?? '').replace(/"/g, "'")}"`,
+      ].join(',');
+    }).join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `site-audit-${auditDomain}-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function handleNewScan() {
@@ -646,6 +757,17 @@ export default function SiteAuditPage() {
     setAuditId(null);
     setError(null);
     setActiveTab('overview');
+    setHistoryOpen(false);
+    setHistoryScans([]);
+  }
+
+  function handleToggleHistory() {
+    if (!historyOpen) {
+      setHistoryOpen(true);
+      loadHistory();
+    } else {
+      setHistoryOpen(false);
+    }
   }
 
   return (
@@ -684,12 +806,25 @@ export default function SiteAuditPage() {
               onSelectLocation={selectLocation}
               showAllOption={true}
             />
-            <ScanInput
-              onStartScan={startAudit}
-              isLoading={false}
-              scansRemaining={scansRemaining}
-              defaultDomain={business?.domain || ''}
-            />
+            {!results && (
+              <EmptyState
+                icon="🔍"
+                title="No audit yet"
+                description="Run your first site audit to find SEO issues."
+                ctaLabel="Start Audit"
+                ctaOnClick={() => {
+                  scanFormRef.current?.scrollIntoView({ behavior: 'smooth' });
+                }}
+              />
+            )}
+            <div ref={scanFormRef}>
+              <ScanInput
+                onStartScan={startAudit}
+                isLoading={false}
+                scansRemaining={scansRemaining}
+                defaultDomain={business?.domain || ''}
+              />
+            </div>
           </>
         )}
 
@@ -699,16 +834,100 @@ export default function SiteAuditPage() {
 
         {scanState === 'complete' && results && (
           <>
-            <div className="flex justify-end mb-4">
+            <div className="flex justify-end gap-2 mb-4">
+              <button
+                data-no-print
+                onClick={() => exportIssuesToCsv(results.issues, results.domain)}
+                className="btn-ghost text-sm"
+              >
+                Export CSV
+              </button>
+              <button
+                data-no-print
+                onClick={() => window.print()}
+                className="btn-ghost text-sm"
+              >
+                Print Report
+              </button>
               <button onClick={handleNewScan} className="btn-ghost text-sm">
                 Run New Scan
               </button>
             </div>
+            <ErrorBoundary fallbackLabel="Audit results failed to render">
             <Dashboard
               results={results}
               activeTab={activeTab}
               onTabChange={setActiveTab}
             />
+
+            </ErrorBoundary>
+
+            {/* Previous Scans */}
+            <div className="mt-6">
+              <button
+                onClick={handleToggleHistory}
+                className="flex items-center gap-2 text-sm text-ash-400 hover:text-ash-200 transition-colors"
+              >
+                <span
+                  className={`inline-block transition-transform ${historyOpen ? 'rotate-90' : ''}`}
+                >
+                  ▶
+                </span>
+                Previous Scans
+              </button>
+
+              {historyOpen && (
+                <div className="mt-3">
+                  {historyLoading ? (
+                    <div className="space-y-2">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="h-12 bg-char-700 animate-pulse rounded-card" />
+                      ))}
+                    </div>
+                  ) : historyScans.length === 0 ? (
+                    <p className="text-sm text-ash-500 py-3">No previous scans found.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {historyScans.map((scan) => {
+                        const issueTotal =
+                          (scan.issues_critical || 0) +
+                          (scan.issues_warning || 0) +
+                          (scan.issues_notice || 0);
+                        return (
+                          <div
+                            key={scan.id}
+                            className="flex items-center gap-4 p-3 rounded-card bg-char-800 border border-char-700"
+                          >
+                            <span className="text-sm text-ash-300 shrink-0">
+                              {new Date(scan.created_at).toLocaleDateString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                              })}
+                            </span>
+                            <span className="text-sm text-ash-400 shrink-0">
+                              {scan.page_count != null ? `${scan.page_count} pages` : '—'}
+                            </span>
+                            <span className="text-sm text-ash-400 shrink-0">
+                              {issueTotal > 0 ? `${issueTotal} issues` : 'No issues'}
+                            </span>
+                            <span className="flex-1 truncate text-sm text-ash-500">
+                              {scan.domain || ''}
+                            </span>
+                            <button
+                              onClick={() => loadHistoryScan(scan.id)}
+                              className="btn-ghost text-sm shrink-0"
+                            >
+                              Load
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </>
         )}
       </ToolPageShell>

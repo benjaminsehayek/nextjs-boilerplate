@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 
 interface ServiceModalProps {
@@ -18,6 +18,29 @@ export function ServiceModal({ isOpen, onClose, service, businessId, onSave }: S
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const supabase = createClient();
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Focus first focusable element on open
+  useEffect(() => {
+    if (isOpen) {
+      const focusable = modalRef.current?.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable?.length) focusable[0].focus();
+    }
+  }, [isOpen]);
+
+  const trapFocus = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { onClose(); return; }
+    if (e.key !== 'Tab') return;
+    const focusable = modalRef.current?.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (!focusable?.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
 
   useEffect(() => {
     if (service) {
@@ -58,7 +81,8 @@ export function ServiceModal({ isOpen, onClose, service, businessId, onSave }: S
         const { error: updateError } = await (supabase as any)
           .from('services')
           .update(serviceData)
-          .eq('id', service.id);
+          .eq('id', service.id)
+          .eq('business_id', businessId); // B15-02: prevent cross-tenant update
 
         if (updateError) throw updateError;
       } else {
@@ -82,10 +106,27 @@ export function ServiceModal({ isOpen, onClose, service, businessId, onSave }: S
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="card p-6 w-full max-w-md">
-        <h2 className="font-display text-xl mb-4">
-          {service ? 'Edit Service' : 'Add Service'}
-        </h2>
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="service-modal-title"
+        onKeyDown={trapFocus}
+        className="card p-6 w-full max-w-md"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 id="service-modal-title" className="font-display text-xl">
+            {service ? 'Edit Service' : 'Add Service'}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="btn-icon"
+            aria-label="Close modal"
+          >
+            ✕
+          </button>
+        </div>
 
         {error && (
           <div className="bg-danger/10 border border-danger text-danger px-4 py-3 rounded-btn mb-4 text-sm">

@@ -84,6 +84,7 @@ export interface GridConfig {
 export interface GridScanResult {
   id: string;
   business_id: string;
+  location_id?: string | null;
   business_info: BusinessInfo;
   config: GridConfig;
   points: GridPoint[];

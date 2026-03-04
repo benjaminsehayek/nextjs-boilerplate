@@ -2,6 +2,16 @@
 
 import type { Contact } from '@/components/tools/LeadDatabase/types';
 
+// B13-08: Escape HTML special chars in contact values to prevent injection into email HTML
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export interface MergeTag {
   tag: string;
   label: string;
@@ -28,15 +38,16 @@ export function processMergeTags(
   contact: Contact,
   unsubscribeUrl: string,
 ): string {
+  const e = escapeHtml;
   return template
-    .replace(/\{\{first_name\}\}/g, contact.firstName || '')
-    .replace(/\{\{last_name\}\}/g, contact.lastName || '')
-    .replace(/\{\{full_name\}\}/g, `${contact.firstName || ''} ${contact.lastName || ''}`.trim())
-    .replace(/\{\{company\}\}/g, contact.company || '')
-    .replace(/\{\{email\}\}/g, contact.email || '')
-    .replace(/\{\{phone\}\}/g, contact.phone || '')
-    .replace(/\{\{city\}\}/g, contact.city || '')
-    .replace(/\{\{state\}\}/g, contact.state || '')
+    .replace(/\{\{first_name\}\}/g, e(contact.firstName || ''))
+    .replace(/\{\{last_name\}\}/g, e(contact.lastName || ''))
+    .replace(/\{\{full_name\}\}/g, e(`${contact.firstName || ''} ${contact.lastName || ''}`.trim()))
+    .replace(/\{\{company\}\}/g, e(contact.company || ''))
+    .replace(/\{\{email\}\}/g, e(contact.email || ''))
+    .replace(/\{\{phone\}\}/g, e(contact.phone || ''))
+    .replace(/\{\{city\}\}/g, e(contact.city || ''))
+    .replace(/\{\{state\}\}/g, e(contact.state || ''))
     .replace(/\{\{unsubscribe_url\}\}/g, unsubscribeUrl);
 }
 

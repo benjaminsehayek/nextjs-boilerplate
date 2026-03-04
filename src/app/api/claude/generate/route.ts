@@ -1,5 +1,15 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { apiError } from '@/lib/apiError';
+
+// Validate the expected request shape for Claude generate
+const ClaudeGenerateSchema = z.looseObject({
+  prompt: z.string().min(1).max(50000).optional(),
+  messages: z.array(z.looseObject({})).optional(),
+  systemPrompt: z.string().optional(),
+  maxTokens: z.number().int().min(100).max(4096).optional(),
+});
 
 export const maxDuration = 60; // seconds — Vercel Pro / self-hosted
 
@@ -21,7 +31,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Active subscription required' }, { status: 403 });
   }
 
-  const body = await request.json();
+  let rawBody: unknown;
+  try {
+    rawBody = await request.json();
+  } catch {
+    return apiError('Invalid request body', 400, 'VALIDATION_ERROR');
+  }
+
+  const parsed = ClaudeGenerateSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return apiError('Invalid request body', 400, 'VALIDATION_ERROR');
+  }
+
+  const body = parsed.data as Record<string, any>;
 
   // Support both { messages } and simple { prompt } formats
   const messages = body.messages?.length
@@ -47,10 +69,13 @@ export async function POST(request: NextRequest) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: body.model || 'claude-sonnet-4-6',
+        // B16-10: Whitelist allowed models to prevent billing abuse
+        model: ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001'].includes(body.model)
+          ? body.model
+          : 'claude-sonnet-4-6',
         max_tokens: Math.min(body.max_tokens || body.maxTokens || 1024, 2048),
         temperature: body.temperature ?? 0.7,
-        ...(body.system ? { system: body.system } : {}),
+        // B13-10: Do NOT forward client-supplied system prompt — prevents prompt injection
         messages,
       }),
     });

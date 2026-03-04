@@ -1,0 +1,1207 @@
+'use client';
+
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useAuth } from '@/lib/context/AuthContext';
+import { createBusiness, createLocation, createServices, createMarkets } from '@/app/actions/onboarding';
+import { dfsCall } from '@/lib/dataforseo';
+import { detectInputType, parseGoogleMapsUrl } from '@/components/tools/LocalGrid/utils';
+
+// ─── Domain Normalizer ────────────────────────────────────────────────────────
+
+function normalizeDomain(raw: string): string {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return '';
+  try {
+    const withProtocol = /^[a-z]+:\/\//i.test(trimmed)
+      ? trimmed
+      : `https://${trimmed}`;
+    const { hostname } = new URL(withProtocol);
+    return hostname.replace(/^www\d*\./, '');
+  } catch {
+    return trimmed
+      .replace(/^[a-z]+:\/\//i, '')
+      .replace(/^www\d*\./i, '')
+      .split('/')[0]
+      .split('?')[0]
+      .split('#')[0];
+  }
+}
+
+// ─── Lookup Helpers ───────────────────────────────────────────────────────────
+
+function mapItemToBusinessData(item: any, parsed?: { placeId?: string; cid?: string }) {
+  const addressParts = (item.address || '').split(',').map((s: string) => s.trim());
+  return {
+    name: item.title || '',
+    domain: item.domain || '',
+    phone: item.phone || '',
+    address: addressParts[0] || item.address || '',
+    city: addressParts[1] || '',
+    state: addressParts[2]?.split(' ')[0] || '',
+    zip: addressParts[2]?.split(' ')[1] || '',
+    category: item.category || '',
+    latitude: item.gps_coordinates?.latitude || item.latitude || 0,
+    longitude: item.gps_coordinates?.longitude || item.longitude || 0,
+    place_id: item.place_id || parsed?.placeId || '',
+    cid: item.cid || parsed?.cid || '',
+  };
+}
+
+function listingToBusinessData(item: any) {
+  return {
+    name: item.title || '',
+    domain: item.domain || '',
+    phone: item.phone || '',
+    address: item.address || '',
+    city: item.address_info?.city || '',
+    state: item.address_info?.region || '',
+    zip: item.address_info?.zip || '',
+    category: item.category || '',
+    latitude: item.latitude || 0,
+    longitude: item.longitude || 0,
+    place_id: item.place_id || '',
+    cid: item.cid || '',
+  };
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type OnboardingStep = 'business' | 'location' | 'services' | 'markets' | 'complete';
+
+interface LocationForm {
+  location_name: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  phone: string;
+  latitude?: number;
+  longitude?: number;
+  place_id?: string;
+  cid?: string;
+}
+
+interface ServiceForm {
+  name: string;
+  profit_per_job: string;
+  close_rate: string;
+}
+
+interface DiscoveredLocation {
+  id: string;
+  city: string;
+  state: string;
+  address?: string;
+  phone?: string;
+  area_codes?: string[];
+  place_id?: string;
+  cid?: string;
+  latitude?: number;
+  longitude?: number;
+  source: 'gbp' | 'serp' | 'manual';
+}
+
+// ─── OnboardingWizard Component ───────────────────────────────────────────────
+
+const WIZARD_STEPS = ['add_business', 'add_location', 'add_service', 'add_market', 'run_audit'] as const;
+
+interface OnboardingWizardProps {
+  completedSteps?: string[];
+  onStepComplete?: (step: string) => void;
+  onDismiss?: () => void;
+}
+
+export function OnboardingWizard({
+  completedSteps = [],
+  onStepComplete,
+  onDismiss,
+}: OnboardingWizardProps = {}) {
+  const wizardRef = useRef<HTMLDivElement>(null);
+  const { refreshBusiness } = useAuth();
+
+  const [currentStep, setCurrentStep] = useState<OnboardingStep>('business');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [businessId, setBusinessId] = useState<string | null>(null);
+
+  // Scroll wizard into view whenever step changes
+  useEffect(() => {
+    wizardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [currentStep]);
+
+  // When onboarding completes, refresh business data so the dashboard renders.
+  // Fallback: if refreshBusiness doesn't resolve within 5s, force a page reload.
+  useEffect(() => {
+    if (currentStep !== 'complete') return;
+
+    const refreshTimer = setTimeout(() => {
+      refreshBusiness();
+    }, 1500);
+
+    const fallbackTimer = setTimeout(() => {
+      window.location.reload();
+    }, 5000);
+
+    return () => {
+      clearTimeout(refreshTimer);
+      clearTimeout(fallbackTimer);
+    };
+  }, [currentStep, refreshBusiness]);
+
+  const [businessData, setBusinessData] = useState({
+    name: '',
+    domain: '',
+    phone: '',
+    address: '',
+    city: '',
+    state: '',
+    zip: '',
+    industry: '',
+    latitude: 0,
+    longitude: 0,
+    place_id: '',
+    cid: '',
+  });
+
+  // Smart lookup state
+  const [lookupInput, setLookupInput] = useState('');
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupResults, setLookupResults] = useState<any[]>([]);
+  const [lookupDone, setLookupDone] = useState(false);
+
+  const [locationData, setLocationData] = useState<LocationForm>({
+    location_name: '',
+    address: '',
+    city: '',
+    state: '',
+    zip: '',
+    phone: '',
+  });
+
+  const [services, setServices] = useState<ServiceForm[]>([
+    { name: '', profit_per_job: '', close_rate: '30' },
+  ]);
+
+  // Markets discovery state
+  const [discoveredLocations, setDiscoveredLocations] = useState<DiscoveredLocation[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [marketsDiscovering, setMarketsDiscovering] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [manualCity, setManualCity] = useState('');
+  const [manualState, setManualState] = useState('');
+
+  const handleSmartLookup = useCallback(async () => {
+    const trimmed = lookupInput.trim();
+    if (!trimmed) return;
+
+    setLookupLoading(true);
+    setError(null);
+    setLookupResults([]);
+
+    try {
+      const inputType = detectInputType(trimmed);
+
+      if (inputType === 'mapsUrl') {
+        const parsed = parseGoogleMapsUrl(trimmed);
+        const keyword = parsed.name || trimmed;
+        const locParam = parsed.lat && parsed.lng ? `${parsed.lat},${parsed.lng},1000` : undefined;
+
+        const result = await dfsCall<any>('serp/google/maps/live/advanced', [
+          { keyword, ...(locParam ? { location_coordinate: locParam } : {}), language_code: 'en', depth: 5 },
+        ]);
+
+        const items = (result.tasks?.[0]?.result?.[0]?.items || []).filter((i: any) => i.type === 'maps_search');
+        if (items.length > 0) {
+          const results = items.slice(0, 5).map((item: any) => mapItemToBusinessData(item, parsed));
+          if (parsed.cid || parsed.placeId) {
+            const match = results.find((r: any) =>
+              (parsed.cid && r.cid === parsed.cid) || (parsed.placeId && r.place_id === parsed.placeId)
+            );
+            if (match) { applyLookupResult(match); return; }
+          }
+          if (results.length === 1) { applyLookupResult(results[0]); return; }
+          setLookupResults(results);
+        } else if (parsed.lat && parsed.lng) {
+          setBusinessData((prev) => ({ ...prev, latitude: parsed.lat!, longitude: parsed.lng!, place_id: parsed.placeId || '', cid: parsed.cid || '' }));
+          setLookupDone(true);
+        } else {
+          setError('Could not find business from this Maps URL');
+        }
+      } else if (inputType === 'website') {
+        const cleanDomain = trimmed.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+
+        const result = await dfsCall<any>('business_data/business_listings/search/live', [
+          { categories: [], filters: ['domain', '=', cleanDomain], language_code: 'en', limit: 5 },
+        ]);
+        const items = result.tasks?.[0]?.result?.[0]?.items || [];
+
+        if (items.length > 0) {
+          const results = items.map((item: any) => listingToBusinessData(item));
+          if (results.length === 1) { applyLookupResult(results[0]); return; }
+          setLookupResults(results);
+        } else {
+          const mapsResult = await dfsCall<any>('serp/google/maps/live/advanced', [
+            { keyword: cleanDomain, language_code: 'en', depth: 5 },
+          ]);
+          const mapsItems = (mapsResult.tasks?.[0]?.result?.[0]?.items || []).filter((i: any) => i.type === 'maps_search');
+          if (mapsItems.length === 0) throw new Error(`No business found for "${cleanDomain}". Try searching by business name instead.`);
+          const results = mapsItems.slice(0, 5).map((item: any) => mapItemToBusinessData(item));
+          if (results.length === 1) { applyLookupResult(results[0]); return; }
+          setLookupResults(results);
+        }
+      } else if (inputType === 'phone') {
+        const digits = trimmed.replace(/\D/g, '');
+        const result = await dfsCall<any>('business_data/business_listings/search/live', [
+          { categories: [], filters: ['phone', 'like', `%${digits.slice(-10)}%`], language_code: 'en', limit: 5 },
+        ]);
+        const items = result.tasks?.[0]?.result?.[0]?.items || [];
+        if (items.length === 0) throw new Error(`No business found for this phone number. Try searching by business name instead.`);
+        const results = items.map((item: any) => listingToBusinessData(item));
+        if (results.length === 1) { applyLookupResult(results[0]); return; }
+        setLookupResults(results);
+      } else {
+        const result = await dfsCall<any>('business_data/business_listings/search/live', [
+          { categories: [], filters: ['title', 'like', `%${trimmed}%`], language_code: 'en', limit: 5 },
+        ]);
+        const items = result.tasks?.[0]?.result?.[0]?.items || [];
+        if (items.length === 0) throw new Error(`No business found for "${trimmed}". Try a different search or enter manually.`);
+        const results = items.map((item: any) => listingToBusinessData(item));
+        if (results.length === 1) { applyLookupResult(results[0]); return; }
+        setLookupResults(results);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lookup failed. Fill in the form manually.');
+    } finally {
+      setLookupLoading(false);
+    }
+  }, [lookupInput]);
+
+  const applyLookupResult = (result: any) => {
+    setBusinessData({
+      name: result.name || '',
+      domain: result.domain || '',
+      phone: result.phone || '',
+      address: result.address || '',
+      city: result.city || '',
+      state: result.state || '',
+      zip: result.zip || '',
+      industry: result.category || '',
+      latitude: result.latitude || 0,
+      longitude: result.longitude || 0,
+      place_id: result.place_id || '',
+      cid: result.cid || '',
+    });
+    setLookupResults([]);
+    setLookupDone(true);
+    setError(null);
+  };
+
+  const handleBusinessSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      const { businessId: id, error } = await createBusiness(businessData);
+      if (error) throw new Error(error);
+      if (!id) throw new Error('Business not found after insert');
+
+      setBusinessId(id);
+      setLocationData({
+        location_name: businessData.name + ' - Main',
+        address: businessData.address,
+        city: businessData.city,
+        state: businessData.state,
+        zip: businessData.zip,
+        phone: businessData.phone,
+        latitude: businessData.latitude || undefined,
+        longitude: businessData.longitude || undefined,
+        place_id: businessData.place_id || undefined,
+        cid: businessData.cid || undefined,
+      });
+      onStepComplete?.('add_business');
+      setCurrentStep('location');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create business. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLocationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      if (!businessId) throw new Error('Business not found');
+
+      const { error } = await createLocation({ business_id: businessId, ...locationData });
+      if (error) throw new Error(error);
+
+      onStepComplete?.('add_location');
+      setCurrentStep('services');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create location');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleServicesSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      if (!businessId) throw new Error('Business not found');
+
+      const validServices = services.filter((s) => s.name.trim());
+      if (validServices.length === 0) throw new Error('Please add at least one service');
+
+      const { error } = await createServices(
+        businessId,
+        validServices.map((service, index) => ({
+          name: service.name,
+          profit_per_job: parseFloat(service.profit_per_job) || 0,
+          close_rate: parseFloat(service.close_rate) / 100 || 0.3,
+          sort_order: index,
+        }))
+      );
+      if (error) throw new Error(error);
+
+      onStepComplete?.('add_service');
+      setCurrentStep('markets');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create services');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Location Discovery ───────────────────────────────────────────────────
+
+  const discoverLocations = useCallback(async () => {
+    if (!businessData.domain && !businessData.name) return;
+    setMarketsDiscovering(true);
+    setDiscoveryError(null);
+
+    const US_STATES = new Set([
+      'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
+      'KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ',
+      'NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT',
+      'VA','WA','WV','WI','WY','DC',
+    ]);
+
+    const deriveAreaCodes = (phone: string): string[] => {
+      const digits = phone.replace(/\D/g, '');
+      if (digits.length === 10) return [digits.slice(0, 3)];
+      if (digits.length === 11 && digits[0] === '1') return [digits.slice(1, 4)];
+      return [];
+    };
+
+    const itemToLocation = (item: any): DiscoveredLocation | null => {
+      const city = item.address_info?.city || '';
+      const state = item.address_info?.region || '';
+      if (!city || !state) return null;
+      const phone = item.phone || '';
+      return {
+        id: crypto.randomUUID(),
+        city: city.trim(),
+        state: state.trim(),
+        address: item.address || undefined,
+        phone: phone || undefined,
+        area_codes: phone ? deriveAreaCodes(phone) : [],
+        place_id: item.place_id || undefined,
+        cid: item.cid || undefined,
+        latitude: item.latitude || undefined,
+        longitude: item.longitude || undefined,
+        source: 'gbp',
+      };
+    };
+
+    const extractCitiesFromSerp = (items: any[]): DiscoveredLocation[] => {
+      const found: DiscoveredLocation[] = [];
+      const cityStateRe = /\b([A-Z][a-zA-Z\s]{1,20}),\s*([A-Z]{2})\b/g;
+
+      for (const item of items) {
+        const text = `${item.description || ''} ${item.url || ''}`;
+        let match;
+        cityStateRe.lastIndex = 0;
+        while ((match = cityStateRe.exec(text)) !== null) {
+          const city = match[1].trim();
+          const state = match[2].trim();
+          if (!US_STATES.has(state)) continue;
+          found.push({ id: crypto.randomUUID(), city, state, source: 'serp' });
+        }
+
+        try {
+          const url = new URL(item.url || '');
+          const segments = url.pathname.split('/').filter(Boolean);
+          for (const seg of segments) {
+            const slugMatch = seg.match(/^([a-z](?:[a-z-]*[a-z]))-([a-z]{2})$/);
+            if (slugMatch) {
+              const stateCandidate = slugMatch[2].toUpperCase();
+              if (US_STATES.has(stateCandidate)) {
+                found.push({
+                  id: crypto.randomUUID(),
+                  city: slugMatch[1].replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+                  state: stateCandidate,
+                  source: 'serp',
+                });
+              }
+            }
+          }
+        } catch {
+          // ignore invalid URLs
+        }
+      }
+      return found;
+    };
+
+    const results = await Promise.allSettled([
+      businessData.domain
+        ? dfsCall<any>('business_data/business_listings/search/live', [
+            { categories: [], filters: ['domain', '=', businessData.domain], language_code: 'en', limit: 20 },
+          ])
+        : Promise.resolve(null),
+
+      businessData.name
+        ? dfsCall<any>('business_data/business_listings/search/live', [
+            { categories: [], filters: ['title', 'like', `%${businessData.name}%`], language_code: 'en', limit: 20 },
+          ])
+        : Promise.resolve(null),
+
+      businessData.name
+        ? dfsCall<any>('serp/google/organic/live/advanced', [
+            {
+              keyword: `"${businessData.name}" service area${businessData.state ? ' ' + businessData.state : ''}`,
+              language_code: 'en',
+              location_name: 'United States',
+              depth: 10,
+            },
+          ])
+        : Promise.resolve(null),
+    ]);
+
+    const raw: DiscoveredLocation[] = [];
+
+    if (results[0].status === 'fulfilled' && results[0].value) {
+      const items = results[0].value.tasks?.[0]?.result?.[0]?.items || [];
+      for (const item of items) {
+        const loc = itemToLocation(item);
+        if (loc) raw.push(loc);
+      }
+    }
+
+    if (results[1].status === 'fulfilled' && results[1].value) {
+      const items = results[1].value.tasks?.[0]?.result?.[0]?.items || [];
+      for (const item of items) {
+        const loc = itemToLocation(item);
+        if (loc) raw.push(loc);
+      }
+    }
+
+    if (results[2].status === 'fulfilled' && results[2].value) {
+      const items = results[2].value.tasks?.[0]?.result?.[0]?.items || [];
+      raw.push(...extractCitiesFromSerp(items));
+    }
+
+    const seen = new Map<string, DiscoveredLocation>();
+    for (const loc of raw) {
+      if (!loc.city || !loc.state) continue;
+      const key = `${loc.city.toLowerCase()}|${loc.state.toLowerCase()}`;
+      if (!seen.has(key) || loc.source === 'gbp') {
+        seen.set(key, loc);
+      }
+    }
+
+    const deduped = Array.from(seen.values());
+    setDiscoveredLocations(deduped);
+    setSelectedIds(new Set(deduped.map((l) => l.id)));
+    setMarketsDiscovering(false);
+  }, [businessData.domain, businessData.name, businessData.state]);
+
+  useEffect(() => {
+    if (currentStep === 'markets' && discoveredLocations.length === 0 && !marketsDiscovering) {
+      discoverLocations();
+    }
+  }, [currentStep, discoveredLocations.length, marketsDiscovering, discoverLocations]);
+
+  const toggleLocation = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const addManualLocation = () => {
+    const city = manualCity.trim();
+    const state = manualState.trim().toUpperCase();
+    if (!city || !state) return;
+    const loc: DiscoveredLocation = { id: crypto.randomUUID(), city, state, source: 'manual' };
+    setDiscoveredLocations((prev) => [...prev, loc]);
+    setSelectedIds((prev) => new Set([...prev, loc.id]));
+    setManualCity('');
+    setManualState('');
+  };
+
+  const removeDiscoveredLocation = (id: string) => {
+    setDiscoveredLocations((prev) => prev.filter((l) => l.id !== id));
+    setSelectedIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
+  };
+
+  const handleMarketsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      if (!businessId) throw new Error('Business not found');
+
+      const selected = discoveredLocations.filter((l) => selectedIds.has(l.id));
+      if (selected.length === 0) throw new Error('Select at least one market to continue');
+
+      const { error } = await createMarkets(
+        businessId,
+        selected.map((loc, index) => ({
+          name: `${loc.city}, ${loc.state}`,
+          cities: [loc.city],
+          area_codes: loc.area_codes ?? [],
+          is_primary: index === 0,
+          place_id: loc.place_id ?? null,
+          cid: loc.cid ?? null,
+          latitude: loc.latitude ?? null,
+          longitude: loc.longitude ?? null,
+          address: loc.address ?? null,
+          phone: loc.phone ?? null,
+          state: loc.state ?? null,
+        }))
+      );
+      if (error) throw new Error(error);
+
+      onStepComplete?.('add_market');
+      // Check if all 5 steps are now done
+      const updatedSteps = [...new Set([...completedSteps, 'add_business', 'add_location', 'add_service', 'add_market'])];
+      if (WIZARD_STEPS.every((s) => updatedSteps.includes(s))) {
+        onDismiss?.();
+      }
+      setCurrentStep('complete');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create markets');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addService = () =>
+    setServices([...services, { name: '', profit_per_job: '', close_rate: '30' }]);
+  const removeService = (index: number) =>
+    setServices(services.filter((_, i) => i !== index));
+  const updateService = (index: number, field: keyof ServiceForm, value: string) => {
+    const updated = [...services];
+    updated[index] = { ...updated[index], [field]: value };
+    setServices(updated);
+  };
+
+  const steps = [
+    { id: 'business', name: 'Business', icon: '🏢', stepKey: 'add_business' },
+    { id: 'location', name: 'Location', icon: '📍', stepKey: 'add_location' },
+    { id: 'services', name: 'Services', icon: '🛠️', stepKey: 'add_service' },
+    { id: 'markets', name: 'Markets', icon: '🗺️', stepKey: 'add_market' },
+  ];
+  const currentStepIndex = steps.findIndex((s) => s.id === currentStep);
+
+  if (currentStep === 'complete') {
+    return (
+      <div className="max-w-2xl mx-auto text-center">
+        <div className="card p-12">
+          <div className="text-8xl mb-6">🎉</div>
+          <h1 className="text-4xl font-display mb-4">
+            <span className="text-flame-500">You are All Set!</span>
+          </h1>
+          <p className="text-xl text-ash-300 mb-8">Your ScorchLocal account is ready. Loading your dashboard...</p>
+          <div className="flex justify-center">
+            <div className="animate-spin h-8 w-8 border-4 border-flame-500 border-t-transparent rounded-full" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={wizardRef} className="max-w-3xl mx-auto">
+      <h1 className="text-3xl font-display mb-8 text-center">
+        <span className="text-flame-500">Welcome to ScorchLocal!</span>
+      </h1>
+
+      {/* Progress Steps */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between">
+          {steps.map((step, index) => (
+            <div key={step.id} className="flex items-center flex-1">
+              <div className="flex flex-col items-center flex-1">
+                <div
+                  className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl mb-2 ${
+                    index <= currentStepIndex ? 'bg-flame-500 text-white' : 'bg-char-800 text-ash-400'
+                  }`}
+                >
+                  {completedSteps.includes(step.stepKey) ? '✓' : step.icon}
+                </div>
+                <div
+                  className={`text-sm font-medium ${
+                    index <= currentStepIndex ? 'text-flame-500' : 'text-ash-400'
+                  }`}
+                >
+                  {step.name}
+                </div>
+              </div>
+              {index < steps.length - 1 && (
+                <div
+                  className={`flex-1 h-1 mx-2 ${
+                    index < currentStepIndex ? 'bg-flame-500' : 'bg-char-800'
+                  }`}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {error && (
+        <div className="mb-6 p-4 bg-danger/10 border border-danger/20 rounded-lg text-danger">
+          <p className="font-medium">{error}</p>
+        </div>
+      )}
+
+      {/* Step 1: Business Info */}
+      {currentStep === 'business' && (
+        <div className="card p-8">
+          <h2 className="text-2xl font-display mb-2 text-center">Business Information</h2>
+          <p className="text-ash-400 text-center mb-6">Search for your business to auto-fill details</p>
+
+          {!lookupDone && (
+            <div className="mb-6">
+              <label className="input-label">Find your business</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  className="input flex-1"
+                  placeholder="Business name, website, phone, or Google Maps URL"
+                  value={lookupInput}
+                  onChange={(e) => setLookupInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleSmartLookup())}
+                />
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleSmartLookup}
+                  disabled={lookupLoading || !lookupInput.trim()}
+                >
+                  {lookupLoading ? 'Searching...' : 'Lookup'}
+                </button>
+              </div>
+              {lookupInput.trim().length > 2 && (
+                <p className="text-xs text-ash-400 mt-1">
+                  {detectInputType(lookupInput) === 'mapsUrl' ? 'Google Maps URL detected' :
+                   detectInputType(lookupInput) === 'website' ? 'Website URL detected' :
+                   detectInputType(lookupInput) === 'phone' ? 'Phone number detected' : 'Business name'}
+                </p>
+              )}
+
+              {lookupResults.length > 1 && (
+                <div className="mt-3 space-y-2">
+                  <p className="text-sm text-ash-300">Multiple results found. Select your business:</p>
+                  {lookupResults.map((result: any, idx: number) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => applyLookupResult(result)}
+                      className="w-full text-left p-3 rounded-lg border border-ash-700 hover:border-flame-500 hover:bg-flame-500/5 transition-colors"
+                    >
+                      <div className="font-medium">{result.name}</div>
+                      <div className="text-sm text-ash-400">
+                        {result.address}{result.city ? `, ${result.city}` : ''}{result.state ? `, ${result.state}` : ''}
+                      </div>
+                      {result.phone && <div className="text-xs text-ash-400">{result.phone}</div>}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <button
+                type="button"
+                className="text-sm text-ash-400 hover:text-ash-200 mt-3"
+                onClick={() => setLookupDone(true)}
+              >
+                Or enter manually
+              </button>
+            </div>
+          )}
+
+          {lookupDone && (
+            <form onSubmit={handleBusinessSubmit} className="space-y-4">
+              {businessData.name && (
+                <button
+                  type="button"
+                  className="text-sm text-ash-400 hover:text-ash-200 mb-2"
+                  onClick={() => { setLookupDone(false); setLookupResults([]); }}
+                >
+                  Search for a different business
+                </button>
+              )}
+
+              <div>
+                <label className="input-label">Business Name *</label>
+                <input
+                  type="text"
+                  value={businessData.name}
+                  onChange={(e) => setBusinessData({ ...businessData, name: e.target.value })}
+                  className="input"
+                  placeholder="Smith Plumbing &amp; Heating"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="input-label">Website Domain *</label>
+                <input
+                  type="text"
+                  value={businessData.domain}
+                  onChange={(e) => setBusinessData({ ...businessData, domain: e.target.value })}
+                  onBlur={(e) => {
+                    const clean = normalizeDomain(e.target.value);
+                    if (clean !== businessData.domain) {
+                      setBusinessData({ ...businessData, domain: clean });
+                    }
+                  }}
+                  className="input"
+                  placeholder="smithplumbing.com"
+                  required
+                />
+                <p className="text-xs text-ash-400 mt-1">Paste any URL — we will extract the domain automatically</p>
+              </div>
+
+              <div>
+                <label className="input-label">Industry</label>
+                <input
+                  type="text"
+                  value={businessData.industry}
+                  onChange={(e) => setBusinessData({ ...businessData, industry: e.target.value })}
+                  className="input"
+                  placeholder="Plumbing, HVAC, Roofing, etc."
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="input-label">Phone</label>
+                  <input
+                    type="tel"
+                    value={businessData.phone}
+                    onChange={(e) => setBusinessData({ ...businessData, phone: e.target.value })}
+                    className="input"
+                    placeholder="(555) 123-4567"
+                  />
+                </div>
+                <div>
+                  <label className="input-label">Street Address</label>
+                  <input
+                    type="text"
+                    value={businessData.address}
+                    onChange={(e) => setBusinessData({ ...businessData, address: e.target.value })}
+                    className="input"
+                    placeholder="123 Main St"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="input-label">City</label>
+                  <input
+                    type="text"
+                    value={businessData.city}
+                    onChange={(e) => setBusinessData({ ...businessData, city: e.target.value })}
+                    className="input"
+                    placeholder="Portland"
+                  />
+                </div>
+                <div>
+                  <label className="input-label">State</label>
+                  <input
+                    type="text"
+                    value={businessData.state}
+                    onChange={(e) => setBusinessData({ ...businessData, state: e.target.value })}
+                    className="input"
+                    placeholder="OR"
+                    maxLength={2}
+                  />
+                </div>
+                <div>
+                  <label className="input-label">ZIP</label>
+                  <input
+                    type="text"
+                    value={businessData.zip}
+                    onChange={(e) => setBusinessData({ ...businessData, zip: e.target.value })}
+                    className="input"
+                    placeholder="97201"
+                    maxLength={10}
+                  />
+                </div>
+              </div>
+
+              {businessData.latitude !== 0 && businessData.longitude !== 0 && (
+                <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-sm text-green-400">
+                  Coordinates found: {businessData.latitude.toFixed(6)}, {businessData.longitude.toFixed(6)}
+                  {businessData.place_id && <span className="ml-2">| Place ID linked</span>}
+                  {businessData.cid && <span className="ml-2">| CID linked</span>}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-4">
+                <button type="submit" className="btn-primary" disabled={loading}>
+                  {loading ? 'Saving...' : 'Continue'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
+
+      {/* Step 2: Primary Location */}
+      {currentStep === 'location' && (
+        <div className="card p-8">
+          <h2 className="text-2xl font-display mb-2 text-center">Primary Location</h2>
+          <p className="text-ash-400 text-center mb-6">Add your main business location</p>
+
+          <form onSubmit={handleLocationSubmit} className="space-y-4">
+            <div>
+              <label className="input-label">Location Name *</label>
+              <input
+                type="text"
+                value={locationData.location_name}
+                onChange={(e) => setLocationData({ ...locationData, location_name: e.target.value })}
+                className="input"
+                placeholder="Main Office, Downtown, etc."
+                required
+              />
+            </div>
+
+            <div>
+              <label className="input-label">Address</label>
+              <input
+                type="text"
+                value={locationData.address}
+                onChange={(e) => setLocationData({ ...locationData, address: e.target.value })}
+                className="input"
+                placeholder="123 Main St"
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className="input-label">City *</label>
+                <input
+                  type="text"
+                  value={locationData.city}
+                  onChange={(e) => setLocationData({ ...locationData, city: e.target.value })}
+                  className="input"
+                  placeholder="Portland"
+                  required
+                />
+              </div>
+              <div>
+                <label className="input-label">State *</label>
+                <input
+                  type="text"
+                  value={locationData.state}
+                  onChange={(e) => setLocationData({ ...locationData, state: e.target.value })}
+                  className="input"
+                  placeholder="OR"
+                  maxLength={2}
+                  required
+                />
+              </div>
+              <div>
+                <label className="input-label">ZIP</label>
+                <input
+                  type="text"
+                  value={locationData.zip}
+                  onChange={(e) => setLocationData({ ...locationData, zip: e.target.value })}
+                  className="input"
+                  placeholder="97201"
+                  maxLength={10}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="input-label">Phone</label>
+              <input
+                type="tel"
+                value={locationData.phone}
+                onChange={(e) => setLocationData({ ...locationData, phone: e.target.value })}
+                className="input"
+                placeholder="(555) 123-4567"
+              />
+            </div>
+
+            <div className="flex justify-between gap-3 pt-4">
+              <button
+                type="button"
+                onClick={() => setCurrentStep('business')}
+                className="btn-ghost"
+                disabled={loading}
+              >
+                Back
+              </button>
+              <button type="submit" className="btn-primary" disabled={loading}>
+                {loading ? 'Saving...' : 'Continue'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Step 3: Services */}
+      {currentStep === 'services' && (
+        <div className="card p-8">
+          <h2 className="text-2xl font-display mb-2 text-center">Services &amp; Pricing</h2>
+          <p className="text-ash-400 text-center mb-6">
+            What services do you offer? (Used for lead value calculations)
+          </p>
+
+          <form onSubmit={handleServicesSubmit} className="space-y-4">
+            {services.map((service, index) => (
+              <div key={index} className="card-interactive p-4">
+                <div className="flex items-start gap-4">
+                  <div className="flex-1 space-y-3">
+                    <div>
+                      <label className="input-label text-xs">Service Name *</label>
+                      <input
+                        type="text"
+                        value={service.name}
+                        onChange={(e) => updateService(index, 'name', e.target.value)}
+                        className="input"
+                        placeholder="e.g., Drain Cleaning, AC Repair"
+                        required
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="input-label text-xs">Avg Profit per Job ($)</label>
+                        <input
+                          type="number"
+                          value={service.profit_per_job}
+                          onChange={(e) => updateService(index, 'profit_per_job', e.target.value)}
+                          className="input"
+                          placeholder="450"
+                          step="0.01"
+                        />
+                      </div>
+                      <div>
+                        <label className="input-label text-xs">Close Rate (%)</label>
+                        <input
+                          type="number"
+                          value={service.close_rate}
+                          onChange={(e) => updateService(index, 'close_rate', e.target.value)}
+                          className="input"
+                          placeholder="30"
+                          min="0"
+                          max="100"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  {services.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeService(index)}
+                      className="btn-ghost text-danger px-3"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            <button type="button" onClick={addService} className="btn-secondary w-full">
+              + Add Another Service
+            </button>
+
+            <div className="flex justify-between gap-3 pt-4">
+              <button
+                type="button"
+                onClick={() => setCurrentStep('location')}
+                className="btn-ghost"
+                disabled={loading}
+              >
+                Back
+              </button>
+              <button type="submit" className="btn-primary" disabled={loading}>
+                {loading ? 'Saving...' : 'Continue'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Step 4: Target Markets */}
+      {currentStep === 'markets' && (
+        <div className="card p-8">
+          <h2 className="text-2xl font-display mb-2 text-center">Target Markets</h2>
+          <p className="text-ash-400 text-center mb-6">
+            Define the markets you serve
+          </p>
+
+          {marketsDiscovering && (
+            <div className="flex flex-col items-center gap-3 py-10">
+              <div className="animate-spin h-8 w-8 border-4 border-flame-500 border-t-transparent rounded-full" />
+              <p className="text-ash-400 text-sm">Discovering your service locations...</p>
+            </div>
+          )}
+
+          {!marketsDiscovering && (
+            <form onSubmit={handleMarketsSubmit} className="space-y-4">
+              {discoveredLocations.length === 0 && (
+                <div className="text-center py-4 text-ash-500 text-sm">
+                  No locations found automatically — add them manually below.
+                </div>
+              )}
+
+              {discoveredLocations.length > 0 && (
+                <div className="space-y-2">
+                  {discoveredLocations.map((loc) => {
+                    const isSelected = selectedIds.has(loc.id);
+                    return (
+                      <div
+                        key={loc.id}
+                        className={`flex items-center gap-3 p-3 rounded-btn border transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'border-flame-500/40 bg-flame-500/5'
+                            : 'border-char-700 bg-char-800 opacity-50'
+                        }`}
+                        onClick={() => toggleLocation(loc.id)}
+                      >
+                        <div
+                          className={`w-5 h-5 rounded flex-shrink-0 border-2 flex items-center justify-center ${
+                            isSelected ? 'border-flame-500 bg-flame-500' : 'border-ash-600 bg-transparent'
+                          }`}
+                        >
+                          {isSelected && (
+                            <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+                              <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className="font-medium text-sm">
+                            {loc.city}, {loc.state}
+                          </span>
+                          {(loc.address || loc.phone) && (
+                            <div className="text-ash-500 text-xs mt-0.5 truncate">
+                              {loc.address && <span>{loc.address}</span>}
+                              {loc.address && loc.phone && <span className="mx-1">·</span>}
+                              {loc.phone && <span>{loc.phone}</span>}
+                            </div>
+                          )}
+                        </div>
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            loc.source === 'gbp'
+                              ? 'bg-emerald-500/15 text-emerald-400'
+                              : loc.source === 'serp'
+                              ? 'bg-blue-500/15 text-blue-400'
+                              : 'bg-ash-600/30 text-ash-400'
+                          }`}
+                        >
+                          {loc.source === 'gbp' ? 'GBP' : loc.source === 'serp' ? 'Web' : 'Manual'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); removeDiscoveredLocation(loc.id); }}
+                          className="text-ash-600 hover:text-danger text-lg leading-none flex-shrink-0 px-1"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="pt-2">
+                <p className="input-label text-xs mb-2">Add a location manually</p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={manualCity}
+                    onChange={(e) => setManualCity(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addManualLocation())}
+                    className="input flex-1"
+                    placeholder="City"
+                  />
+                  <input
+                    type="text"
+                    value={manualState}
+                    onChange={(e) => setManualState(e.target.value.toUpperCase().slice(0, 2))}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addManualLocation())}
+                    className="input w-20 uppercase"
+                    placeholder="ST"
+                    maxLength={2}
+                  />
+                  <button
+                    type="button"
+                    onClick={addManualLocation}
+                    className="btn-secondary px-4 flex-shrink-0"
+                    disabled={!manualCity.trim() || !manualState.trim()}
+                  >
+                    + Add
+                  </button>
+                </div>
+              </div>
+
+              {discoveryError && (
+                <p className="text-danger text-sm">{discoveryError}</p>
+              )}
+
+              <div className="flex justify-between gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep('services')}
+                  className="btn-ghost"
+                  disabled={loading}
+                >
+                  Back
+                </button>
+                <button type="submit" className="btn-primary" disabled={loading || selectedIds.size === 0}>
+                  {loading ? 'Saving...' : 'Complete Setup'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
+
+      <p className="text-xs text-ash-400 text-center mt-6">
+        You can update all this information anytime in Settings
+      </p>
+
+      {onDismiss && (
+        <div className="flex justify-center mt-4">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="text-sm text-ash-400 hover:text-ash-200 transition-colors"
+          >
+            Skip for now
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

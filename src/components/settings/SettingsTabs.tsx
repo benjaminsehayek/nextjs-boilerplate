@@ -7,6 +7,8 @@ const tabs = [
   { id: 'personal', label: 'Personal', icon: '👤' },
   { id: 'business', label: 'Business', icon: '🏢' },
   { id: 'services', label: 'Services & Markets', icon: '📋' },
+  { id: 'integrations', label: 'Integrations', icon: '🔌' },
+  { id: 'notifications', label: 'Notifications', icon: '🔔' },
   { id: 'billing', label: 'Plan & Billing', icon: '💳' },
 ];
 

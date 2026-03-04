@@ -5,7 +5,26 @@ import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+
+function useTheme() {
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+
+  useEffect(() => {
+    const stored = (localStorage.getItem('theme') as 'dark' | 'light') || 'dark';
+    setTheme(stored);
+    document.documentElement.classList.toggle('light', stored === 'light');
+  }, []);
+
+  function toggle() {
+    const next: 'dark' | 'light' = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    localStorage.setItem('theme', next);
+    document.documentElement.classList.toggle('light', next === 'light');
+  }
+
+  return { theme, toggle };
+}
 
 const navItems = [
   { section: 'Overview', items: [
@@ -39,6 +58,7 @@ function SidebarContent({
   const { user, profile, signOut } = useUser();
   const { tier } = useSubscription();
   const { business } = useBusiness();
+  const { theme, toggle: toggleTheme } = useTheme();
   const needsOnboarding = !business;
 
   const initials = user?.user_metadata?.full_name
@@ -66,6 +86,7 @@ function SidebarContent({
         <button
           onClick={() => setCollapsed(!collapsed)}
           className="btn-icon"
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
           {collapsed ? '→' : '←'}
         </button>
@@ -147,6 +168,17 @@ function SidebarContent({
             Sign Out
           </button>
         )}
+        {/* Theme toggle */}
+        <div className={`mt-3 flex ${collapsed ? 'justify-center' : 'justify-end'}`}>
+          <button
+            onClick={toggleTheme}
+            aria-label="Toggle theme"
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="btn-icon w-8 h-8 text-sm"
+          >
+            {theme === 'dark' ? '🌙' : '☀️'}
+          </button>
+        </div>
       </div>
     </div>
   );

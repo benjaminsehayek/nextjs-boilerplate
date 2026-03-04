@@ -2,6 +2,7 @@
 
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useUser } from '@/lib/hooks/useUser';
+import { useToast } from '@/components/ui/Toast';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
 import { CurrentPlanCard } from '@/components/billing/CurrentPlanCard';
 import { UsageCard } from '@/components/billing/UsageCard';
@@ -12,13 +13,117 @@ import { SUBSCRIPTION_TIERS, type BillingInterval } from '@/lib/stripe/config';
 import type { CheckoutResponse } from '@/types';
 import { useState, useEffect } from 'react';
 
+// ── Feature loss lists by tier ────────────────────────────────────────────────
+
+const TIER_FEATURES_LOST: Record<string, string[]> = {
+  growth: [
+    'AI content generation',
+    'Local grid scanning',
+    'Campaign sending limit increases',
+    'Priority support',
+  ],
+  analysis: [
+    'Site auditing',
+    'Off-page auditing',
+    'Lead intelligence',
+    'Keyword research tools',
+  ],
+  marketing: [
+    'Email/SMS campaigns',
+    'Contact database',
+    'SendGrid integration',
+    'Campaign analytics',
+  ],
+};
+
+// ── CancelConfirmModal ────────────────────────────────────────────────────────
+
+function CancelConfirmModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  periodEnd,
+  tier,
+  loading,
+  error,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  periodEnd: string;
+  tier: string;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (!isOpen) return null;
+
+  const featuresLost = TIER_FEATURES_LOST[tier] || [];
+
+  return (
+    <div
+      className="animate-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="animate-modal-card card max-w-md w-full p-6">
+        <h2 className="font-display text-xl mb-2">Cancel Subscription?</h2>
+        <p className="text-sm text-ash-300 mb-4">
+          Your plan will remain active until{' '}
+          <span className="font-semibold text-ash-100">{periodEnd}</span>.
+        </p>
+
+        {featuresLost.length > 0 && (
+          <>
+            <p className="text-sm text-ash-400 mb-2">After that, you&apos;ll lose access to:</p>
+            <ul className="mb-5 space-y-1.5">
+              {featuresLost.map((feature) => (
+                <li key={feature} className="flex items-center gap-2 text-sm text-ash-300">
+                  <span className="text-danger text-xs">✕</span>
+                  {feature}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {error && (
+          <p className="text-sm text-danger mb-4">{error}</p>
+        )}
+
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="btn-secondary flex-1"
+            disabled={loading}
+          >
+            Keep My Plan
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className="btn-danger flex-1 disabled:opacity-50"
+          >
+            {loading ? 'Cancelling...' : 'Cancel Subscription'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function BillingPage() {
   const { profile, tier, loading } = useSubscription();
   const { refreshProfile } = useUser();
+  const { toast } = useToast();
   const [showSuccess, setShowSuccess] = useState(false);
   const [interval, setInterval] = useState<BillingInterval>('monthly');
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Cancel subscription state
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelledAt, setCancelledAt] = useState<number | null>(null);
 
   // Check for success redirect from Stripe — refresh profile to pick up new tier/credits
   useEffect(() => {
@@ -31,9 +136,12 @@ export default function BillingPage() {
         setTimeout(() => setShowSuccess(false), 5000);
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSelectPlan = async (planTier: string, planInterval: BillingInterval) => {
+    if (checkoutLoading !== null) return;
+
     if (planTier === 'free') {
       setError('Downgrading to free tier is not yet supported. Please contact support.');
       return;
@@ -73,6 +181,55 @@ export default function BillingPage() {
     }
   };
 
+  const handleCancelSubscription = async () => {
+    setCancelLoading(true);
+    setCancelError(null);
+    try {
+      const res = await fetch('/api/stripe/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCancelError(data.error || 'Failed to cancel subscription. Please try again.');
+        return;
+      }
+      setCancelledAt(data.cancelsAt as number);
+      setShowCancelConfirm(false);
+      toast.success('Subscription cancelled');
+      refreshProfile();
+    } catch {
+      setCancelError('Network error. Please try again.');
+    } finally {
+      setCancelLoading(false);
+    }
+  };
+
+  // Format a Unix timestamp (seconds) as a human-readable date
+  const formatUnixDate = (ts: number) =>
+    new Date(ts * 1000).toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+
+  // Determine if we're in a 'cancelling' state (either just cancelled or profile says so)
+  const isCancelling =
+    cancelledAt !== null ||
+    (profile as any)?.subscription_status === 'cancelling';
+
+  const cancelsOnDate =
+    cancelledAt !== null
+      ? formatUnixDate(cancelledAt)
+      : profile?.subscription_period_end
+      ? new Date(profile.subscription_period_end).toLocaleDateString('en-US', {
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric',
+        })
+      : null;
+
   if (loading) {
     return (
       <ToolPageShell
@@ -107,11 +264,61 @@ export default function BillingPage() {
         </div>
       )}
 
+      {/* Cancelled success message */}
+      {cancelledAt !== null && cancelsOnDate && (
+        <div className="mb-6 p-4 bg-char-800 border border-ash-600 rounded-btn">
+          <p className="text-sm text-ash-300">
+            Subscription cancelled. Access continues until{' '}
+            <span className="font-semibold text-ash-100">{cancelsOnDate}</span>.
+          </p>
+        </div>
+      )}
+
       {/* Current Plan & Usage */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-12">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <CurrentPlanCard profile={profile} tier={tier} />
         <UsageCard profile={profile} />
       </div>
+
+      {/* Cancel subscription section — only show for paid active/cancelling plans */}
+      {tier !== 'free' && (
+        <div className="mb-12">
+          {isCancelling && cancelsOnDate ? (
+            <p className="text-sm text-ash-400">
+              <span className="inline-block px-2 py-0.5 bg-danger/10 text-danger rounded-full text-xs font-medium mr-2">
+                Cancels on {cancelsOnDate}
+              </span>
+              Your plan remains active until then.
+            </p>
+          ) : (
+            <button
+              onClick={() => { setShowCancelConfirm(true); setCancelError(null); }}
+              className="btn-ghost text-danger text-sm"
+            >
+              Cancel Subscription
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Cancel Confirmation Modal */}
+      <CancelConfirmModal
+        isOpen={showCancelConfirm}
+        onClose={() => { setShowCancelConfirm(false); setCancelError(null); }}
+        onConfirm={handleCancelSubscription}
+        periodEnd={
+          profile?.subscription_period_end
+            ? new Date(profile.subscription_period_end).toLocaleDateString('en-US', {
+                month: 'long',
+                day: 'numeric',
+                year: 'numeric',
+              })
+            : 'the end of your billing period'
+        }
+        tier={tier}
+        loading={cancelLoading}
+        error={cancelError}
+      />
 
       {/* Upgrade Plans Section */}
       <div className="mb-8">
@@ -127,14 +334,11 @@ export default function BillingPage() {
 
         {/* Error Message */}
         {error && (
-          <div className="mb-6 p-4 bg-danger/10 border border-danger rounded-btn flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-danger text-xl">⚠️</span>
-              <p className="text-sm text-danger">{error}</p>
-            </div>
+          <div className="mb-6 bg-danger/10 border border-danger text-danger px-4 py-3 rounded-btn text-sm flex items-center justify-between gap-3">
+            <p>{error}</p>
             <button
               onClick={() => setError(null)}
-              className="text-danger hover:text-danger/80"
+              className="hover:opacity-80 flex-shrink-0"
             >
               ✕
             </button>

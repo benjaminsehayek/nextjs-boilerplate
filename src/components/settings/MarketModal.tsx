@@ -54,7 +54,20 @@ export function MarketModal({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
   const supabase = createClient();
+
+  const trapFocus = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { onClose(); return; }
+    if (e.key !== 'Tab') return;
+    const focusable = modalRef.current?.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (!focusable?.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
 
   // Reset state when modal opens/closes
   useEffect(() => {
@@ -129,7 +142,8 @@ export function MarketModal({
         const { error } = await (supabase as any)
           .from('markets')
           .update({ name })
-          .eq('id', market.id);
+          .eq('id', market.id)
+          .eq('business_id', businessId); // B15-03: prevent cross-tenant update
         if (error) throw error;
       } else {
         // Add mode — save selected GBP result as a market
@@ -165,10 +179,27 @@ export function MarketModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="card p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <h2 className="font-display text-xl mb-1">
-          {market ? 'Edit Market' : 'Add Target Market'}
-        </h2>
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="market-modal-title"
+        onKeyDown={trapFocus}
+        className="card p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto"
+      >
+        <div className="flex items-start justify-between mb-1">
+          <h2 id="market-modal-title" className="font-display text-xl">
+            {market ? 'Edit Market' : 'Add Target Market'}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="btn-icon flex-shrink-0"
+            aria-label="Close modal"
+          >
+            ✕
+          </button>
+        </div>
         <p className="text-ash-500 text-sm mb-5">
           {market ? 'Rename this market' : 'Search for a location to pull GBP data'}
         </p>

@@ -3,8 +3,19 @@
 import { useState, useMemo } from 'react';
 import type { Campaign, CampaignStatus } from '@/lib/marketing/types';
 
+interface CampaignStats {
+  totalSent: number;
+  totalOpened: number;
+  totalClicked: number;
+  totalUnsubscribed: number;
+  openRate: string;   // e.g. "24.5%"
+  clickRate: string;  // e.g. "3.2%"
+}
+
 interface CampaignListProps {
   campaigns: Campaign[];
+  /** Per-campaign stats loaded from campaign_recipients — keyed by campaign ID */
+  campaignStats?: Record<string, CampaignStats>;
   onView: (campaign: Campaign) => void;
   onDuplicate: (campaign: Campaign) => void;
   onDelete: (campaignId: string) => void;
@@ -55,6 +66,7 @@ function formatDate(dateStr: string | null): string {
 
 export default function CampaignList({
   campaigns,
+  campaignStats,
   onView,
   onDuplicate,
   onDelete,
@@ -188,6 +200,21 @@ export default function CampaignList({
                           {campaign.subject}
                         </div>
                       )}
+                      {/* B7-09: Per-campaign performance summary from campaign_recipients */}
+                      {(() => {
+                        const s = campaignStats?.[campaign.id];
+                        if (!s) return null;
+                        if (s.totalSent === 0) {
+                          return (
+                            <div className="text-ash-500 text-xs mt-0.5">—</div>
+                          );
+                        }
+                        return (
+                          <div className="text-ash-500 text-xs mt-0.5">
+                            {s.openRate} opens · {s.clickRate} clicks · {s.totalUnsubscribed} unsub
+                          </div>
+                        );
+                      })()}
                     </td>
 
                     {/* Channel */}

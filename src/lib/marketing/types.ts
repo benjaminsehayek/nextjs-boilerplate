@@ -107,6 +107,7 @@ export interface CampaignRecipient {
   opened_at: string | null;
   clicked_at: string | null;
   error_message: string | null;
+  subject_variant: 'A' | 'B' | null;
 }
 
 export interface CampaignLinkClick {
@@ -196,6 +197,10 @@ export interface CreateCampaignInput {
   sender_phone?: string;
   audience_type: AudienceType;
   audience_value?: string;
+  // A/B testing
+  ab_test_enabled?: boolean;
+  subject_a?: string;
+  subject_b?: string;
 }
 
 export interface ScheduleCampaignInput {
@@ -235,7 +240,7 @@ export interface DashboardStats {
 export interface SendGridEvent {
   email: string;
   timestamp: number;
-  event: 'processed' | 'dropped' | 'delivered' | 'deferred' | 'bounce' | 'open' | 'click' | 'spamreport' | 'unsubscribe';
+  event: 'processed' | 'dropped' | 'delivered' | 'deferred' | 'bounce' | 'open' | 'click' | 'spamreport' | 'unsubscribe' | 'group_unsubscribe';
   sg_message_id: string;
   campaign_id?: string;
   recipient_id?: string;

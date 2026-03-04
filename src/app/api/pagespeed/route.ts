@@ -6,8 +6,55 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import type { PagespeedInsights, PSIMetric } from '@/components/tools/SiteAudit/types';
+import { apiError } from '@/lib/apiError';
 
 const PSI_BASE = 'https://www.googleapis.com/pagespeedonline/v5/runPagespeed';
+const TIMEOUT_MS = 30_000; // 30-second per-call timeout
+const RETRY_DELAY_MS = 1_000; // 1 second between attempts
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Fetch with a 30-second AbortController timeout.
+ * Throws AbortError on timeout, TypeError on network failure.
+ * Valid HTTP responses (even non-2xx) are returned as-is.
+ */
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Attempt the fetch up to 2 times.
+ * Retries only on AbortError (timeout) or TypeError (network failure) from the first attempt.
+ */
+async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await fetchWithTimeout(url, init);
+    } catch (err: any) {
+      const isAbort = err?.name === 'AbortError';
+      const isNetwork = err instanceof TypeError;
+      const isRetryable = isAbort || isNetwork;
+
+      if (!isRetryable || attempt === 1) {
+        throw err;
+      }
+
+      // First attempt failed with a transport error — wait 1s then retry once
+      await sleep(RETRY_DELAY_MS);
+    }
+  }
+  // Unreachable, but satisfies TypeScript
+  throw new Error('Unexpected retry loop exit');
+}
 
 function parsePSIMetric(raw: any): PSIMetric | undefined {
   if (!raw?.percentile) return undefined;
@@ -78,16 +125,39 @@ function parsePSIResponse(
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = crypto.randomUUID();
+
   // Auth check
   const supabase = await createClient();
   const { data: { user } } = await (supabase as any).auth.getUser();
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return apiError('Unauthorized', 401, undefined, { 'X-Request-ID': requestId });
   }
 
   const { url, strategy = 'mobile' } = await req.json();
   if (!url) {
-    return NextResponse.json({ error: 'url required' }, { status: 400 });
+    return apiError('url required', 400, undefined, { 'X-Request-ID': requestId });
+  }
+
+  // Validate url to prevent SSRF — must be a public https URL
+  if (!['mobile', 'desktop'].includes(strategy)) {
+    return apiError('strategy must be mobile or desktop', 400, undefined, { 'X-Request-ID': requestId });
+  }
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return apiError('url must be a valid URL', 400, undefined, { 'X-Request-ID': requestId });
+  }
+  if (parsedUrl.protocol !== 'https:') {
+    return apiError('url must use https', 400, undefined, { 'X-Request-ID': requestId });
+  }
+  // Reject private/internal hostnames
+  const hostname = parsedUrl.hostname;
+  // B14-17: Added IPv4-mapped IPv6 loopback (::ffff:127.x.x.x) and metadata endpoints
+  const privatePatterns = [/^localhost$/i, /^127\./, /^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./, /^::1$/, /^::ffff:127\./, /^0\.0\.0\.0$/, /^169\.254\./];
+  if (privatePatterns.some((p) => p.test(hostname))) {
+    return apiError('url hostname is not allowed', 400, undefined, { 'X-Request-ID': requestId });
   }
 
   const apiKey = process.env.GOOGLE_PSI_API_KEY;
@@ -102,24 +172,27 @@ export async function POST(req: NextRequest) {
   categories.forEach((c) => params.append('category', c));
 
   try {
-    const res = await fetch(`${PSI_BASE}?${params.toString()}`, {
+    const res = await fetchWithRetry(`${PSI_BASE}?${params.toString()}`, {
       headers: { 'Accept': 'application/json' },
-      // PSI can be slow — allow up to 60s
-      signal: AbortSignal.timeout(60_000),
     });
 
     if (!res.ok) {
       const errBody = await res.text();
+      console.error(`[pagespeed][${requestId}]`, `PSI API error ${res.status}`, errBody);
       return NextResponse.json(
         { error: `PSI API error ${res.status}`, detail: errBody },
-        { status: res.status }
+        { status: res.status, headers: { 'X-Request-ID': requestId } }
       );
     }
 
     const json = await res.json();
     const parsed = parsePSIResponse(json, url, strategy as 'mobile' | 'desktop');
-    return NextResponse.json(parsed);
+    return NextResponse.json(parsed, { headers: { 'X-Request-ID': requestId } });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message || 'PSI fetch failed' }, { status: 500 });
+    console.error(`[pagespeed][${requestId}]`, e);
+    if (e?.name === 'AbortError') {
+      return apiError('PageSpeed request timed out', 504, undefined, { 'X-Request-ID': requestId });
+    }
+    return apiError(e.message || 'PSI fetch failed', 500, undefined, { 'X-Request-ID': requestId });
   }
 }

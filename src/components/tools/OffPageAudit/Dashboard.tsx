@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ScoreRing } from '@/components/ui/ScoreRing';
 import { fmtN } from '@/lib/dataforseo';
 import type {
@@ -9,6 +9,8 @@ import type {
   EnhancedOffPageResults,
   DashboardProps,
 } from './types';
+import { CitationScoreCard } from './CitationScoreCard';
+import { createClient } from '@/lib/supabase/client';
 import dynamic from 'next/dynamic';
 
 const DomainTab = dynamic(() => import('./DomainTab'));
@@ -90,7 +92,7 @@ export default function Dashboard(props: DashboardProps | EnhancedDashboardProps
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="card p-4 text-center">
           <div className="text-3xl font-display text-flame-500 mb-1">{overall}</div>
           <div className="text-xs text-ash-400">Overall Score</div>
@@ -107,6 +109,7 @@ export default function Dashboard(props: DashboardProps | EnhancedDashboardProps
           <div className="text-3xl font-display text-ash-200 mb-1">{locationCount}</div>
           <div className="text-xs text-ash-400">Locations</div>
         </div>
+        <CitationScoreCard results={enhanced} />
       </div>
 
       <div className="border-b border-char-700">
@@ -157,6 +160,8 @@ export default function Dashboard(props: DashboardProps | EnhancedDashboardProps
           )
         ))}
       </div>
+
+      <CompetitorTracker auditId={enhanced.auditId} domain={enhanced.domain} metrics={enhanced.metrics} />
 
       <div className="card p-4 text-center text-sm text-ash-500">
         <p>API Cost: ${enhanced.apiCost.toFixed(4)} · Audit ID: {enhanced.auditId.slice(0, 8)}...</p>
@@ -242,6 +247,160 @@ function OverviewTab({ results, onTabChange }: { results: EnhancedOffPageResults
           <h3 className="text-lg font-display text-ash-200 mb-4">All Recommendations</h3>
           <Recommendations recommendations={results.recommendations} />
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Competitor Tracker ───────────────────────────────────────────────────────
+
+interface CompetitorTrackerProps {
+  auditId: string;
+  domain: string;
+  metrics: { domainRating: number; totalBacklinks: number; referringDomains: number };
+}
+
+function CompetitorTracker({ auditId, domain, metrics }: CompetitorTrackerProps) {
+  const supabase = createClient();
+  const [tracked, setTracked] = useState<string[]>([]);
+  const [inputValue, setInputValue] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  // Load competitor_domains from DB on mount
+  useEffect(() => {
+    (supabase as any)
+      .from('off_page_audits')
+      .select('competitor_domains')
+      .eq('id', auditId)
+      .single()
+      .then(({ data }: { data: any }) => {
+        if (data?.competitor_domains?.length > 0) {
+          setTracked(data.competitor_domains);
+        }
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auditId]);
+
+  async function persist(domains: string[]) {
+    setSaving(true);
+    await (supabase as any)
+      .from('off_page_audits')
+      .update({ competitor_domains: domains })
+      .eq('id', auditId);
+    setSaving(false);
+  }
+
+  function addCompetitor() {
+    const val = inputValue.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+    if (!val || tracked.includes(val) || tracked.length >= 3) return;
+    const updated = [...tracked, val];
+    setTracked(updated);
+    setInputValue('');
+    persist(updated);
+  }
+
+  function removeCompetitor(d: string) {
+    const updated = tracked.filter((t) => t !== d);
+    setTracked(updated);
+    persist(updated);
+  }
+
+  const rows = [
+    { label: 'Domain Authority', yours: metrics.domainRating },
+    { label: 'Backlinks', yours: fmtN(metrics.totalBacklinks) },
+    { label: 'Referring Domains', yours: fmtN(metrics.referringDomains) },
+  ];
+
+  return (
+    <div className="card p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-display font-semibold text-ash-100 flex items-center gap-2">
+          <span>🏆</span> Competitor Tracking
+          {saving && <span className="text-xs text-ash-500 font-normal">Saving...</span>}
+        </h3>
+        <span className="text-xs text-ash-500">{tracked.length}/3 competitors</span>
+      </div>
+
+      {/* Add input */}
+      <div className="flex gap-2 mb-4">
+        <input
+          type="text"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') addCompetitor(); }}
+          placeholder="competitor-domain.com"
+          className="input flex-1"
+          disabled={tracked.length >= 3}
+        />
+        <button
+          onClick={addCompetitor}
+          disabled={!inputValue.trim() || tracked.length >= 3}
+          className="btn-primary text-sm px-4"
+        >
+          Add
+        </button>
+      </div>
+
+      {/* Chips */}
+      {tracked.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          {tracked.map((d) => (
+            <span
+              key={d}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-pill bg-char-700 text-ash-200 text-sm"
+            >
+              {d}
+              <button
+                onClick={() => removeCompetitor(d)}
+                className="text-ash-400 hover:text-danger transition-colors"
+                aria-label={`Remove ${d}`}
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Comparison table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-char-700">
+              <th className="text-left text-ash-500 font-medium py-2 pr-4">Metric</th>
+              <th className="text-right text-ash-500 font-medium py-2 px-3">
+                <span className="text-flame-400">{domain}</span>
+              </th>
+              {[0, 1, 2].map((i) => (
+                <th key={i} className="text-right text-ash-500 font-medium py-2 px-3">
+                  {tracked[i] ? (
+                    <span className="text-ash-300">{tracked[i]}</span>
+                  ) : (
+                    <span className="text-char-600">Competitor {i + 1}</span>
+                  )}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.label} className="border-b border-char-800">
+                <td className="py-2 pr-4 text-ash-300">{row.label}</td>
+                <td className="py-2 px-3 text-right font-medium text-ash-100">{row.yours}</td>
+                {[0, 1, 2].map((i) => (
+                  <td key={i} className="py-2 px-3 text-right text-ash-500">
+                    {tracked[i] ? '—' : <span className="text-char-600">—</span>}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {tracked.length > 0 && (
+        <p className="text-xs text-ash-500 mt-3 text-center">
+          Competitor data will appear on next audit run
+        </p>
       )}
     </div>
   );

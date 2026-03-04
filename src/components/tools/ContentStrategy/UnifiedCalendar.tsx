@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import type { CalendarItemV2, CalendarItemType } from '@/types';
 import CalendarItemCard from './CalendarItemCard';
 
@@ -15,6 +15,7 @@ interface UnifiedCalendarProps {
   onRefresh: () => void;
   onStatusChange: (id: string, status: 'scheduled' | 'done' | 'skipped') => void;
   onContentGenerated?: (id: string, content: string) => void;
+  onWeekChange?: (id: string, newWeek: number) => void;
   refreshing?: boolean;
 }
 
@@ -97,21 +98,33 @@ function chipTitle(item: CalendarItemV2): string {
 
 export default function UnifiedCalendar({
   items, businessName, domain, industry, city,
-  lastGeneratedAt, hasNewerAudit, onRefresh, onStatusChange, onContentGenerated, refreshing,
+  lastGeneratedAt, hasNewerAudit, onRefresh, onStatusChange, onContentGenerated, onWeekChange, refreshing,
 }: UnifiedCalendarProps) {
   const [filter, setFilter] = useState<FilterType>('all');
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
-  // Derive selected item from items prop so status updates propagate automatically
+  // ── Drag-and-drop state ────────────────────────────────────────────
+  const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
+  const [dragOverWeek, setDragOverWeek] = useState<number | null>(null);
+  // localItems mirrors the items prop but can be updated optimistically on drop
+  const [localItems, setLocalItems] = useState<CalendarItemV2[]>(items);
+  // Keep localItems in sync when items prop changes from outside (e.g., refresh)
+  const prevItemsRef = useRef(items);
+  if (prevItemsRef.current !== items) {
+    prevItemsRef.current = items;
+    setLocalItems(items);
+  }
+
+  // Derive selected item from localItems so status updates and week changes propagate
   const selectedItem = useMemo(
-    () => items.find(i => i.id === selectedItemId) ?? null,
-    [items, selectedItemId],
+    () => localItems.find(i => i.id === selectedItemId) ?? null,
+    [localItems, selectedItemId],
   );
 
   const weeks = useMemo(() => {
     const map = new Map<number, CalendarItemV2[]>();
     for (let w = 1; w <= 12; w++) map.set(w, []);
-    for (const item of items) {
+    for (const item of localItems) {
       if (filter === 'all' || item.type === filter) {
         const arr = map.get(item.week) ?? [];
         arr.push(item);
@@ -119,16 +132,56 @@ export default function UnifiedCalendar({
       }
     }
     return map;
-  }, [items, filter]);
+  }, [localItems, filter]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { gbp_post: 0, blog_post: 0, website_addition: 0, website_change: 0, offpage_post: 0 };
-    for (const item of items) c[item.type] = (c[item.type] ?? 0) + 1;
+    for (const item of localItems) c[item.type] = (c[item.type] ?? 0) + 1;
     return c;
-  }, [items]);
+  }, [localItems]);
 
-  const totalRoi = useMemo(() => items.reduce((s, i) => s + i.roiValue, 0), [items]);
-  const doneCount = useMemo(() => items.filter(i => i.status === 'done').length, [items]);
+  const totalRoi = useMemo(() => localItems.reduce((s, i) => s + i.roiValue, 0), [localItems]);
+  const doneCount = useMemo(() => localItems.filter(i => i.status === 'done').length, [localItems]);
+
+  // ── Drag handlers ──────────────────────────────────────────────────
+  function handleDragStart(e: React.DragEvent, itemId: string) {
+    setDraggingItemId(itemId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', itemId);
+  }
+
+  function handleDragEnd() {
+    setDraggingItemId(null);
+    setDragOverWeek(null);
+  }
+
+  function handleDragOver(e: React.DragEvent, week: number) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverWeek(week);
+  }
+
+  function handleDragLeave() {
+    setDragOverWeek(null);
+  }
+
+  function handleDrop(e: React.DragEvent, targetWeek: number) {
+    e.preventDefault();
+    const itemId = e.dataTransfer.getData('text/plain') || draggingItemId;
+    setDragOverWeek(null);
+    setDraggingItemId(null);
+    if (!itemId) return;
+
+    setLocalItems(prev => {
+      const updated = prev.map(item =>
+        item.id === itemId ? { ...item, week: targetWeek } : item
+      );
+      return updated;
+    });
+
+    // Notify parent so it can persist to DB
+    onWeekChange?.(itemId, targetWeek);
+  }
 
   const isStale = hasNewerAudit || (lastGeneratedAt
     ? Date.now() - new Date(lastGeneratedAt).getTime() > 30 * 24 * 60 * 60 * 1000
@@ -236,10 +289,18 @@ export default function UnifiedCalendar({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {weekNums.map(week => {
                   const weekItems = weeks.get(week) ?? [];
+                  const isDragTarget = dragOverWeek === week;
                   return (
                     <div
                       key={week}
-                      className="bg-char-800 border border-char-700 rounded-card min-h-[140px] p-2.5 flex flex-col"
+                      onDragOver={(e) => handleDragOver(e, week)}
+                      onDragLeave={handleDragLeave}
+                      onDrop={(e) => handleDrop(e, week)}
+                      className={`bg-char-800 border rounded-card min-h-[140px] p-2.5 flex flex-col transition-colors ${
+                        isDragTarget
+                          ? 'border-2 border-flame-500 bg-flame-500/5'
+                          : 'border-char-700'
+                      }`}
                     >
                       {/* Week header */}
                       <div className="flex items-center justify-between mb-2 flex-shrink-0">
@@ -254,17 +315,21 @@ export default function UnifiedCalendar({
                           const isSelected = selectedItemId === item.id;
                           const isDone = item.status === 'done';
                           const isSkipped = item.status === 'skipped';
+                          const isDragging = draggingItemId === item.id;
 
                           return (
                             <button
                               key={item.id}
+                              draggable={true}
+                              onDragStart={(e) => handleDragStart(e, item.id)}
+                              onDragEnd={handleDragEnd}
                               onClick={() => setSelectedItemId(isSelected ? null : item.id)}
                               title={item.title}
-                              className={`w-full text-left rounded-btn px-1.5 py-1 text-[11px] flex items-start gap-1 leading-tight transition-all ${meta.chip} ${
+                              className={`w-full text-left rounded-btn px-1.5 py-1 text-[11px] flex items-start gap-1 leading-tight transition-all cursor-grab active:cursor-grabbing ${meta.chip} ${
                                 isDone ? 'opacity-50' : ''
                               } ${isSkipped ? 'opacity-25' : ''} ${
                                 isSelected ? 'ring-1 ring-white/30 brightness-125' : ''
-                              }`}
+                              } ${isDragging ? 'opacity-50' : ''}`}
                             >
                               <span className="flex-shrink-0 text-[10px] mt-px">{meta.icon}</span>
                               <span className={`truncate ${isDone ? 'line-through' : ''}`}>

@@ -3,10 +3,12 @@
 import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useAuth } from '@/lib/context/AuthContext';
 import { useUser } from '@/lib/hooks/useUser';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import { useLocations } from '@/lib/hooks/useLocations';
+import { useToast } from '@/components/ui/Toast';
 import { createClient } from '@/lib/supabase/client';
 import { SettingsTabs } from '@/components/settings/SettingsTabs';
 import { UpgradeCTA } from '@/components/settings/UpgradeCTA';
@@ -24,10 +26,12 @@ import type { BusinessLocation } from '@/types';
 function SettingsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { refreshBusiness } = useAuth();
   const { user, profile, loading: userLoading, refreshProfile } = useUser();
   const { tier, scansRemaining, tokensRemaining } = useSubscription();
   const { business } = useBusiness();
   const { locations, loading: locationsLoading } = useLocations(business?.id);
+  const { toast } = useToast();
   const supabase = createClient();
 
   // Tab state - get from URL or default to 'personal'
@@ -75,6 +79,28 @@ function SettingsPageContent() {
   const [editingMarket, setEditingMarket] = useState<any | null>(null);
   const [importingMarkets, setImportingMarkets] = useState(false);
   const [importStatus, setImportStatus] = useState('');
+
+  // WordPress integration state
+  const [wpUrl, setWpUrl] = useState('');
+  const [wpAppPassword, setWpAppPassword] = useState('');
+  const [wpSaving, setWpSaving] = useState(false);
+  const [wpSaved, setWpSaved] = useState(false);
+
+  // Load WordPress URL from localStorage — password intentionally NOT persisted (security)
+  useEffect(() => {
+    if (!business?.id) return;
+    try {
+      const raw = localStorage.getItem(`wp_integration_${business.id}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setWpUrl(parsed.wpUrl ?? '');
+        // wpAppPassword is never loaded from storage — user must re-enter each session
+        setWpSaved(!!(parsed.wpUrl));
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }, [business?.id]);
 
   // Initialize business data when business loads
   useEffect(() => {
@@ -157,13 +183,36 @@ function SettingsPageContent() {
   const handleBusinessUpdate = async () => {
     if (!business) return;
 
+    if (!businessData.name.trim()) {
+      toast.error('Business name is required');
+      return;
+    }
+    if (!businessData.domain.trim()) {
+      toast.error('Business domain is required');
+      return;
+    }
+
+    // B15-08: Normalize and validate domain format
+    const normalizedDomain = businessData.domain
+      .trim()
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/+$/, '')
+      .toLowerCase();
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(normalizedDomain)) {
+      toast.error('Please enter a valid domain (e.g. example.com)');
+      return;
+    }
+    if (businessData.domain !== normalizedDomain) {
+      setBusinessData((prev) => ({ ...prev, domain: normalizedDomain }));
+    }
+
     setSaving(true);
     try {
       const { error } = await (supabase as any)
         .from('businesses')
         .update({
           name: businessData.name,
-          domain: businessData.domain,
+          domain: normalizedDomain,
           industry: businessData.industry || null,
           phone: businessData.phone || null,
           address: businessData.address || null,
@@ -171,15 +220,17 @@ function SettingsPageContent() {
           state: businessData.state || null,
           zip: businessData.zip || null,
         })
-        .eq('id', business.id);
+        .eq('id', business.id)
+        .eq('user_id', user!.id); // B15-04: scope to current user to prevent cross-tenant business update
 
       if (error) throw error;
 
       setEditing(false);
-      window.location.reload(); // Refresh to show updated data
+      toast.success('Settings saved');
+      await refreshBusiness();
     } catch (error) {
       console.error('Error updating business:', error);
-      alert('Failed to update business information');
+      toast.error('Failed to update business information');
     } finally {
       setSaving(false);
     }
@@ -208,18 +259,20 @@ function SettingsPageContent() {
         await refreshProfile();
       }
       setEditingProfile(false);
+      toast.success('Settings saved');
     } catch (error) {
       if (error instanceof z.ZodError) {
-        alert(error.issues[0].message);
+        toast.error(error.issues[0].message);
       } else {
         console.error('Error updating profile:', error);
-        alert('Failed to update profile');
+        toast.error('Failed to update profile');
       }
     } finally {
       setSavingProfile(false);
     }
   };
 
+  // NOTE: Requires 'avatars' bucket in Supabase Storage with public access policy
   const handleAvatarUpload = async (url: string) => {
     setProfileData({ ...profileData, avatar_url: url });
 
@@ -237,7 +290,36 @@ function SettingsPageContent() {
       }
     } catch (error) {
       console.error('Error saving avatar:', error);
-      alert('Failed to save avatar');
+      toast.error('Failed to save avatar');
+    }
+  };
+
+  // Save WordPress integration — stored in localStorage temporarily
+  // TODO: migrate to business_integrations JSONB column on businesses table once column is added
+  const handleWpSave = async () => {
+    if (!business?.id) return;
+
+    // B15-06: Validate WordPress URL before saving
+    const trimmedUrl = wpUrl.trim();
+    if (!trimmedUrl) { toast.error('WordPress URL is required'); return; }
+    try {
+      const parsed = new URL(trimmedUrl.startsWith('http') ? trimmedUrl : `https://${trimmedUrl}`);
+      if (parsed.protocol !== 'https:') { toast.error('WordPress URL must use HTTPS'); return; }
+    } catch {
+      toast.error('Please enter a valid WordPress URL (e.g. https://yoursite.com)');
+      return;
+    }
+
+    setWpSaving(true);
+    try {
+      // Only persist the WP URL — never persist the Application Password in localStorage
+      localStorage.setItem(
+        `wp_integration_${business.id}`,
+        JSON.stringify({ wpUrl: trimmedUrl })
+      );
+      setWpSaved(!!(trimmedUrl && wpAppPassword));
+    } finally {
+      setWpSaving(false);
     }
   };
 
@@ -254,13 +336,13 @@ function SettingsPageContent() {
   const handleDeleteLocation = async (id: string) => {
     // Validation
     if (locations.length === 1) {
-      alert('Cannot delete the only location. Add another location first.');
+      toast.error('Cannot delete the only location. Add another location first.');
       return;
     }
 
     const locationToDelete = locations.find((l) => l.id === id);
     if (locationToDelete?.is_primary) {
-      alert('Cannot delete primary location. Mark another location as primary first.');
+      toast.error('Cannot delete primary location. Mark another location as primary first.');
       return;
     }
 
@@ -270,32 +352,37 @@ function SettingsPageContent() {
       const { error } = await (supabase as any)
         .from('business_locations')
         .delete()
-        .eq('id', id);
+        .eq('id', id)
+        .eq('business_id', business!.id);
 
       if (error) throw error;
 
       window.location.reload();
     } catch (error) {
       console.error('Error deleting location:', error);
-      alert('Failed to delete location');
+      toast.error('Failed to delete location');
     }
   };
 
   const handleSetPrimaryLocation = async (id: string) => {
     if (!business) return;
     try {
-      await (supabase as any)
-        .from('business_locations')
-        .update({ is_primary: false })
-        .eq('business_id', business.id);
+      // Set new primary FIRST so there is never a moment with zero primaries
       await (supabase as any)
         .from('business_locations')
         .update({ is_primary: true })
-        .eq('id', id);
+        .eq('id', id)
+        .eq('business_id', business.id);
+      // Clear all OTHER locations for this business (leave new primary untouched)
+      await (supabase as any)
+        .from('business_locations')
+        .update({ is_primary: false })
+        .eq('business_id', business.id)
+        .neq('id', id);
       window.location.reload();
     } catch (error) {
       console.error('Error setting primary location:', error);
-      alert('Failed to set primary location');
+      toast.error('Failed to set primary location');
     }
   };
 
@@ -317,14 +404,15 @@ function SettingsPageContent() {
       const { error } = await (supabase as any)
         .from('services')
         .delete()
-        .eq('id', id);
+        .eq('id', id)
+        .eq('business_id', business!.id);
 
       if (error) throw error;
 
       window.location.reload();
     } catch (error) {
       console.error('Error deleting service:', error);
-      alert('Failed to delete service');
+      toast.error('Failed to delete service');
     }
   };
 
@@ -346,14 +434,15 @@ function SettingsPageContent() {
       const { error } = await (supabase as any)
         .from('markets')
         .delete()
-        .eq('id', id);
+        .eq('id', id)
+        .eq('business_id', business!.id);
 
       if (error) throw error;
 
       window.location.reload();
     } catch (error) {
       console.error('Error deleting market:', error);
-      alert('Failed to delete market');
+      toast.error('Failed to delete market');
     }
   };
 
@@ -374,8 +463,7 @@ function SettingsPageContent() {
 
         try {
           const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${loc.latitude}&lon=${loc.longitude}&format=json`,
-            { headers: { 'User-Agent': 'ScorchLocal/1.0' } }
+            `/api/geocode?lat=${loc.latitude}&lon=${loc.longitude}`
           );
           if (!res.ok) continue;
           const geo = await res.json();
@@ -399,7 +487,7 @@ function SettingsPageContent() {
           // Non-fatal — skip this location if geocoding fails
         }
 
-        // Nominatim ToS: max 1 request/second
+        // Keep 1s delay per Nominatim ToS (enforced server-side, but good practice client-side too)
         if (i < locations.length - 1) await new Promise(r => setTimeout(r, 1100));
       }
 
@@ -412,7 +500,7 @@ function SettingsPageContent() {
       setImportStatus(`Adding ${toInsert.length} market${toInsert.length > 1 ? 's' : ''}…`);
 
       for (const m of toInsert) {
-        await (supabase as any).from('markets').insert({
+        const { error: insertErr } = await (supabase as any).from('markets').insert({
           business_id: business.id,
           name: m.name,
           cities: [],
@@ -422,6 +510,7 @@ function SettingsPageContent() {
           latitude: m.latitude,
           longitude: m.longitude,
         });
+        if (insertErr) console.error('Market insert failed:', insertErr.message);
       }
 
       window.location.reload();
@@ -924,6 +1013,80 @@ function SettingsPageContent() {
         />
       )}
 
+      {/* Integrations Tab */}
+      {activeTab === 'integrations' && (
+        <div className="space-y-6">
+          {/* WordPress Integration Card */}
+          <div className="card p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-btn bg-[#21759b]/20 border border-[#21759b]/30 flex items-center justify-center text-sm">
+                  W
+                </div>
+                <div>
+                  <h2 className="font-display text-xl">WordPress</h2>
+                  <p className="text-sm text-ash-400">Publish generated content directly to your WordPress site</p>
+                </div>
+              </div>
+              {wpSaved && (
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-success/10 text-success border border-success/20">
+                  Connected
+                </span>
+              )}
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="input-label">WordPress Site URL</label>
+                <input
+                  type="url"
+                  value={wpUrl}
+                  onChange={(e) => setWpUrl(e.target.value)}
+                  className="input"
+                  placeholder="https://yoursite.com"
+                />
+              </div>
+              <div>
+                <label className="input-label">Application Password</label>
+                <input
+                  type="password"
+                  value={wpAppPassword}
+                  onChange={(e) => setWpAppPassword(e.target.value)}
+                  className="input"
+                  placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
+                />
+                <p className="text-xs text-ash-500 mt-1.5">
+                  Generate an Application Password in WordPress under{' '}
+                  <span className="text-ash-400">Users → Profile → Application Passwords</span>.
+                </p>
+              </div>
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  onClick={handleWpSave}
+                  disabled={wpSaving || !wpUrl.trim()}
+                  className="btn-primary text-sm disabled:opacity-50"
+                >
+                  {wpSaving ? 'Saving…' : 'Save'}
+                </button>
+                {wpSaved && wpUrl.trim() === '' && (
+                  <span className="text-xs text-ash-500">Integration removed</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notifications Tab */}
+      {activeTab === 'notifications' && (
+        <NotificationsTab
+          profile={profile}
+          user={user}
+          supabase={supabase}
+          toast={toast}
+        />
+      )}
+
       {/* Billing Tab */}
       {activeTab === 'billing' && (
         <div className="space-y-6">
@@ -1035,6 +1198,117 @@ function SettingsPageContent() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Notifications Tab ───────────────────────────────────────────────────────
+
+interface NotificationPrefs {
+  weekly_digest: boolean;
+  scan_complete: boolean;
+  campaign_sent: boolean;
+  billing_reminder: boolean;
+}
+
+const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
+  weekly_digest: true,
+  scan_complete: true,
+  campaign_sent: false,
+  billing_reminder: true,
+};
+
+function NotificationsTab({
+  profile,
+  user,
+  supabase,
+  toast,
+}: {
+  profile: any;
+  user: any;
+  supabase: any;
+  toast: any;
+}) {
+  const [prefs, setPrefs] = useState<NotificationPrefs>(() => ({
+    ...DEFAULT_NOTIFICATION_PREFS,
+    ...(profile?.notification_prefs ?? {}),
+  }));
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!user) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ notification_prefs: prefs })
+        .eq('id', user.id);
+      if (error) throw error;
+      toast.success('Notification preferences saved');
+    } catch (err) {
+      console.error('Error saving notification prefs:', err);
+      toast.error('Failed to save notification preferences');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const NOTIFICATION_OPTIONS = [
+    {
+      key: 'weekly_digest' as keyof NotificationPrefs,
+      label: 'Weekly SEO digest',
+      description: 'Receive a weekly summary of your SEO progress',
+    },
+    {
+      key: 'scan_complete' as keyof NotificationPrefs,
+      label: 'Scan complete',
+      description: 'Get notified when a site audit or grid scan finishes',
+    },
+    {
+      key: 'campaign_sent' as keyof NotificationPrefs,
+      label: 'Campaign sent',
+      description: 'Confirm when a campaign has been delivered',
+    },
+    {
+      key: 'billing_reminder' as keyof NotificationPrefs,
+      label: 'Billing reminders',
+      description: 'Receive reminders before subscription renews',
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="card p-6">
+        <h2 className="font-display text-xl mb-6">Email Notifications</h2>
+        <div className="space-y-4">
+          {NOTIFICATION_OPTIONS.map((opt) => (
+            <div key={opt.key} className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-sm font-medium text-ash-100">{opt.label}</div>
+                <div className="text-xs text-ash-500 mt-0.5">{opt.description}</div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={prefs[opt.key]}
+                  onChange={(e) => setPrefs((prev) => ({ ...prev, [opt.key]: e.target.checked }))}
+                  className="sr-only peer"
+                />
+                <div className="w-10 h-6 bg-char-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-4 peer-checked:bg-flame-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all" />
+              </label>
+            </div>
+          ))}
+        </div>
+        <div className="mt-6 pt-6 border-t border-char-700">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="btn-primary text-sm disabled:opacity-50"
+          >
+            {saving ? 'Saving...' : 'Save Preferences'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

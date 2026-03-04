@@ -7,9 +7,10 @@ import { parseCSV, detectMarket, calculateELV } from './utils';
 interface ImportModalProps {
   onImport: (contacts: Partial<Contact>[]) => void;
   onCancel: () => void;
+  importLoading?: boolean;
 }
 
-export default function ImportModal({ onImport, onCancel }: ImportModalProps) {
+export default function ImportModal({ onImport, onCancel, importLoading = false }: ImportModalProps) {
   const [step, setStep] = useState<'upload' | 'map' | 'preview'>('upload');
   const [csvData, setCsvData] = useState<string[][]>([]);
   const [mappings, setMappings] = useState<ImportMapping[]>([]);
@@ -19,6 +20,14 @@ export default function ImportModal({ onImport, onCancel }: ImportModalProps) {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // B14-04: Enforce file size and row limits to prevent DoS
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+    if (file.size > MAX_FILE_SIZE) {
+      alert('CSV file must be 10 MB or smaller. Please split your file and import in batches.');
+      e.target.value = '';
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (event) => {
       const content = event.target?.result as string;
@@ -26,6 +35,14 @@ export default function ImportModal({ onImport, onCancel }: ImportModalProps) {
 
       if (parsed.length < 2) {
         alert('CSV file must have at least a header row and one data row');
+        return;
+      }
+
+      // B14-04: Cap at 10,000 data rows (index 0 is header)
+      const MAX_ROWS = 10_000;
+      if (parsed.length - 1 > MAX_ROWS) {
+        alert(`CSV contains ${parsed.length - 1} rows. Maximum is ${MAX_ROWS} per import. Please split your file into smaller batches.`);
+        e.target.value = '';
         return;
       }
 
@@ -337,8 +354,8 @@ export default function ImportModal({ onImport, onCancel }: ImportModalProps) {
               </button>
             )}
             {step === 'preview' && (
-              <button onClick={handleImport} className="btn-primary">
-                Import {previewContacts.length} Contact{previewContacts.length !== 1 ? 's' : ''}
+              <button onClick={handleImport} className="btn-primary disabled:opacity-50" disabled={importLoading}>
+                {importLoading ? 'Importing...' : `Import ${previewContacts.length} Contact${previewContacts.length !== 1 ? 's' : ''}`}
               </button>
             )}
           </div>

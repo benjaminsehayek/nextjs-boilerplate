@@ -58,15 +58,17 @@ export async function POST(request: Request) {
     let customerId = profile?.stripe_customer_id;
 
     if (!customerId) {
-      // Create new Stripe customer
-      const customer = await stripe.customers.create({
-        email: user.email!,
-        metadata: {
-          user_id: user.id,
-        },
-      });
-
-      customerId = customer.id;
+      // B14-16: Check Stripe for existing customer by email before creating (idempotency on double-click)
+      const existing = await stripe.customers.list({ email: user.email!, limit: 1 });
+      if (existing.data.length > 0) {
+        customerId = existing.data[0].id;
+      } else {
+        const customer = await stripe.customers.create({
+          email: user.email!,
+          metadata: { user_id: user.id },
+        });
+        customerId = customer.id;
+      }
 
       // Save customer ID to profile
       await (supabase as any)

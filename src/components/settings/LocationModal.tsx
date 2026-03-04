@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import type { BusinessLocation } from '@/types';
 
@@ -24,6 +24,29 @@ export function LocationModal({ isOpen, onClose, location, businessId, onSave }:
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const supabase = createClient();
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Focus first focusable element on open
+  useEffect(() => {
+    if (isOpen) {
+      const focusable = modalRef.current?.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable?.length) focusable[0].focus();
+    }
+  }, [isOpen]);
+
+  const trapFocus = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { onClose(); return; }
+    if (e.key !== 'Tab') return;
+    const focusable = modalRef.current?.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (!focusable?.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
 
   const isEditMode = !!location;
 
@@ -95,7 +118,8 @@ export function LocationModal({ isOpen, onClose, location, businessId, onSave }:
         const { error } = await (supabase as any)
           .from('business_locations')
           .update(locationData)
-          .eq('id', location.id);
+          .eq('id', location.id)
+          .eq('business_id', businessId); // B15-01: prevent cross-tenant update
 
         if (error) throw error;
       } else {
@@ -119,16 +143,24 @@ export function LocationModal({ isOpen, onClose, location, businessId, onSave }:
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-char-800 rounded-btn w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="location-modal-title"
+        onKeyDown={trapFocus}
+        className="bg-char-800 rounded-btn w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
+      >
         {/* Header */}
         <div className="p-6 border-b border-char-700 flex items-center justify-between">
-          <h2 className="font-display text-2xl">
+          <h2 id="location-modal-title" className="font-display text-2xl">
             {isEditMode ? 'Edit Location' : 'Add Location'}
           </h2>
           <button
             onClick={onClose}
             className="btn-icon"
             disabled={saving}
+            aria-label="Close modal"
           >
             ✕
           </button>

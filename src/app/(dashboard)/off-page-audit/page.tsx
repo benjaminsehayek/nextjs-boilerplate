@@ -24,6 +24,8 @@ import type {
   OffPageAuditResults,
 } from '@/components/tools/OffPageAudit/types';
 
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import dynamic from 'next/dynamic';
 
 const DomainInput = dynamic(() => import('@/components/tools/OffPageAudit/DomainInput'));
@@ -149,6 +151,7 @@ export default function OffPageAuditPage() {
         .select('*')
         .eq('business_id', business.id)
         .in('status', ['pending', 'analyzing'])
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -216,13 +219,66 @@ export default function OffPageAuditPage() {
   // ═══ Load Results ═══
 
   async function loadAuditResults(id: string) {
+    if (!business?.id) return;
     const { data: audit } = await (supabase as any)
       .from('off_page_audits')
       .select('*')
       .eq('id', id)
+      .eq('business_id', business.id)
       .single();
 
     if (!audit || audit.status !== 'complete') return;
+
+    if (audit.metrics !== null && audit.metrics !== undefined && typeof audit.metrics !== 'object') {
+      setError('Audit data is corrupted. Please run a new scan.');
+      return;
+    }
+    if (audit.referring_domains !== null && audit.referring_domains !== undefined && !Array.isArray(audit.referring_domains)) {
+      setError('Audit data is corrupted. Please run a new scan.');
+      return;
+    }
+    if (audit.anchor_data !== null && audit.anchor_data !== undefined && !Array.isArray(audit.anchor_data)) {
+      setError('Audit data is corrupted. Please run a new scan.');
+      return;
+    }
+
+    // Guards for additional JSONB fields — log warning and fall back rather than hard-error
+    if (audit.category_scores !== null && audit.category_scores !== undefined && typeof audit.category_scores !== 'object') {
+      console.warn('[OffPageAudit] category_scores is not an object; ignoring');
+      audit.category_scores = undefined;
+    }
+    if (audit.citations !== null && audit.citations !== undefined && !Array.isArray(audit.citations)) {
+      console.warn('[OffPageAudit] citations is not an array; ignoring');
+      audit.citations = undefined;
+    }
+    if (audit.link_velocity !== null && audit.link_velocity !== undefined && typeof audit.link_velocity !== 'object') {
+      console.warn('[OffPageAudit] link_velocity is not an object; ignoring');
+      audit.link_velocity = undefined;
+    }
+    if (audit.link_gaps !== null && audit.link_gaps !== undefined && !Array.isArray(audit.link_gaps)) {
+      console.warn('[OffPageAudit] link_gaps is not an array; ignoring');
+      audit.link_gaps = undefined;
+    }
+    if (audit.toxic_links !== null && audit.toxic_links !== undefined && !Array.isArray(audit.toxic_links)) {
+      console.warn('[OffPageAudit] toxic_links is not an array; ignoring');
+      audit.toxic_links = undefined;
+    }
+    if (audit.social_presence !== null && audit.social_presence !== undefined && !Array.isArray(audit.social_presence)) {
+      console.warn('[OffPageAudit] social_presence is not an array; ignoring');
+      audit.social_presence = undefined;
+    }
+    if (audit.top_backlinks !== null && audit.top_backlinks !== undefined && !Array.isArray(audit.top_backlinks)) {
+      console.warn('[OffPageAudit] top_backlinks is not an array; ignoring');
+      audit.top_backlinks = undefined;
+    }
+    if (audit.location_data !== null && audit.location_data !== undefined && !Array.isArray(audit.location_data)) {
+      console.warn('[OffPageAudit] location_data is not an array; ignoring');
+      audit.location_data = null;
+    }
+    if (audit.recommendations !== null && audit.recommendations !== undefined && !Array.isArray(audit.recommendations)) {
+      console.warn('[OffPageAudit] recommendations is not an array; ignoring');
+      audit.recommendations = undefined;
+    }
 
     const base: OffPageAuditResults = {
       auditId: audit.id,
@@ -271,6 +327,7 @@ export default function OffPageAuditPage() {
     }
 
     setError(null);
+    setResults(null); // Clear stale results from previous audit before starting a new one
     const cleaned = cleanDomain(inputDomain);
     setDomain(cleaned);
     setCompetitors(inputCompetitors || []);
@@ -336,6 +393,22 @@ export default function OffPageAuditPage() {
     setProgress({ phase: 'domain', completed: 0, total: 10 + (locCount * 4), tasks: [] });
 
     try {
+      // Idempotency: prevent duplicate audits if component re-mounts mid-scan
+      const { data: existingAudit } = await (supabase as any)
+        .from('off_page_audits')
+        .select('id, status')
+        .eq('business_id', business.id)
+        .eq('target_domain', domain)
+        .in('status', ['pending', 'scanning'])
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (existingAudit) {
+        // Resume the existing in-progress audit
+        setAuditId(existingAudit.id);
+        return;
+      }
+
       const { data: audit, error: insertError } = await (supabase as any)
         .from('off_page_audits')
         .insert({
@@ -823,6 +896,17 @@ export default function OffPageAuditPage() {
             brandMentionCount: brandMentions.length,
           });
 
+          // Extract GBP posts from profile data if available
+          const rawGbpPosts: any[] = gbpInfo?.posts || gbpInfo?.local_posts || [];
+          const gbpPosts = rawGbpPosts.slice(0, 10).map((p: any) => ({
+            title: p.title || p.name || undefined,
+            summary: p.summary || p.overview || p.description || undefined,
+            create_time: p.create_time || p.createTime || p.created_at || undefined,
+            update_time: p.update_time || p.updateTime || p.updated_at || undefined,
+            callToAction: p.callToAction || p.call_to_action || undefined,
+            media: p.media || p.photos || undefined,
+          }));
+
           locationData.push({
             locationId: loc.id,
             name: loc.name,
@@ -843,6 +927,7 @@ export default function OffPageAuditPage() {
             },
             nap: { score: napScore, canonical, mismatches },
             gbp: { score: gbpScore, items: gbpItems },
+            gbpPosts: gbpPosts.length > 0 ? gbpPosts : undefined,
             brandMentions,
             recommendations: locRecs,
           });
@@ -948,6 +1033,13 @@ export default function OffPageAuditPage() {
               onSelectLocation={selectLocation}
               showAllOption={true}
             />
+            {!results && (
+              <EmptyState
+                icon="🔗"
+                title="No off-page data"
+                description="Analyze your backlinks and citations."
+              />
+            )}
             <DomainInput
               onStartScan={startAudit}
               isLoading={false}
@@ -986,11 +1078,13 @@ export default function OffPageAuditPage() {
         )}
 
         {auditStatus === 'complete' && results && (
-          <Dashboard
-            results={results}
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-          />
+          <ErrorBoundary fallbackLabel="Audit results failed to render">
+            <Dashboard
+              results={results}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+            />
+          </ErrorBoundary>
         )}
       </ToolPageShell>
     </ToolGate>

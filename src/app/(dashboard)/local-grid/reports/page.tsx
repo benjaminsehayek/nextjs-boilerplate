@@ -4,10 +4,12 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { createClient } from '@/lib/supabase/client';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import { useLocations } from '@/lib/hooks/useLocations';
 import { useAuth } from '@/lib/context/AuthContext';
+import { useToast } from '@/components/ui/Toast';
 import type { HeatmapData } from '@/components/tools/LocalGrid/types';
 
 interface ScanRow {
@@ -18,6 +20,7 @@ interface ScanRow {
   scan_date: string;
   heatmap_data: Record<string, HeatmapData> | null;
   total_cost: number;
+  deleted_at: string | null;
 }
 
 export default function LocalGridReportsPage() {
@@ -25,10 +28,17 @@ export default function LocalGridReportsPage() {
   const { business } = useBusiness();
   const { locations } = useLocations(business?.id);
   const supabase = createClient();
+  const { toast } = useToast();
 
   const [scans, setScans] = useState<ScanRow[]>([]);
   const [loadingScans, setLoadingScans] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [locationFilter, setLocationFilter] = useState<string>('all');
+  const [archivingId, setArchivingId] = useState<string | null>(null);
+
+  const PAGE_SIZE = 20;
+  const MAX_CUMULATIVE = 500; // B14-13: Hard cap to prevent unbounded load-more loop
 
   useEffect(() => {
     if (authLoading || !business) return;
@@ -36,17 +46,40 @@ export default function LocalGridReportsPage() {
     async function fetchScans() {
       const { data } = await (supabase as any)
         .from('grid_scans')
-        .select('id, location_id, business_info, config, scan_date, heatmap_data, total_cost')
+        .select('id, location_id, business_info, config, scan_date, heatmap_data, total_cost, deleted_at')
         .eq('business_id', business!.id)
         .eq('status', 'complete')
-        .order('scan_date', { ascending: false });
+        .is('deleted_at', null)
+        .order('scan_date', { ascending: false })
+        .limit(PAGE_SIZE + 1); // fetch one extra to detect if more exist
 
-      setScans((data as ScanRow[]) || []);
+      const rows = (data as ScanRow[]) || [];
+      setHasMore(rows.length > PAGE_SIZE);
+      setScans(rows.slice(0, PAGE_SIZE));
       setLoadingScans(false);
     }
 
     fetchScans();
   }, [authLoading, business, supabase]);
+
+  async function loadMoreScans() {
+    if (!business || loadingMore) return;
+    if (scans.length >= MAX_CUMULATIVE) { setHasMore(false); return; } // B14-13: hard cap
+    setLoadingMore(true);
+    const { data } = await (supabase as any)
+      .from('grid_scans')
+      .select('id, location_id, business_info, config, scan_date, heatmap_data, total_cost, deleted_at')
+      .eq('business_id', business.id)
+      .eq('status', 'complete')
+      .is('deleted_at', null)
+      .order('scan_date', { ascending: false })
+      .range(scans.length, scans.length + PAGE_SIZE);
+    const rows = (data as ScanRow[]) || [];
+    const merged = [...scans, ...rows];
+    setHasMore(rows.length === PAGE_SIZE && merged.length < MAX_CUMULATIVE);
+    setScans(merged.slice(0, MAX_CUMULATIVE));
+    setLoadingMore(false);
+  }
 
   if (authLoading) {
     return (
@@ -85,6 +118,22 @@ export default function LocalGridReportsPage() {
     if (score >= 50) return 'text-green-400';
     if (score >= 20) return 'text-amber-400';
     return 'text-red-400';
+  };
+
+  const handleArchiveScan = async (scanId: string) => {
+    setArchivingId(scanId);
+    const { error: archiveErr } = await (supabase as any)
+      .from('grid_scans')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', scanId)
+      .eq('business_id', business!.id);
+    if (archiveErr) {
+      toast.error('Failed to archive scan');
+      setArchivingId(null);
+      return;
+    }
+    setScans((prev) => prev.filter((s) => s.id !== scanId));
+    setArchivingId(null);
   };
 
   const filteredScans = locationFilter === 'all'
@@ -127,9 +176,10 @@ export default function LocalGridReportsPage() {
         {loadingScans ? (
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="card p-5 animate-pulse">
-                <div className="h-4 w-48 bg-char-800 rounded mb-2" />
-                <div className="h-3 w-64 bg-char-800 rounded" />
+              <div key={i} className="flex items-center gap-4 p-4 rounded-card bg-char-800">
+                <Skeleton variant="line" className="w-32" />
+                <Skeleton variant="line" className="w-24" />
+                <Skeleton variant="line" className="flex-1" />
               </div>
             ))}
           </div>
@@ -208,6 +258,14 @@ export default function LocalGridReportsPage() {
                             >
                               View
                             </Link>
+                            <button
+                              onClick={() => handleArchiveScan(scan.id)}
+                              disabled={archivingId === scan.id}
+                              className="btn-ghost text-sm text-ash-400 hover:text-danger shrink-0 disabled:opacity-50"
+                              title="Archive this scan"
+                            >
+                              {archivingId === scan.id ? '...' : 'Archive'}
+                            </button>
                           </div>
                         </div>
                       );
@@ -216,6 +274,19 @@ export default function LocalGridReportsPage() {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Load More */}
+        {hasMore && (
+          <div className="text-center pt-4">
+            <button
+              onClick={loadMoreScans}
+              disabled={loadingMore}
+              className="btn-secondary"
+            >
+              {loadingMore ? 'Loading…' : 'Load More Scans'}
+            </button>
           </div>
         )}
       </ToolPageShell>
