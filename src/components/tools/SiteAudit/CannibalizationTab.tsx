@@ -651,7 +651,7 @@ export default function CannibalizationTab({ results }: TabProps) {
             <p className="text-xs text-ash-500">GSC shows exactly which queries trigger multiple pages — the most accurate cannibalization signal available. Current results are based on title analysis only.</p>
           </div>
           <Link
-            href="/dashboard/settings?tab=integrations"
+            href="/settings?tab=integrations"
             className="shrink-0 px-3 py-1.5 text-xs font-display bg-flame-500 hover:bg-flame-400 text-white rounded-full transition-colors"
           >
             Connect GSC

@@ -26,7 +26,7 @@ function verifyState(state: string): { businessId: string; userId: string } | nu
 
 export async function GET(request: NextRequest) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const settingsUrl = `${appUrl}/dashboard/settings?tab=integrations`;
+  const settingsUrl = `${appUrl}/settings?tab=integrations`;
 
   const code = request.nextUrl.searchParams.get('code');
   const state = request.nextUrl.searchParams.get('state');

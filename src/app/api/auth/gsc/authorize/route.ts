@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {
-    return NextResponse.redirect(new URL('/dashboard/settings?tab=integrations&gsc=error', request.url));
+    return NextResponse.redirect(new URL('/settings?tab=integrations&gsc=error', request.url));
   }
 
   const businessId = request.nextUrl.searchParams.get('businessId');
