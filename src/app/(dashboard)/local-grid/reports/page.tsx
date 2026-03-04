@@ -46,10 +46,9 @@ export default function LocalGridReportsPage() {
     async function fetchScans() {
       const { data } = await (supabase as any)
         .from('grid_scans')
-        .select('id, location_id, business_info, config, scan_date, heatmap_data, total_cost, deleted_at')
+        .select('id, location_id, business_info, config, scan_date, heatmap_data, total_cost')
         .eq('business_id', business!.id)
         .eq('status', 'complete')
-        .is('deleted_at', null)
         .order('scan_date', { ascending: false })
         .limit(PAGE_SIZE + 1); // fetch one extra to detect if more exist
 
@@ -68,10 +67,9 @@ export default function LocalGridReportsPage() {
     setLoadingMore(true);
     const { data } = await (supabase as any)
       .from('grid_scans')
-      .select('id, location_id, business_info, config, scan_date, heatmap_data, total_cost, deleted_at')
+      .select('id, location_id, business_info, config, scan_date, heatmap_data, total_cost')
       .eq('business_id', business.id)
       .eq('status', 'complete')
-      .is('deleted_at', null)
       .order('scan_date', { ascending: false })
       .range(scans.length, scans.length + PAGE_SIZE);
     const rows = (data as ScanRow[]) || [];

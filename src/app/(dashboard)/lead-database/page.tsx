@@ -164,7 +164,6 @@ export default function LeadDatabasePage() {
         .from('contacts')
         .select('*')
         .eq('business_id', business.id)
-        .is('deleted_at', null)
         .order('created_at', { ascending: false });
 
       if (dbError) throw dbError;
@@ -302,8 +301,7 @@ export default function LeadDatabasePage() {
     const { count: currentCount } = await (supabase as any)
       .from('contacts')
       .select('id', { count: 'exact', head: true })
-      .eq('business_id', business.id)
-      .is('deleted_at', null);
+      .eq('business_id', business.id);
     if (typeof currentCount === 'number' && currentCount + newRows.length > CONTACT_LIMIT) {
       const available = Math.max(0, CONTACT_LIMIT - currentCount);
       toast.error(`Import would exceed the ${CONTACT_LIMIT.toLocaleString()} contact limit. You have room for ${available.toLocaleString()} more contacts.`);

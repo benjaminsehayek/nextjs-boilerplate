@@ -463,8 +463,7 @@ export default function LeadIntelligencePage() {
           supabase
             .from('contacts')
             .select('id, source, elv_score, created_at, market_id, opted_email, opted_sms')
-            .eq('business_id', business!.id)
-            .is('deleted_at', null),
+            .eq('business_id', business!.id),
           supabase
             .from('markets')
             .select('id, name')

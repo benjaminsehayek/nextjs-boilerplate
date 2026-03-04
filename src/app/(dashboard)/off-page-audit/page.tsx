@@ -151,7 +151,6 @@ export default function OffPageAuditPage() {
         .select('*')
         .eq('business_id', business.id)
         .in('status', ['pending', 'analyzing'])
-        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -400,7 +399,6 @@ export default function OffPageAuditPage() {
         .eq('business_id', business.id)
         .eq('target_domain', domain)
         .in('status', ['pending', 'scanning'])
-        .is('deleted_at', null)
         .maybeSingle();
 
       if (existingAudit) {

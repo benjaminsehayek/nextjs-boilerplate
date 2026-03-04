@@ -136,7 +136,6 @@ export default function SiteAuditPage() {
         .select('*')
         .eq('business_id', business.id)
         .in('status', ['complete'])
-        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(1);
 
@@ -221,7 +220,6 @@ export default function SiteAuditPage() {
         .select('id, location_id, status, created_at, domain, page_count, issues_critical, issues_warning, issues_notice')
         .eq('business_id', business.id)
         .eq('status', 'complete')
-        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(10);
 

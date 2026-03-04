@@ -87,7 +87,6 @@ function LocalGridInner() {
         .select('*')
         .eq('id', id)
         .eq('business_id', business!.id)
-        .is('deleted_at', null)
         .maybeSingle();
 
       if (data && data.status === 'complete') {
