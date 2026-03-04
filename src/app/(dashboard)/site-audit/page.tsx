@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
-import { LocationSelector } from '@/components/ui/LocationSelector';
 import { useUser } from '@/lib/hooks/useUser';
 import { useSubscription } from '@/lib/hooks/useSubscription';
 import { useBusiness } from '@/lib/hooks/useBusiness';
@@ -47,7 +46,7 @@ export default function SiteAuditPage() {
   const { user } = useUser();
   const { scansRemaining } = useSubscription();
   const { business } = useBusiness();
-  const { locations, selectedLocation, selectLocation } = useLocations(business?.id);
+  const { locations } = useLocations(business?.id);
 
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [auditId, setAuditId] = useState<string | null>(null);
@@ -126,38 +125,28 @@ export default function SiteAuditPage() {
     };
   }, []);
 
-  // Check for existing audit on mount (or when location changes)
+  // Check for existing audit on mount
   useEffect(() => {
     async function checkExistingAudit() {
       if (!business?.id) return;
 
-      let query = (supabase as any)
+      const { data: existingAudit } = await (supabase as any)
         .from('site_audits')
         .select('*')
         .eq('business_id', business.id)
         .in('status', ['complete'])
         .order('created_at', { ascending: false })
-        .limit(1);
-
-      // Filter by location when one is selected (prevents loading wrong location's audit)
-      if (selectedLocation?.id) {
-        query = query.eq('location_id', selectedLocation.id);
-      }
-
-      const { data: existingAudit } = await query.maybeSingle();
+        .limit(1)
+        .maybeSingle();
 
       if (existingAudit?.status === 'complete') {
         loadAuditResults(existingAudit);
-      } else if (selectedLocation?.id) {
-        // No audit for this location yet — reset to idle
-        setResults(null);
-        setScanState('idle');
       }
     }
 
     checkExistingAudit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [business?.id, selectedLocation?.id]);
+  }, [business?.id]);
 
   function loadAuditResults(audit: any) {
     if (!audit.crawl_data || typeof audit.crawl_data !== 'object') {
@@ -222,11 +211,6 @@ export default function SiteAuditPage() {
         .eq('status', 'complete')
         .order('created_at', { ascending: false })
         .limit(10);
-
-      // Filter by selected location so history only shows scans for the current location
-      if (selectedLocation?.id) {
-        query = query.eq('location_id', selectedLocation.id);
-      }
 
       const { data } = await query;
 
@@ -305,7 +289,7 @@ export default function SiteAuditPage() {
         .from('site_audits')
         .insert({
           business_id: business.id,
-          location_id: selectedLocation?.id || null,
+          location_id: null,
           domain: cleanedDomain,
           status: 'pending',
           started_at: new Date().toISOString(),
@@ -798,12 +782,6 @@ export default function SiteAuditPage() {
 
         {scanState === 'idle' && (
           <>
-            <LocationSelector
-              locations={locations}
-              selectedLocation={selectedLocation}
-              onSelectLocation={selectLocation}
-              showAllOption={true}
-            />
             {!results && (
               <EmptyState
                 icon="🔍"
