@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useAuth } from '@/lib/context/AuthContext';
 import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { useLocations } from '@/lib/hooks/useLocations';
 import type { SitePage, ChecklistResult, Market } from '@/types';
 import PageList from '@/components/tools/WebsiteBuilder/PageList';
 import MetaSidebar from '@/components/tools/WebsiteBuilder/MetaSidebar';
@@ -23,6 +24,7 @@ const VIEW_ICONS: Record<ViewMode, string> = { split: '⚡', editor: '✏️', p
 function WebsiteBuilderInner() {
   const { business, loading: authLoading } = useAuth();
   const searchParams = useSearchParams();
+  const { locations } = useLocations(business?.id);
 
   // Pre-fill from URL params (e.g. from CalendarItemCard "Build Page" link)
   const urlType = (searchParams.get('type') ?? 'location_service') as SitePage['type'];
@@ -395,6 +397,27 @@ function WebsiteBuilderInner() {
             </div>
             {(genPageType === 'location_service' || genPageType === 'city_landing') && (
               <>
+                {locations.length > 0 && (
+                  <div className="col-span-2 md:col-span-3">
+                    <label className="text-xs text-ash-400 mb-1 block">Pick a Location</label>
+                    <select
+                      className="input w-full text-sm"
+                      defaultValue=""
+                      onChange={(e) => {
+                        const loc = locations.find((l) => l.id === e.target.value);
+                        if (loc) { setGenCity(loc.city); setGenState(loc.state); }
+                      }}
+                    >
+                      <option value="" disabled>Select saved location…</option>
+                      {locations.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.location_name ? `${l.location_name} — ` : ''}{l.city}, {l.state}
+                        </option>
+                      ))}
+                      <option value="__custom">Custom (type below)</option>
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="text-xs text-ash-400 mb-1 block">City</label>
                   <input
