@@ -4,11 +4,13 @@ import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import dynamic from 'next/dynamic';
 import { useAuth } from '@/lib/context/AuthContext';
 import { useSearchParams } from 'next/navigation';
-import type { SitePage, ChecklistResult } from '@/types';
+import { createClient } from '@/lib/supabase/client';
+import type { SitePage, ChecklistResult, Market } from '@/types';
 import PageList from '@/components/tools/WebsiteBuilder/PageList';
 import MetaSidebar from '@/components/tools/WebsiteBuilder/MetaSidebar';
 import ProjectLibrary from '@/components/tools/WebsiteBuilder/ProjectLibrary';
 import DomainManager from '@/components/tools/WebsiteBuilder/DomainManager';
+import BulkGeneratePanel from '@/components/tools/WebsiteBuilder/BulkGeneratePanel';
 
 const PageEditor = dynamic(() => import('@/components/tools/WebsiteBuilder/PageEditor'), { ssr: false });
 const PagePreview = dynamic(() => import('@/components/tools/WebsiteBuilder/PagePreview'), { ssr: false });
@@ -49,6 +51,8 @@ function WebsiteBuilderInner() {
   const [generatingSchema, setGeneratingSchema] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [showGeneratePanel, setShowGeneratePanel] = useState(!!urlKeyword);
+  const [showBulkPanel, setShowBulkPanel] = useState(false);
+  const [markets, setMarkets] = useState<Market[]>([]);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
   // Generate form — pre-fill from URL params
@@ -76,7 +80,18 @@ function WebsiteBuilderInner() {
   }, [business]);
 
   useEffect(() => {
-    if (!authLoading && business) loadPages();
+    if (!authLoading && business) {
+      loadPages();
+      // Load markets for BulkGeneratePanel
+      const supabase = createClient();
+      (supabase as any)
+        .from('markets')
+        .select('*')
+        .eq('business_id', business.id)
+        .then(({ data }: { data: Market[] | null }) => {
+          if (data) setMarkets(data);
+        });
+    }
   }, [authLoading, business, loadPages]);
 
   // ── Select page ─────────────────────────────────────────────────────────────
@@ -333,7 +348,13 @@ function WebsiteBuilderInner() {
                 ))}
               </div>
               <button
-                onClick={() => setShowGeneratePanel(!showGeneratePanel)}
+                onClick={() => { setShowBulkPanel(!showBulkPanel); setShowGeneratePanel(false); }}
+                className="btn-ghost text-sm"
+              >
+                ⚡ Bulk Generate
+              </button>
+              <button
+                onClick={() => { setShowGeneratePanel(!showGeneratePanel); setShowBulkPanel(false); }}
                 className="btn-primary text-sm"
               >
                 + Generate Page
@@ -432,6 +453,25 @@ function WebsiteBuilderInner() {
             </button>
             <button onClick={() => setShowGeneratePanel(false)} className="btn-ghost text-sm">
               Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk generate panel */}
+      {mainTab === 'pages' && showBulkPanel && (
+        <div className="card mb-4 flex-shrink-0">
+          <BulkGeneratePanel
+            markets={markets}
+            onComplete={() => {
+              loadPages();
+              setShowBulkPanel(false);
+              showToast('Bulk generation complete — drafts added to Pages');
+            }}
+          />
+          <div className="mt-4 pt-3 border-t border-char-700">
+            <button onClick={() => setShowBulkPanel(false)} className="btn-ghost text-sm">
+              Close
             </button>
           </div>
         </div>
