@@ -472,6 +472,98 @@ function LocalQuerySpotlight({ rows, cities }: LocalSpotlightProps) {
   );
 }
 
+// ─── GSC-29: Position Volatility ─────────────────────────────────────────────
+
+interface VolatilityProps {
+  rows: GSCRow[];        // 90-day baseline
+  recentRows: GSCRow[];  // 30-day recent
+}
+
+function PositionVolatility({ rows, recentRows }: VolatilityProps) {
+  const volatile = useMemo(() => {
+    // Build 30-day position map: query -> avg position
+    const recentMap = new Map<string, { posSum: number; count: number }>();
+    for (const r of recentRows) {
+      const q = r.keys[0] ?? '';
+      const prev = recentMap.get(q) ?? { posSum: 0, count: 0 };
+      recentMap.set(q, { posSum: prev.posSum + r.position, count: prev.count + 1 });
+    }
+
+    // Compare 90-day vs 30-day, flag delta > 3
+    const results: { query: string; pos90: number; pos30: number; delta: number; page: string }[] = [];
+    const seen90 = new Map<string, { posSum: number; count: number; page: string }>();
+    for (const r of rows) {
+      const q = r.keys[0] ?? '';
+      const page = r.keys[1] ?? '';
+      const prev = seen90.get(q) ?? { posSum: 0, count: 0, page };
+      seen90.set(q, { posSum: prev.posSum + r.position, count: prev.count + 1, page });
+    }
+
+    for (const [q, d90] of seen90.entries()) {
+      const d30 = recentMap.get(q);
+      if (!d30) continue;
+      const pos90 = d90.posSum / d90.count;
+      const pos30 = d30.posSum / d30.count;
+      const delta = pos30 - pos90; // positive = dropped (got worse), negative = improved
+      if (Math.abs(delta) > 3) {
+        results.push({ query: q, pos90, pos30, delta, page: d90.page });
+      }
+    }
+
+    return results.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 15);
+  }, [rows, recentRows]);
+
+  if (volatile.length === 0) return null;
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <h3 className="font-display text-lg mb-1">Position Volatility</h3>
+        <p className="text-xs text-ash-500 mb-1">
+          Queries where 30-day position differs from 90-day avg by more than 3 positions
+        </p>
+        <p className="text-xs text-ash-600">
+          {volatile.length} volatile queries — monitor these for algorithmic or competitive changes
+        </p>
+      </div>
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-char-700 bg-char-900">
+                <th className="text-left text-xs text-ash-500 font-display px-4 py-2.5">Query</th>
+                <th className="text-right text-xs text-ash-500 font-display px-4 py-2.5">90d Avg</th>
+                <th className="text-right text-xs text-ash-500 font-display px-4 py-2.5">30d Avg</th>
+                <th className="text-right text-xs text-ash-500 font-display px-4 py-2.5">Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {volatile.map((v, i) => (
+                <tr key={i} className="border-b border-char-800 last:border-0 hover:bg-char-800/50 transition-colors">
+                  <td className="px-4 py-2.5 max-w-xs">
+                    <span className="text-ash-200 text-xs">{v.query}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-ash-400 tabular-nums">{fmtPos(v.pos90)}</td>
+                  <td className="px-4 py-2.5 text-right text-ash-300 tabular-nums">{fmtPos(v.pos30)}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <span className={`text-xs font-display tabular-nums px-1.5 py-0.5 rounded-full ${
+                      v.delta > 0
+                        ? 'bg-danger/10 text-danger border border-danger/30'
+                        : 'bg-success/10 text-success border border-success/30'
+                    }`}>
+                      {v.delta > 0 ? '▼' : '▲'} {Math.abs(v.delta).toFixed(1)}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main GSC Tab ─────────────────────────────────────────────────────────────
 
 export default function GSCTab({ results }: TabProps) {
@@ -479,6 +571,7 @@ export default function GSCTab({ results }: TabProps) {
   const { connection: gscConnection, loading: gscConnLoading } = useGSCConnection(business?.id);
 
   const [rows, setRows] = useState<GSCRow[]>([]);
+  const [recentRows, setRecentRows] = useState<GSCRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetched, setFetched] = useState(false);
@@ -515,8 +608,9 @@ export default function GSCTab({ results }: TabProps) {
         if (!r.ok) throw new Error(json.error || `HTTP ${r.status}`);
         return json;
       }))
-      .then((data: { rows: GSCRow[] }) => {
+      .then((data: { rows: GSCRow[]; recentRows?: GSCRow[] }) => {
         setRows(data.rows || []);
+        setRecentRows(data.recentRows || []);
         setFetched(true);
       })
       .catch((e: Error) => {
@@ -603,6 +697,14 @@ export default function GSCTab({ results }: TabProps) {
       {/* GSC-09: Local Spotlight */}
       <div className="border-t border-char-700" />
       <LocalQuerySpotlight rows={rows} cities={cities} />
+
+      {/* GSC-29: Position Volatility */}
+      {recentRows.length > 0 && (
+        <>
+          <div className="border-t border-char-700" />
+          <PositionVolatility rows={rows} recentRows={recentRows} />
+        </>
+      )}
 
       {/* Footer note */}
       <p className="text-xs text-ash-600 text-center pb-2">

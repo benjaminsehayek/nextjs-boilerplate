@@ -18,12 +18,18 @@ import { CAMPAIGN_TEMPLATES } from '@/lib/marketing/templates';
 import { useAuth } from '@/lib/context/AuthContext';
 import AudienceSelector from './AudienceSelector';
 
+interface LocationOption {
+  id: string;
+  location_name: string;
+}
+
 interface CampaignComposerProps {
   templates: MessageTemplate[];
   contacts: Contact[];
   segments: Segment[];
   lists: string[];
   tags: string[];
+  locations?: LocationOption[];
   onSave: (input: CreateCampaignInput) => Promise<string | undefined> | void;
   onSend: (campaignId: string, options?: { schedule?: boolean; scheduledAt?: string }) => void;
   onCancel: () => void;
@@ -49,6 +55,7 @@ export default function CampaignComposer({
   segments,
   lists,
   tags,
+  locations = [],
   onSave,
   onSend,
   onCancel,
@@ -86,6 +93,8 @@ export default function CampaignComposer({
   // Step 3: Audience
   const [audienceType, setAudienceType] = useState<AudienceType>('all');
   const [audienceValue, setAudienceValue] = useState('');
+  // AQ-09: Location filter — '' means all locations
+  const [locationFilter, setLocationFilter] = useState('');
 
   // Campaign template loading
   const [templateLoaded, setTemplateLoaded] = useState(false);
@@ -191,18 +200,24 @@ export default function CampaignComposer({
     });
   }, [htmlBody, textBody]);
 
+  // AQ-09: Contacts filtered by selected location
+  const locationFilteredContacts = useMemo(
+    () => locationFilter ? contacts.filter((c) => c.location_id === locationFilter) : contacts,
+    [contacts, locationFilter],
+  );
+
   // Audience eligible count
   const audienceStats = useMemo(() => {
-    // Resolve audience contacts
+    // Resolve audience contacts (from location-filtered set)
     let audienceContacts: Contact[];
     switch (audienceType) {
       case 'all':
-        audienceContacts = contacts;
+        audienceContacts = locationFilteredContacts;
         break;
       case 'segment': {
         const seg = segments.find((s) => s.id === audienceValue);
         if (!seg) { audienceContacts = []; break; }
-        audienceContacts = contacts.filter((c) => {
+        audienceContacts = locationFilteredContacts.filter((c) => {
           const f = seg.filter;
           if (f.emailOptIn !== undefined && c.emailOptIn !== f.emailOptIn) return false;
           if (f.smsOptIn !== undefined && c.smsOptIn !== f.smsOptIn) return false;
@@ -216,21 +231,21 @@ export default function CampaignComposer({
         break;
       }
       case 'list':
-        audienceContacts = audienceValue ? contacts.filter((c) => c.lists.includes(audienceValue)) : [];
+        audienceContacts = audienceValue ? locationFilteredContacts.filter((c) => c.lists.includes(audienceValue)) : [];
         break;
       case 'tag':
-        audienceContacts = audienceValue ? contacts.filter((c) => c.tags.includes(audienceValue)) : [];
+        audienceContacts = audienceValue ? locationFilteredContacts.filter((c) => c.tags.includes(audienceValue)) : [];
         break;
       case 'manual': {
         const ids = new Set(audienceValue.split(',').filter(Boolean));
-        audienceContacts = contacts.filter((c) => ids.has(c.id));
+        audienceContacts = locationFilteredContacts.filter((c) => ids.has(c.id));
         break;
       }
       default:
         audienceContacts = [];
     }
     return filterEligibleContacts(audienceContacts, channel);
-  }, [contacts, segments, audienceType, audienceValue, channel]);
+  }, [locationFilteredContacts, segments, audienceType, audienceValue, channel]);
 
   // Preview rendered content
   const previewContent = useMemo(
@@ -837,10 +852,31 @@ export default function CampaignComposer({
 
         {/* ─── Step 3: Audience ─── */}
         {currentStep === 3 && (
-          <div className="max-w-xl">
+          <div className="max-w-xl space-y-4">
+            {/* AQ-09: Location filter */}
+            {locations.length > 1 && (
+              <div>
+                <label className="block text-xs text-ash-500 font-display mb-1.5">Filter by Location</label>
+                <select
+                  value={locationFilter}
+                  onChange={(e) => setLocationFilter(e.target.value)}
+                  className="w-full bg-char-800 border border-char-600 rounded-btn px-3 py-2 text-sm text-ash-200 focus:outline-none focus:border-flame-500"
+                >
+                  <option value="">All Locations</option>
+                  {locations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>{loc.location_name}</option>
+                  ))}
+                </select>
+                {locationFilter && (
+                  <p className="text-xs text-ash-600 mt-1">
+                    Showing {locationFilteredContacts.length} contacts for this location
+                  </p>
+                )}
+              </div>
+            )}
             <AudienceSelector
               channel={channel}
-              contacts={contacts}
+              contacts={locationFilteredContacts}
               segments={segments}
               lists={lists}
               tags={tags}

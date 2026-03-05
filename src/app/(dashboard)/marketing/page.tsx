@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useUser } from '@/lib/hooks/useUser';
 import { useBusiness } from '@/lib/hooks/useBusiness';
 import { useSubscription } from '@/lib/hooks/useSubscription';
+import { useLocations } from '@/lib/hooks/useLocations';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { createClient } from '@/lib/supabase/client';
 import type { Campaign, DashboardStats, MessageTemplate, CreateCampaignInput } from '@/lib/marketing/types';
@@ -22,6 +23,7 @@ export default function MarketingPage() {
   const { user, loading: authLoading } = useUser();
   const { business } = useBusiness();
   const { canAccessFeature } = useSubscription();
+  const { locations } = useLocations(business?.id);
   const { toast } = useToast();
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -244,6 +246,7 @@ export default function MarketingPage() {
             segments={segments}
             lists={allLists}
             tags={allTags}
+            locations={locations}
             onSave={handleSaveCampaign}
             onSend={handleSendCampaign}
             onCancel={() => setShowComposer(false)}

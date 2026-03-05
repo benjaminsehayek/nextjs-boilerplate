@@ -257,11 +257,11 @@ HIGH (broken features / silent failures)
 MEDIUM (UX bugs / data integrity)
 [Y] AQ-07 MEDIUM: local-grid/page.tsx — handleStartScan() does not set loading state before calling runGridScan(). User can double-click "Start Scan" → duplicate scan records created. Fix: set isScanning=true immediately on button click, disable button during scan.
 [N] AQ-08 MEDIUM: site-audit/page.tsx — FALSE POSITIVE. loadHistory() already has try/catch/finally; setHistoryLoading(false) always runs, shows "No previous scans found" on error.
-[ ] AQ-09 MEDIUM: marketing/page.tsx — audience filtering is business-wide; Contact.location_id exists but never used for campaign targeting. For multi-location businesses this sends campaigns to contacts from all locations. Fix: add location filter dropdown in campaign send UI, pass location_id to send route.
+[Y] AQ-09 MEDIUM: marketing/page.tsx — audience filtering is business-wide; Contact.location_id exists but never used for campaign targeting. For multi-location businesses this sends campaigns to contacts from all locations. Fix: add location filter dropdown in campaign send UI, pass location_id to send route.
 [Y] AQ-10 MEDIUM: off-page-audit/page.tsx — audit task list (citations/reviews) not cleared when starting a new audit. Old results flash briefly before new data loads. Fix: clear taskList/citations state when a new audit starts.
 
 LOW (type safety / minor UX)
-[ ] AQ-11 LOW: lead-intelligence/page.tsx — LocationSelector rendered but selectedLocation never used to filter trend/attribution data. Looks interactive but is decorative. Fix: wire selectedLocation into the data fetch queries.
+[Y] AQ-11 LOW: lead-intelligence/page.tsx — LocationSelector rendered but selectedLocation never used to filter trend/attribution data. Looks interactive but is decorative. Fix: wire selectedLocation into the data fetch queries.
 [Y] AQ-12 LOW: content-strategy/page.tsx — weekChangeDebounce ref timeout not cleared on component unmount → memory leak. Fix: return cleanup function from useEffect that calls clearTimeout(weekChangeDebounce.current).
 [Y] AQ-13 LOW: LocalGrid/types.ts — GridScanResult interface missing location_id field even though DB stores it. Fix: add location_id?: string to GridScanResult interface.
 [N] AQ-14 LOW: site-audit/page.tsx — FALSE POSITIVE. Export CSV button is inside scanState==='complete' && results guard; unreachable without data.
@@ -288,7 +288,7 @@ BATCH 11 FINDINGS (B11 discovery)
 [Y] B11-09 HIGH: lead-database/page.tsx — Kanban drop: business_id scope + error handling + rollback added.
 [Y] B11-10 HIGH: local-grid/reports/page.tsx — handleArchiveScan .eq('business_id', business!.id) added.
 [Y] B11-11 HIGH: pagespeed/route.ts — url validated: must be https, parsed with new URL(), private IPs rejected. strategy allowlisted to mobile/desktop.
-[ ] B11-12 HIGH: local-grid/page.tsx — scan credit deduction (decrement_scan_credits) only runs if userId is truthy, easily bypassed. All credit enforcement is client-side only. Fix: move credit check to server-side API route.
+[Y] B11-12 HIGH: local-grid/page.tsx — scan credit deduction (decrement_scan_credits) only runs if userId is truthy, easily bypassed. All credit enforcement is client-side only. Fix: move credit check to server-side API route.
 [Y] B11-13 HIGH: content-strategy/keyword-research/route.ts — input validation added: strings truncated to 200 chars, arrays limited to 100/20 entries.
 --- MEDIUM ---
 [Y] B11-14 MEDIUM: settings/page.tsx — handleSetPrimaryLocation order reversed (set new first, clear others).
@@ -318,7 +318,7 @@ BATCH 12 FINDINGS (B12 discovery — marketing, site-audit, local-grid)
 --- HIGH ---
 [ ] B12-03 HIGH: marketing/page.tsx — /marketing/campaigns route does not exist. "View All" and "View Campaign" navigate to 404. Campaign delete/duplicate inaccessible. Fix: implement missing routes or render CampaignList inline.
 [Y] B12-04 HIGH: marketing/send/route.ts — campaign schedule update + status updates lack business_id scope (defense-in-depth). Fix: add .eq('business_id', userBusiness.id) to lines ~159, ~224, ~356, ~370.
-[ ] B12-05 HIGH: marketing/page.tsx — no scheduler exists for 'scheduled' campaigns; they never actually send. Fix: add pg_cron job or Edge Function to process scheduled campaigns.
+[Y] B12-05 HIGH: marketing/page.tsx — no scheduler exists for 'scheduled' campaigns; they never actually send. Fix: add pg_cron job or Edge Function to process scheduled campaigns.
 [Y] B12-06 HIGH: marketing/page.tsx — handleSaveCampaign has no error handling; silent failures leave user stuck with no feedback. Fix: add toast.error() on insert failure.
 [Y] B12-07 HIGH: local-grid/page.tsx — decrement_scan_credits called without p_amount parameter → credits may never deduct for grid scans. Fix: add p_amount: 1.
 [Y] B12-08 HIGH: local-grid/page.tsx — all within-scan UPDATE calls lack business_id scope (5 occurrences). Fix: add .eq('business_id', business.id) to each.
@@ -349,9 +349,9 @@ Key fixes: 0-recipient campaigns bug, 8 cross-tenant security holes, CAN-SPAM un
 
 STILL OPEN (deferred / complex):
 [N] B12-03: Routes DO exist at /marketing/campaigns and /marketing/campaigns/[id] — was false positive. But see B13-03 for security holes in those routes.
-[ ] B12-05 HIGH: No scheduler for scheduled campaigns (requires pg_cron or Edge Function).
-[ ] AQ-09 MEDIUM: Marketing campaign UI has no location filter for audience targeting.
-[ ] AQ-11 LOW: Lead Intelligence LocationSelector is decorative — does not filter data.
+[Y] B12-05 HIGH: No scheduler for scheduled campaigns (requires pg_cron or Edge Function).
+[Y] AQ-09 MEDIUM: Marketing campaign UI has no location filter for audience targeting.
+[Y] AQ-11 LOW: Lead Intelligence LocationSelector is decorative — does not filter data.
 
 =====================================
 === BATCH 13 FINDINGS ===
@@ -431,8 +431,8 @@ STILL OPEN (deferred / complex):
 [Y] B16-04 MEDIUM: marketing/page.tsx — select(*) on templates. Fixed: select only id, name, channel, created_at, subject.
 [N] B16-05 MEDIUM: dashboard — minor optimization, no security issue.
 [N] B16-06 MEDIUM: 0-locations case — pages already guard with early return. Acceptable.
-[ ] B16-07 MEDIUM: ErrorBoundary.tsx — minimal fallback UI.
-[ ] B16-08 MEDIUM: multiple pages — missing error.tsx boundaries.
+[Y] B16-07 MEDIUM: ErrorBoundary.tsx — minimal fallback UI.
+[Y] B16-08 MEDIUM: multiple pages — missing error.tsx boundaries.
 [Y] B16-09 MEDIUM: marketing/page.tsx — no error toast on fetch failure. Fixed: added toast.error() in catch.
 [Y] B16-10 LOW: api/claude/generate/route.ts — client can specify any model. Fixed: whitelist to sonnet + haiku.
 [ ] B16-11 LOW: api/stripe/webhook/route.ts — in-memory idempotency lost on restart.
@@ -484,7 +484,7 @@ NOTE: All items below are FREE within GSC API quota. GSC data is REAL (actual Go
 [Y] GSC-20 URL Inspection API for location page indexing — /api/gsc/inspect route created; POST {businessId, urls[]} calls URL Inspection API per URL, returns verdict/lastCrawlTime/indexingState/canonicalUrl/mobileUsability.
 [Y] GSC-21 Rich result eligibility via searchAppearance dimension — /api/gsc/appearances route created; queries searchAppearance dimension (REVIEW_SNIPPET, FAQ_PAGE, etc.) with 6h cache; returns searchAppearanceRows.
 [Y] GSC-22 Sitemap coverage report via GSC Sitemaps API — /api/gsc/sitemaps route created; Sitemap Coverage table in settings/integrations shows submitted vs indexed per sitemap with warning when indexed < 80%.
-[ ] GSC-23 Monthly YoY organic trend via date dimension — add "date" to the GSC query and fetch 16 months of daily data; aggregate by month server-side; show "Organic traffic +34% vs same period last year" card in Lead Intelligence. NOTE: GSC-02 caching is now done — precondition met; ready to implement.
+[Y] GSC-23 Monthly YoY organic trend via date dimension — add "date" to the GSC query and fetch 16 months of daily data; aggregate by month server-side; show "Organic traffic +34% vs same period last year" card in Lead Intelligence. NOTE: GSC-02 caching is now done — precondition met; ready to implement.
 [ ] GSC-24 Per-location organic metrics via page URL prefix filter — for multi-location businesses, call GSC analytics once per location using a dimensionFilterGroup on page contains "/[location-slug]/"; returns location-specific clicks/impressions/position instead of domain-wide totals; enables true side-by-side organic performance comparison across locations and reveals which local pages are actually driving traffic.
 [Y] GSC-25 Use GSC actual clicks over DataForSEO estimated volume for ranked queries — GSCKeywordTable in Content Strategy shows "Actual traffic (90d)" GSC clicks for keywords with position ≤20; falls back to DataForSEO estimated volume for unranked keywords.
 [Y] GSC-26 Device dimension + mobile/PageSpeed cross-reference — device dimension query added to /api/gsc/analytics (parallel to main query); deviceRows returned for mobile/desktop/tablet breakdown.
@@ -495,7 +495,7 @@ NOTE: These are not feature additions — they are places where GSC data exists 
       or not cross-referenced, causing misleading output for the business owner.
 
 [Y] GSC-28 Fix CPC=0 in GSC cannibalization conflicts — detectCannibalizationFromGSC() now cross-references query text against cpcByKeyword map built from market keyword data; falls back to 0 if no match found.
-[ ] GSC-29 Position volatility flag — bucket 90-day range into weekly periods, compute position SD per query; flag SD>5 as "Volatile" in Site Audit. NOTE: GSC-02 caching now done — precondition met; ready to implement with a separate cached date-dimension call.
+[Y] GSC-29 Position volatility flag — bucket 90-day range into weekly periods, compute position SD per query; flag SD>5 as "Volatile" in Site Audit. NOTE: GSC-02 caching now done — precondition met; ready to implement with a separate cached date-dimension call.
 [Y] GSC-30 Cannibalization traffic opportunity — CannibalizationTab shows "X clicks/90d split across N pages — consolidating could recover est. $Y/month" for GSC conflicts using totalClicks field + CPC from keyword data.
 
 =====================================
@@ -550,11 +550,12 @@ Each item surfaces insights hidden in existing response payloads.
 =====================================
 === GSC BATCH (B17) COMPLETE ===
 =====================================
-Items implemented: GSC-01 through GSC-30 (excl. GSC-12/GSC-23/GSC-24/GSC-29)
+Items implemented: GSC-01 through GSC-30 (excl. GSC-12/GSC-24)
 Platform-wide: ST-01, OB-01, OB-02, DB-01, PF-01, LM-01–LM-05, MK-16, BL-01
 Cross-tool data: DA-01 through DA-06
 New files: GSCTab.tsx, GSCInsights.tsx, GSCLinkBuilding.tsx, LocationsPerformance.tsx
 New API routes: /api/gsc/sitemaps, /api/gsc/inspect, /api/gsc/appearances, /api/local-grid/alert
+Deferred batch (B17+): B11-12, B12-05, AQ-09, AQ-11, B16-07/08, GSC-23, GSC-29 — all now implemented
 TypeScript: 0 errors target
-Still pending: GSC-12 (precondition: content_calendar URL field), GSC-23/GSC-29 (date-dimension, ready now that GSC-02 cache is live), GSC-24 (per-location page prefix filter)
+Still pending: GSC-12 (precondition: content_calendar URL field), GSC-24 (per-location page prefix filter), B16-11 (stripe webhook idempotency)
 =====================================

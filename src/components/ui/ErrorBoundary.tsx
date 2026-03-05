@@ -16,6 +16,10 @@ export class ErrorBoundary extends React.Component<
     console.error('[ErrorBoundary]', error, info);
   }
 
+  reset = () => {
+    this.setState({ hasError: false, error: null });
+  };
+
   render() {
     if (!this.state.hasError) return this.props.children;
     return (
@@ -27,9 +31,14 @@ export class ErrorBoundary extends React.Component<
           <summary className="text-ash-500 text-xs cursor-pointer">Error details</summary>
           <pre className="text-danger text-xs mt-2 whitespace-pre-wrap">{this.state.error?.message}</pre>
         </details>
-        <button className="btn-secondary text-sm" onClick={() => window.location.reload()}>
-          Try Again
-        </button>
+        <div className="flex items-center justify-center gap-3">
+          <button className="btn-secondary text-sm" onClick={this.reset}>
+            Try Again
+          </button>
+          <button className="btn-ghost text-sm text-ash-500" onClick={() => window.location.reload()}>
+            Reload Page
+          </button>
+        </div>
       </div>
     );
   }

@@ -37,8 +37,15 @@ interface RawContact {
   elv_score: number | null;
   created_at: string;
   market_id: string | null;
+  location_id: string | null;
   opted_email: boolean | null;
   opted_sms: boolean | null;
+}
+
+interface MonthlyTrendRow {
+  month: string; // YYYY-MM
+  clicks: number;
+  impressions: number;
 }
 
 interface RawMarket {
@@ -310,6 +317,56 @@ function LeadTrendChart({ contacts }: { contacts: RawContact[] }) {
   );
 }
 
+// ─── GSC-23: Organic Monthly Trend ───────────────────────────────────────────
+
+function OrganicMonthlyTrendCard({ trend }: { trend: MonthlyTrendRow[] }) {
+  if (trend.length === 0) return null;
+
+  const maxClicks = Math.max(1, ...trend.map((r) => r.clicks));
+
+  // Show last 12 months
+  const rows = trend.slice(-12);
+
+  return (
+    <div className="card p-6">
+      <h3 className="font-display font-semibold text-ash-100 mb-1 flex items-center gap-2">
+        <span>📊</span> Organic Traffic Trend
+      </h3>
+      <p className="text-xs text-ash-500 mb-5">
+        Monthly organic clicks from Google Search Console · Last {rows.length} months
+      </p>
+
+      <div className="overflow-x-auto">
+        <div className="flex items-end gap-1.5 min-w-[360px]" style={{ height: '96px' }}>
+          {rows.map((r) => {
+            const height = r.clicks > 0 ? Math.max(4, Math.round((r.clicks / maxClicks) * 88)) : 0;
+            const label = r.month.slice(5); // MM
+            const monthLabel = new Date(r.month + '-01').toLocaleDateString('en-US', { month: 'short' });
+            return (
+              <div key={r.month} className="flex-1 flex flex-col items-center gap-1" title={`${r.month}: ${r.clicks.toLocaleString()} clicks`}>
+                <div className="w-full flex items-end justify-center" style={{ height: '88px' }}>
+                  <div
+                    className="w-full rounded-t bg-flame-500/70 hover:bg-flame-500 transition-colors"
+                    style={{ height: `${height}px` }}
+                  />
+                </div>
+                <span className="text-[10px] text-ash-500 whitespace-nowrap">{monthLabel}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between mt-3 pt-3 border-t border-char-800">
+        <span className="text-xs text-ash-600">Source: Google Search Console</span>
+        <span className="text-xs text-ash-400 font-display">
+          {trend.reduce((s, r) => s + r.clicks, 0).toLocaleString()} total clicks
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function LeadScoreBadge({ score }: { score: number }) {
@@ -481,8 +538,10 @@ export default function LeadIntelligencePage() {
 
   // GSC-16: Organic traffic from GSC (90-day total clicks)
   const [gscClicks, setGscClicks] = useState<number | null>(null);
+  // GSC-23: Monthly organic trend
+  const [monthlyTrend, setMonthlyTrend] = useState<MonthlyTrendRow[]>([]);
 
-  // GSC-16: Fetch GSC data once business is ready
+  // GSC-16 + GSC-23: Fetch GSC data once business is ready
   useEffect(() => {
     if (authLoading || !business?.id) return;
     let cancelled = false;
@@ -498,7 +557,10 @@ export default function LeadIntelligencePage() {
         const json = await r.json();
         const rows: Array<{ clicks: number }> = json.rows || [];
         const total = rows.reduce((sum, row) => sum + (row.clicks || 0), 0);
-        if (!cancelled) setGscClicks(total);
+        if (!cancelled) {
+          setGscClicks(total);
+          setMonthlyTrend(json.monthlyTrend || []);
+        }
       })
       .catch(() => {
         // Non-fatal — GSC not connected; just don't show the data
@@ -520,7 +582,7 @@ export default function LeadIntelligencePage() {
         const [contactsRes, marketsRes] = await Promise.all([
           supabase
             .from('contacts')
-            .select('id, source, elv_score, created_at, market_id, opted_email, opted_sms')
+            .select('id, source, elv_score, created_at, market_id, location_id, opted_email, opted_sms')
             .eq('business_id', business!.id),
           supabase
             .from('markets')
@@ -549,13 +611,18 @@ export default function LeadIntelligencePage() {
     return () => { cancelled = true; };
   }, [business?.id, authLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // PF-01: Memoize all aggregations so they only recompute when contacts/timeRange/markets change
+  // PF-01: Memoize all aggregations so they only recompute when contacts/timeRange/markets/location change
   const aggregations = useMemo(() => {
     const now = new Date();
     const days = parseInt(timeRange, 10);
 
     // Apply time-range filter
-    const displayContacts = filterByTimeRange(allContacts, days, now);
+    let displayContacts = filterByTimeRange(allContacts, days, now);
+
+    // AQ-11: Filter by selected location when one is chosen
+    if (selectedLocation) {
+      displayContacts = displayContacts.filter((c) => c.location_id === selectedLocation.id);
+    }
 
     const channelStats = buildChannelStats(displayContacts, now);
 
@@ -588,7 +655,7 @@ export default function LeadIntelligencePage() {
     const overallAvgScore = avgScoreOf(displayContacts);
 
     return { now, displayContacts, channelStats, marketBreakdown, totalLeads, totalElv, overallAvgScore };
-  }, [allContacts, timeRange, markets]);
+  }, [allContacts, timeRange, markets, selectedLocation]);
 
   const { channelStats, marketBreakdown, totalLeads, totalElv, overallAvgScore } = aggregations;
 
@@ -746,6 +813,11 @@ export default function LeadIntelligencePage() {
             {/* Lead trend chart */}
             {allContacts.length > 0 && (
               <LeadTrendChart contacts={allContacts} />
+            )}
+
+            {/* GSC-23: Organic monthly trend */}
+            {monthlyTrend.length > 0 && (
+              <OrganicMonthlyTrendCard trend={monthlyTrend} />
             )}
 
             {/* Budget recommendations */}

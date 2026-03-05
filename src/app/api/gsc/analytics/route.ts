@@ -9,9 +9,17 @@ const BodySchema = z.object({
 
 // ── In-memory response cache ─────────────────────────────────────────────────
 
+interface MonthlyTrendRow {
+  month: string; // YYYY-MM
+  clicks: number;
+  impressions: number;
+}
+
 interface CacheEntry {
   rows: unknown[];
   deviceRows: unknown[];
+  monthlyTrend: MonthlyTrendRow[];
+  recentRows: unknown[]; // 30-day query+page rows for GSC-29 volatility
   expiresAt: number;
 }
 
@@ -100,7 +108,7 @@ export async function POST(request: NextRequest) {
   const cached = responseCache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) {
     return NextResponse.json(
-      { rows: cached.rows, deviceRows: cached.deviceRows },
+      { rows: cached.rows, deviceRows: cached.deviceRows, monthlyTrend: cached.monthlyTrend, recentRows: cached.recentRows },
       { headers: { 'X-Cache': 'HIT' } },
     );
   }
@@ -146,9 +154,13 @@ export async function POST(request: NextRequest) {
     'Content-Type': 'application/json',
   };
 
+  // Date ranges for additional queries
+  const trendStart = new Date(endDate.getTime() - 13 * 30 * 24 * 60 * 60 * 1000); // ~13 months ago
+  const recentStart = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
+
   try {
-    // Run both queries in parallel
-    const [res, deviceRes] = await Promise.all([
+    // Run all queries in parallel: main (90d), device (90d), monthly trend (13mo), recent (30d)
+    const [res, deviceRes, trendRes, recentRes] = await Promise.all([
       fetch(analyticsUrl, {
         method: 'POST',
         headers: authHeaders,
@@ -171,6 +183,30 @@ export async function POST(request: NextRequest) {
           dataState: 'final',
         }),
       }),
+      // GSC-23: daily date dimension for 13 months → aggregate by month
+      fetch(analyticsUrl, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          startDate: fmt(trendStart),
+          endDate: fmt(endDate),
+          dimensions: ['date'],
+          rowLimit: 5000,
+          dataState: 'final',
+        }),
+      }),
+      // GSC-29: 30-day query+page rows for volatility comparison
+      fetch(analyticsUrl, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          startDate: fmt(recentStart),
+          endDate: fmt(endDate),
+          dimensions: ['query', 'page'],
+          rowLimit: 10000,
+          dataState: 'final',
+        }),
+      }),
     ]);
 
     if (!res.ok) {
@@ -185,13 +221,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `GSC API error ${deviceRes.status}` }, { status: deviceRes.status });
     }
 
-    const [data, deviceData] = await Promise.all([res.json(), deviceRes.json()]);
+    const [data, deviceData, trendData, recentData] = await Promise.all([
+      res.json(),
+      deviceRes.json(),
+      trendRes.ok ? trendRes.json() : Promise.resolve({ rows: [] }),
+      recentRes.ok ? recentRes.json() : Promise.resolve({ rows: [] }),
+    ]);
 
     const rows: unknown[] = data.rows || [];
     const deviceRows: unknown[] = deviceData.rows || [];
+    const recentRows: unknown[] = recentData.rows || [];
+
+    // GSC-23: aggregate daily trend rows into monthly buckets
+    const monthMap = new Map<string, { clicks: number; impressions: number }>();
+    for (const row of (trendData.rows || []) as Array<{ keys: string[]; clicks: number; impressions: number }>) {
+      const date = row.keys[0] ?? ''; // YYYY-MM-DD
+      const month = date.slice(0, 7);  // YYYY-MM
+      if (!month) continue;
+      const prev = monthMap.get(month) ?? { clicks: 0, impressions: 0 };
+      monthMap.set(month, { clicks: prev.clicks + row.clicks, impressions: prev.impressions + row.impressions });
+    }
+    const monthlyTrend: MonthlyTrendRow[] = [...monthMap.entries()]
+      .map(([month, d]) => ({ month, ...d }))
+      .sort((a, b) => a.month.localeCompare(b.month));
 
     // Store in cache
-    responseCache.set(cacheKey, { rows, deviceRows, expiresAt: Date.now() + CACHE_TTL_MS });
+    responseCache.set(cacheKey, { rows, deviceRows, monthlyTrend, recentRows, expiresAt: Date.now() + CACHE_TTL_MS });
 
     // Update last_sync
     await (supabase as any)
@@ -200,7 +255,7 @@ export async function POST(request: NextRequest) {
       .eq('business_id', body.businessId)
       .eq('platform', 'search_console');
 
-    return NextResponse.json({ rows, deviceRows });
+    return NextResponse.json({ rows, deviceRows, monthlyTrend, recentRows });
   } catch (e: any) {
     console.error('[GSC analytics] Fetch error:', e);
     return NextResponse.json({ error: 'Failed to reach GSC API' }, { status: 502 });

@@ -421,13 +421,14 @@ function LocalGridInner() {
         .eq('id', scanId)
         .eq('business_id', business!.id);
 
-      if (userId) {
-        await (supabase as any).rpc('decrement_scan_credits', {
-          p_user_id: userId,
-        });
-      } else {
-        console.error('[LocalGrid] Cannot deduct scan credit: userId missing');
-      }
+      // B11-12: credit deduction via server-side API route (not client RPC)
+      fetch('/api/local-grid/deduct-credits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ businessId: business!.id, scanId }),
+      }).catch((err) => {
+        console.error('[LocalGrid] Failed to deduct scan credit:', err);
+      });
 
       addLog('Scan complete!', 'success');
       if (cacheHits > 0) {
