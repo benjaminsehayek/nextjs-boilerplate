@@ -9,7 +9,8 @@ interface DashboardStatsProps {
 interface Stats {
   totalScans: number;
   avgSeoScore: number | null;
-  totalBacklinks: number;
+  totalBacklinks: number | null;
+  referringDomains: number | null;
   totalLeads: number;
 }
 
@@ -17,7 +18,8 @@ export function DashboardStats({ business }: DashboardStatsProps) {
   const [stats, setStats] = useState<Stats>({
     totalScans: 0,
     avgSeoScore: null,
-    totalBacklinks: 0,
+    totalBacklinks: null,
+    referringDomains: null,
     totalLeads: 0,
   });
   const [loading, setLoading] = useState(true);
@@ -59,10 +61,29 @@ export function DashboardStats({ business }: DashboardStatsProps) {
           .select('*', { count: 'exact', head: true })
           .eq('business_id', business.id);
 
+        // Get backlinks from most recent off-page audit
+        let totalBacklinks: number | null = null;
+        let referringDomains: number | null = null;
+        const { data: offPageData } = await (supabase as any)
+          .from('off_page_audits')
+          .select('metrics')
+          .eq('business_id', business.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (offPageData?.metrics) {
+          const m = offPageData.metrics as Record<string, unknown>;
+          if (typeof m.total_backlinks === 'number') totalBacklinks = m.total_backlinks;
+          else if (typeof m.backlinks === 'number') totalBacklinks = m.backlinks;
+          if (typeof m.referring_domains === 'number') referringDomains = m.referring_domains;
+        }
+
         setStats({
           totalScans: scansCount || 0,
           avgSeoScore: avgScore,
-          totalBacklinks: 0, // TODO: Implement when backlinks table exists
+          totalBacklinks,
+          referringDomains,
           totalLeads: leadsCount || 0,
         });
       } catch (error) {
@@ -102,7 +123,7 @@ export function DashboardStats({ business }: DashboardStatsProps) {
     },
     {
       label: 'Total Backlinks',
-      value: stats.totalBacklinks || 'Coming Soon',
+      value: stats.totalBacklinks !== null ? stats.totalBacklinks.toLocaleString() : '--',
       icon: '🔗',
       color: 'text-ember-500',
     },

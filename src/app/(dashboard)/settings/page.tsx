@@ -88,6 +88,14 @@ function SettingsPageContent() {
   const [wpSaving, setWpSaving] = useState(false);
   const [wpSaved, setWpSaved] = useState(false);
 
+  // GSC sitemaps state
+  interface SitemapContent { type: string; submitted: number; indexed: number; }
+  interface SitemapEntry { path: string; type: string; lastSubmitted: string | null; warnings: number; errors: number; contents: SitemapContent[]; }
+  const [sitemaps, setSitemaps] = useState<SitemapEntry[]>([]);
+  const [sitemapsLoading, setSitemapsLoading] = useState(false);
+  const [sitemapsError, setSitemapsError] = useState<string | null>(null);
+  const [sitemapsFetched, setSitemapsFetched] = useState(false);
+
   // Load WordPress URL from localStorage — password intentionally NOT persisted (security)
   useEffect(() => {
     if (!business?.id) return;
@@ -112,6 +120,29 @@ function SettingsPageContent() {
     if (gscParam === 'noproperty') toast.error('No Search Console property found. Make sure the site is verified in Google Search Console and try again.');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fetch GSC sitemaps when connected and integrations tab is active
+  useEffect(() => {
+    if (!gscConnection?.connected || !business?.id || activeTab !== 'integrations' || sitemapsFetched) return;
+    setSitemapsLoading(true);
+    setSitemapsError(null);
+    setSitemapsFetched(true);
+    fetch('/api/gsc/sitemaps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ businessId: business.id }),
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}));
+          throw new Error(json.error || `Error ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data) => { setSitemaps(data.sitemaps || []); })
+      .catch((err) => { setSitemapsError(err.message); })
+      .finally(() => { setSitemapsLoading(false); });
+  }, [gscConnection?.connected, business?.id, activeTab, sitemapsFetched]);
 
   // Initialize business data when business loads
   useEffect(() => {
@@ -1062,12 +1093,105 @@ function SettingsPageContent() {
                     </div>
                   )}
                 </div>
-                <button
-                  onClick={async () => { await gscDisconnect(); toast.success('Google Search Console disconnected.'); }}
-                  className="btn-secondary text-sm text-danger border-danger/30 hover:bg-danger/10"
-                >
-                  Disconnect
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={gscConnect}
+                    className="btn-secondary text-sm"
+                  >
+                    Change Property
+                  </button>
+                  <button
+                    onClick={async () => { await gscDisconnect(); toast.success('Google Search Console disconnected.'); }}
+                    className="btn-secondary text-sm text-danger border-danger/30 hover:bg-danger/10"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+
+                {/* Sitemap Coverage */}
+                <div className="mt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-ash-200">Sitemap Coverage</span>
+                    {sitemapsFetched && !sitemapsLoading && (
+                      <button
+                        onClick={() => { setSitemapsFetched(false); setSitemaps([]); setSitemapsError(null); }}
+                        className="text-xs text-ash-500 hover:text-ash-300 transition-colors"
+                      >
+                        Refresh
+                      </button>
+                    )}
+                  </div>
+                  {sitemapsLoading ? (
+                    <div className="h-16 bg-char-700 animate-pulse rounded-btn" />
+                  ) : sitemapsError ? (
+                    <div className="text-xs text-danger bg-danger/10 border border-danger/20 rounded-btn px-3 py-2">
+                      {sitemapsError}
+                    </div>
+                  ) : sitemaps.length === 0 ? (
+                    <div className="text-xs text-ash-500 bg-char-800 border border-char-700 rounded-btn px-3 py-2">
+                      No sitemaps submitted to Google Search Console.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-ash-500 border-b border-char-700">
+                            <th className="text-left pb-1.5 pr-3 font-medium">Sitemap</th>
+                            <th className="text-right pb-1.5 px-3 font-medium">Submitted</th>
+                            <th className="text-right pb-1.5 px-3 font-medium">Indexed</th>
+                            <th className="text-right pb-1.5 pl-3 font-medium">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-char-700">
+                          {sitemaps.map((sm) => {
+                            const totalSubmitted = sm.contents.reduce((acc, c) => acc + c.submitted, 0);
+                            const totalIndexed = sm.contents.reduce((acc, c) => acc + c.indexed, 0);
+                            const indexRatio = totalSubmitted > 0 ? totalIndexed / totalSubmitted : 1;
+                            const lowCoverage = totalSubmitted > 0 && indexRatio < 0.8;
+                            return (
+                              <tr key={sm.path} className="hover:bg-char-800/40 transition-colors">
+                                <td className="py-2 pr-3 text-ash-300 font-mono break-all max-w-[200px]">
+                                  {sm.path.replace(/^https?:\/\/[^/]+/, '') || sm.path}
+                                </td>
+                                <td className="py-2 px-3 text-right text-ash-300">{totalSubmitted > 0 ? totalSubmitted.toLocaleString() : '—'}</td>
+                                <td className="py-2 px-3 text-right">
+                                  {totalSubmitted > 0 ? (
+                                    <span className={lowCoverage ? 'text-warning font-semibold' : 'text-ash-300'}>
+                                      {totalIndexed.toLocaleString()}
+                                      {lowCoverage && (
+                                        <span className="ml-1 text-warning/80">
+                                          ({Math.round(indexRatio * 100)}%)
+                                        </span>
+                                      )}
+                                    </span>
+                                  ) : '—'}
+                                </td>
+                                <td className="py-2 pl-3 text-right whitespace-nowrap">
+                                  {sm.errors > 0 ? (
+                                    <span className="text-danger">{sm.errors} error{sm.errors !== 1 ? 's' : ''}</span>
+                                  ) : sm.warnings > 0 ? (
+                                    <span className="text-warning">{sm.warnings} warning{sm.warnings !== 1 ? 's' : ''}</span>
+                                  ) : (
+                                    <span className="text-success">OK</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      {sitemaps.some((sm) => {
+                        const sub = sm.contents.reduce((a, c) => a + c.submitted, 0);
+                        const idx = sm.contents.reduce((a, c) => a + c.indexed, 0);
+                        return sub > 0 && idx / sub < 0.8;
+                      }) && (
+                        <p className="mt-2 text-xs text-warning/90">
+                          Some sitemaps have low index coverage — Google may not be seeing all your local pages.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="space-y-3">

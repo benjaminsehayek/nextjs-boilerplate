@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import type { TabProps, CannibalizationConflict, KeywordIntent, UrlType } from './types';
 import { PAGE_TYPE_LABELS, INTENT_LABELS } from './types';
@@ -215,6 +215,25 @@ function SerpConflictCard({ conflict }: { conflict: CannibalizationConflict }) {
             </span>
           </div>
         )}
+        {conflict.market === 'GSC Data' && (conflict.totalClicks ?? 0) > 0 && (() => {
+          const totalClicks = conflict.totalClicks!;
+          const pageCount = conflict.competitors.length + 1;
+          const monthlyClicks = Math.round(totalClicks / 3);
+          const hasRevEst = conflict.cpc > 0;
+          const monthlyRev = hasRevEst ? Math.round(monthlyClicks * conflict.cpc) : 0;
+          return (
+            <div className="flex items-start gap-2 rounded bg-flame-500/10 border border-flame-500/20 p-2.5 mt-1">
+              <span className="shrink-0 text-sm">📈</span>
+              <span className="text-xs text-flame-300">
+                <strong className="text-flame-200">{totalClicks.toLocaleString()} clicks/90d</strong> split across {pageCount} pages
+                {hasRevEst
+                  ? <> — consolidating could recover est. <strong className="text-flame-200">${monthlyRev.toLocaleString()}/month</strong></>
+                  : <> — consolidating could concentrate ~{monthlyClicks.toLocaleString()} monthly clicks onto one page</>
+                }
+              </span>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Fix — always visible */}
@@ -539,11 +558,11 @@ export default function CannibalizationTab({ results }: TabProps) {
       .then((data: { rows: GSCRow[] }) => {
         const rows = data.rows || [];
         setGscRowCount(rows.length);
-        setGscConflicts(detectCannibalizationFromGSC(rows, results.domain));
+        setGscConflicts(detectCannibalizationFromGSC(rows, results.domain, keywordsData?.markets || undefined));
       })
       .catch((e: Error) => setGscError(e.message || 'Failed to load GSC data'))
       .finally(() => setGscLoading(false));
-  }, [gscConnection?.connected, business?.id, results.domain]);
+  }, [gscConnection?.connected, business?.id, results.domain, keywordsData]);
 
   const serpConflicts = useMemo(() => {
     if (!keywordsData?.markets) return [];
@@ -600,9 +619,57 @@ export default function CannibalizationTab({ results }: TabProps) {
 
   const [activeSection, setActiveSection] = useState<ActiveSection>('all');
 
+  // GSC-05: Local query filter
+  const [localQueryOnly, setLocalQueryOnly] = useState(false);
+  const [cityFilter, setCityFilter] = useState('');
+
+  // Derive city names from market data for autocomplete hint
+  const marketCityNames = useMemo(() => {
+    if (!keywordsData?.markets) return [];
+    return Object.keys(keywordsData.markets)
+      .map((m) => m.split(',')[0].trim().toLowerCase())
+      .filter(Boolean);
+  }, [keywordsData]);
+
+  // Helper: does a keyword match the local filter?
+  const matchesLocalFilter = useCallback((keyword: string): boolean => {
+    const kw = keyword.toLowerCase();
+    const city = cityFilter.trim().toLowerCase();
+    if (localQueryOnly && !kw.includes('near me')) return false;
+    if (city && !kw.includes(city)) return false;
+    return true;
+  }, [localQueryOnly, cityFilter]);
+
+  const isLocalFilterActive = localQueryOnly || cityFilter.trim().length > 0;
+
+  // Apply local filter to each conflict array
+  const filteredGscConflicts = useMemo(() =>
+    isLocalFilterActive ? gscConflicts.filter((c) => matchesLocalFilter(c.keyword)) : gscConflicts,
+    [gscConflicts, isLocalFilterActive, matchesLocalFilter]
+  );
+  const filteredSerpConflicts = useMemo(() =>
+    isLocalFilterActive ? serpConflicts.filter((c) => matchesLocalFilter(c.keyword)) : serpConflicts,
+    [serpConflicts, isLocalFilterActive, matchesLocalFilter]
+  );
+  const filteredWrongPageRankings = useMemo(() =>
+    isLocalFilterActive ? wrongPageRankings.filter((w) => matchesLocalFilter(w.keyword)) : wrongPageRankings,
+    [wrongPageRankings, isLocalFilterActive, matchesLocalFilter]
+  );
+  const filteredMarketConflicts = useMemo(() => {
+    if (!isLocalFilterActive) return marketConflicts;
+    return marketConflicts.map((mc) => ({
+      ...mc,
+      conflicts: mc.conflicts.filter((c) => matchesLocalFilter(c.keyword)),
+    })).filter((mc) => mc.conflicts.length > 0);
+  }, [marketConflicts, isLocalFilterActive, matchesLocalFilter]);
+
+  // Base totals (unfiltered) — used only for "has data" gates
   const totalIssues = serpConflicts.length + wrongPageRankings.length + marketConflicts.length + contentOverlaps.length + gscConflicts.length;
   const hasKeywordData = !!keywordsData?.markets;
   const hasAnyData = totalIssues > 0;
+
+  // Filtered totals — used for display counts and rendering
+  const filteredTotalIssues = filteredGscConflicts.length + filteredSerpConflicts.length + filteredWrongPageRankings.length + filteredMarketConflicts.length + contentOverlaps.length;
 
   // No data at all
   if (!hasKeywordData && pages.length === 0 && gscConflicts.length === 0 && !gscLoading) {
@@ -655,11 +722,11 @@ export default function CannibalizationTab({ results }: TabProps) {
   }
 
   const sections: Array<{ id: ActiveSection; label: string; count: number; title: string }> = [
-    { id: 'all', label: 'All Issues', count: totalIssues, title: '' },
-    { id: 'gsc', label: '📊 GSC Confirmed', count: gscConflicts.length, title: 'GSC Confirmed' },
-    { id: 'serp', label: '✅ Confirmed Conflicts', count: serpConflicts.length, title: 'Confirmed Conflicts' },
-    { id: 'wrongpage', label: '🎯 Wrong Page Showing Up', count: wrongPageRankings.length, title: 'Wrong Page Ranking' },
-    { id: 'ngram', label: '⚔ Same Keywords', count: marketConflicts.length, title: 'Same Keywords' },
+    { id: 'all', label: 'All Issues', count: filteredTotalIssues, title: '' },
+    { id: 'gsc', label: '📊 GSC Confirmed', count: filteredGscConflicts.length, title: 'GSC Confirmed' },
+    { id: 'serp', label: '✅ Confirmed Conflicts', count: filteredSerpConflicts.length, title: 'Confirmed Conflicts' },
+    { id: 'wrongpage', label: '🎯 Wrong Page Showing Up', count: filteredWrongPageRankings.length, title: 'Wrong Page Ranking' },
+    { id: 'ngram', label: '⚔ Same Keywords', count: filteredMarketConflicts.length, title: 'Same Keywords' },
     { id: 'content', label: '📄 Duplicate Content', count: contentOverlaps.length, title: 'Duplicate Content' },
     ...(rankingPages.length > 0
       ? [{ id: 'rankings' as ActiveSection, label: '📈 All Rankings', count: rankingPages.length, title: 'All Rankings' }]
@@ -667,11 +734,11 @@ export default function CannibalizationTab({ results }: TabProps) {
   ].filter((s) => s.id === 'all' || s.id === 'rankings' || s.count > 0) as Array<{ id: ActiveSection; label: string; count: number; title: string }>;
 
   const totalVolume =
-    serpConflicts.reduce((s, c) => s + c.volume, 0) +
-    wrongPageRankings.reduce((s, w) => s + w.volume, 0);
+    filteredSerpConflicts.reduce((s, c) => s + c.volume, 0) +
+    filteredWrongPageRankings.reduce((s, w) => s + w.volume, 0);
 
-  const criticalCount = serpConflicts.filter((c) => c.severity === 'critical').length +
-    wrongPageRankings.filter((w) => w.severity === 'high').length;
+  const criticalCount = filteredSerpConflicts.filter((c) => c.severity === 'critical').length +
+    filteredWrongPageRankings.filter((w) => w.severity === 'high').length;
 
   return (
     <div className="space-y-6">
@@ -727,11 +794,11 @@ export default function CannibalizationTab({ results }: TabProps) {
         </p>
         <StatGrid
           stats={[
-            { value: totalIssues, label: 'Total Issues Found', isWarning: totalIssues > 0 },
+            { value: filteredTotalIssues, label: 'Total Issues Found', isWarning: filteredTotalIssues > 0 },
             { value: criticalCount, label: 'High Priority', isWarning: criticalCount > 0 },
-            ...(gscConflicts.length > 0 ? [{ value: gscConflicts.length, label: 'GSC Confirmed', isWarning: true }] : []),
-            { value: serpConflicts.length, label: 'Confirmed by Google', isWarning: serpConflicts.length > 0 },
-            { value: wrongPageRankings.length, label: 'Wrong Page Ranking', isWarning: wrongPageRankings.length > 0 },
+            ...(filteredGscConflicts.length > 0 ? [{ value: filteredGscConflicts.length, label: 'GSC Confirmed', isWarning: true }] : []),
+            { value: filteredSerpConflicts.length, label: 'Confirmed by Google', isWarning: filteredSerpConflicts.length > 0 },
+            { value: filteredWrongPageRankings.length, label: 'Wrong Page Ranking', isWarning: filteredWrongPageRankings.length > 0 },
             { value: exactConflictCount, label: 'Local Keyword Conflicts', isWarning: exactConflictCount > 0 },
             { value: contentOverlaps.length, label: 'Title Phrase Conflicts', isWarning: contentOverlaps.length > 0 },
             {
@@ -762,17 +829,55 @@ export default function CannibalizationTab({ results }: TabProps) {
         ))}
       </div>
 
+      {/* GSC-05: Local query filter */}
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          onClick={() => setLocalQueryOnly((v) => !v)}
+          className={`flex items-center gap-2 px-3 py-1.5 text-xs rounded-full border transition-all ${
+            localQueryOnly
+              ? 'bg-amber-500/15 border-amber-500/50 text-amber-400'
+              : 'border-char-600 text-ash-400 hover:text-ash-200'
+          }`}
+        >
+          <span>📍</span>
+          <span>Near me only</span>
+          {localQueryOnly && <span className="opacity-60">✕</span>}
+        </button>
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={cityFilter}
+            onChange={(e) => setCityFilter(e.target.value)}
+            placeholder={marketCityNames.length > 0 ? `Filter by city (e.g. ${marketCityNames[0]})` : 'Filter by city name...'}
+            className="bg-char-800 border border-char-600 text-xs text-ash-300 rounded-full px-3 py-1.5 w-52 placeholder-ash-600 focus:outline-none focus:border-flame-500 transition-colors"
+          />
+          {cityFilter && (
+            <button
+              onClick={() => setCityFilter('')}
+              className="text-xs text-ash-500 hover:text-ash-300 transition-colors"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+        {isLocalFilterActive && (
+          <span className="text-xs text-amber-400">
+            Showing {filteredTotalIssues} of {totalIssues} issues
+          </span>
+        )}
+      </div>
+
       {/* ── GSC Confirmed Conflicts ── */}
-      {(activeSection === 'all' || activeSection === 'gsc') && gscConflicts.length > 0 && (
+      {(activeSection === 'all' || activeSection === 'gsc') && filteredGscConflicts.length > 0 && (
         <div>
           <SectionHeader
             title="Google Search Console: Pages Competing for the Same Queries"
-            count={gscConflicts.length}
+            count={filteredGscConflicts.length}
             badge="GSC Data"
             description="These conflicts come directly from your Google Search Console data. Google is showing multiple pages from your site for the same search query — confirmed cannibalization from the last 90 days of actual search traffic."
           />
           <div className="space-y-4">
-            {gscConflicts.map((c, idx) => (
+            {filteredGscConflicts.map((c, idx) => (
               <SerpConflictCard key={`gsc-${c.keyword}-${idx}`} conflict={c} />
             ))}
           </div>
@@ -780,16 +885,16 @@ export default function CannibalizationTab({ results }: TabProps) {
       )}
 
       {/* ── Confirmed Conflicts (SERP-verified) ── */}
-      {(activeSection === 'all' || activeSection === 'serp') && serpConflicts.length > 0 && (
+      {(activeSection === 'all' || activeSection === 'serp') && filteredSerpConflicts.length > 0 && (
         <div>
           <SectionHeader
             title="Confirmed: Multiple Pages in the Same Search Results"
-            count={serpConflicts.length}
+            count={filteredSerpConflicts.length}
             badge="Verified by Google"
             description="Google is currently showing more than one of your pages when someone searches these keywords. This is confirmed — your pages are actively splitting traffic and rankings right now."
           />
           <div className="space-y-4">
-            {serpConflicts.map((c, idx) => (
+            {filteredSerpConflicts.map((c, idx) => (
               <SerpConflictCard key={`${c.keyword}-${c.market}-${idx}`} conflict={c} />
             ))}
           </div>
@@ -797,15 +902,15 @@ export default function CannibalizationTab({ results }: TabProps) {
       )}
 
       {/* ── Wrong Page Ranking ── */}
-      {(activeSection === 'all' || activeSection === 'wrongpage') && wrongPageRankings.length > 0 && (
+      {(activeSection === 'all' || activeSection === 'wrongpage') && filteredWrongPageRankings.length > 0 && (
         <div>
           <SectionHeader
             title="Wrong Type of Page Showing Up in Search"
-            count={wrongPageRankings.length}
+            count={filteredWrongPageRankings.length}
             description="These searches are ranking with a page that won't convert visitors into customers. Someone searching 'auto body shop near me' wants to call a business — not read a blog post. Even if the ranking looks good, visitors leave without calling."
           />
           <div className="space-y-4">
-            {wrongPageRankings.map((item, idx) => (
+            {filteredWrongPageRankings.map((item, idx) => (
               <WrongPageCard key={`${item.keyword}-${idx}`} item={item} />
             ))}
           </div>
@@ -813,15 +918,15 @@ export default function CannibalizationTab({ results }: TabProps) {
       )}
 
       {/* ── Within-Market Keyword Conflicts ── */}
-      {(activeSection === 'all' || activeSection === 'ngram') && marketConflicts.length > 0 && (
+      {(activeSection === 'all' || activeSection === 'ngram') && filteredMarketConflicts.length > 0 && (
         <div>
           <SectionHeader
             title="Pages Competing in the Same Local Market"
-            count={marketConflicts.length}
-            description={`Multiple pages from your site are appearing in the same city's search results for the same keywords — ${exactConflictCount} total keyword conflicts across ${marketConflicts.length} market${marketConflicts.length !== 1 ? 's' : ''}. Google can only rank one page well per search; when two of yours compete, both get pushed down.`}
+            count={filteredMarketConflicts.length}
+            description={`Multiple pages from your site are appearing in the same city's search results for the same keywords — ${exactConflictCount} total keyword conflicts across ${filteredMarketConflicts.length} market${filteredMarketConflicts.length !== 1 ? 's' : ''}. Google can only rank one page well per search; when two of yours compete, both get pushed down.`}
           />
           <div className="space-y-4">
-            {marketConflicts.map((item, idx) => (
+            {filteredMarketConflicts.map((item, idx) => (
               <MarketConflictCard key={`${item.market}-${idx}`} item={item} />
             ))}
           </div>

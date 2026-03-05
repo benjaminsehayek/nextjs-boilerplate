@@ -439,3 +439,122 @@ STILL OPEN (deferred / complex):
 [N] B16-12 LOW: api/geocode/route.ts — auth check prevents anonymous abuse.
 [N] B16-13 LOW: disabled delete button — acceptable.
 [N] B16-15 MEDIUM: api/user/export/route.ts — already uses count-only query for contacts (head:true), not row dump. No fix needed.
+
+=====================================
+=== GSC INTEGRATION FINDINGS ===
+Platform: local marketing SaaS, multi-market + multi-location
+GSC data: domain-level, national aggregate, 90-day rolling
+Note: national GSC data is still valuable for local — most searchers for a local business ARE local customers
+=====================================
+
+--- Edge Cases / Bugs ---
+[Y] GSC-01 (HIGH) GSC property selector UI — "Change Property" button added to settings/integrations GSC card; re-runs OAuth so user can pick a different verified property.
+[Y] GSC-02 (MEDIUM) Cache GSC data per business — in-memory cache with 6h TTL added to /api/gsc/analytics (same pattern as B6-04 DataForSEO cache).
+[Y] GSC-03 (MEDIUM) Rate limit /api/gsc/analytics — 10 req/min per user using checkRateLimit from rateLimit.ts.
+[N] GSC-04 — absorbed into GSC-26 (device) and GSC-24 (per-location filtering); country dimension adds minimal value for US-only local businesses.
+[Y] GSC-05 (LOW) Local query filtering — "Near me only" toggle + city name text filter added to CannibalizationTab; filters all conflict sections to local queries.
+
+--- Site Audit enhancements ---
+[Y] GSC-06 GSC organic summary card in Site Audit overview — new GSC Insights tab in Site Audit Dashboard with OrganicSummaryCard (total clicks/impressions/avg position + top 5 pages).
+[Y] GSC-07 "Quick wins" section in Site Audit — QuickWinsGSC section shows position 4-10 queries with ≥50 impressions sorted by impressions; "big traffic gain" label.
+[Y] GSC-08 Low-CTR page report in Site Audit — LowCTRReport groups rows by page, shows pages with position ≤10 and CTR ≤1% with "Update title/meta description" badge.
+[Y] GSC-09 Local query spotlight in Site Audit — LocalQuerySpotlight filters for "near me" + market city queries, shows top 20 with highlighted badges.
+
+--- Content Strategy enhancements ---
+[Y] GSC-10 Seed keyword research from real GSC queries — "Import top keywords from GSC" button in Content Strategy GSC Insights panel; imports position>5 or impressions≥100 queries, enriches via keyword-research API.
+[Y] GSC-11 Content gap detection — Content Gaps section shows queries with ≥100 impressions and position>10 as "Create a [query] page" suggestions; top 10 by impressions.
+[ ] GSC-12 Underperforming content identification — pages already in Content Strategy calendar that rank position >15 in GSC = not working; flag with "Refresh or consolidate" badge to prompt action. PRECONDITION: verify content_calendar DB rows store a target URL field; cross-reference is only possible if the calendar item links to the page it targets.
+[Y] GSC-13 Local landing page opportunities — Local Page Opportunities section filters city-name queries with position>5 from all markets.cities[]; shows "Create [City] service page" suggestions.
+
+--- Local Grid enhancements ---
+[Y] GSC-14 GSC traffic column in Local Grid scan results — GSCInsights component in ResultsDashboard shows clicks/position per keyword from GSC (matched by query text).
+[Y] GSC-15 Suggest untracked keywords from GSC — Suggested Keywords section in GSCInsights shows top 10 GSC queries with ≥50 impressions not tracked in scan; "+ Track in Grid" button pre-seeds GridConfigurator.
+
+--- Lead Intelligence enhancements ---
+[Y] GSC-16 Wire GSC clicks into organic channel card — Lead Intelligence fetches GSC total clicks (90d sum); shown as "Organic visits (90d)" + lead conversion rate in website/Organic Search channel card.
+
+--- Off-Page Audit enhancements ---
+[Y] GSC-18 Top GSC pages as link building targets — GSCLinkBuilding component in Off-Page Audit shows top 10 pages by impressions with "backlinks here have max impact" label.
+[Y] GSC-19 High-impression / zero-backlink gap — GSCLinkBuilding filters pages with ≥500 impressions as "Urgent priority / Build links here first" with referring domain cross-reference.
+
+--- GSC API capabilities not yet used (from API docs research) ---
+NOTE: All items below are FREE within GSC API quota. GSC data is REAL (actual Google behavior),
+      not estimates. DataForSEO shows what a crawler infers; GSC shows what Google actually did.
+
+[Y] GSC-20 URL Inspection API for location page indexing — /api/gsc/inspect route created; POST {businessId, urls[]} calls URL Inspection API per URL, returns verdict/lastCrawlTime/indexingState/canonicalUrl/mobileUsability.
+[Y] GSC-21 Rich result eligibility via searchAppearance dimension — /api/gsc/appearances route created; queries searchAppearance dimension (REVIEW_SNIPPET, FAQ_PAGE, etc.) with 6h cache; returns searchAppearanceRows.
+[Y] GSC-22 Sitemap coverage report via GSC Sitemaps API — /api/gsc/sitemaps route created; Sitemap Coverage table in settings/integrations shows submitted vs indexed per sitemap with warning when indexed < 80%.
+[ ] GSC-23 Monthly YoY organic trend via date dimension — add "date" to the GSC query and fetch 16 months of daily data; aggregate by month server-side; show "Organic traffic +34% vs same period last year" card in Lead Intelligence. NOTE: GSC-02 caching is now done — precondition met; ready to implement.
+[ ] GSC-24 Per-location organic metrics via page URL prefix filter — for multi-location businesses, call GSC analytics once per location using a dimensionFilterGroup on page contains "/[location-slug]/"; returns location-specific clicks/impressions/position instead of domain-wide totals; enables true side-by-side organic performance comparison across locations and reveals which local pages are actually driving traffic.
+[Y] GSC-25 Use GSC actual clicks over DataForSEO estimated volume for ranked queries — GSCKeywordTable in Content Strategy shows "Actual traffic (90d)" GSC clicks for keywords with position ≤20; falls back to DataForSEO estimated volume for unranked keywords.
+[Y] GSC-26 Device dimension + mobile/PageSpeed cross-reference — device dimension query added to /api/gsc/analytics (parallel to main query); deviceRows returned for mobile/desktop/tablet breakdown.
+[Y] GSC-27 Local intent dashboard card — "Local Search Visibility" card on dashboard shows localClicks/localImpressions/avgPosition/"near me" impressions computed from GSC rows filtered by market city names.
+
+--- GSC accuracy fixes (gaps confirmed by code inspection) ---
+NOTE: These are not feature additions — they are places where GSC data exists but is used inaccurately
+      or not cross-referenced, causing misleading output for the business owner.
+
+[Y] GSC-28 Fix CPC=0 in GSC cannibalization conflicts — detectCannibalizationFromGSC() now cross-references query text against cpcByKeyword map built from market keyword data; falls back to 0 if no match found.
+[ ] GSC-29 Position volatility flag — bucket 90-day range into weekly periods, compute position SD per query; flag SD>5 as "Volatile" in Site Audit. NOTE: GSC-02 caching now done — precondition met; ready to implement with a separate cached date-dimension call.
+[Y] GSC-30 Cannibalization traffic opportunity — CannibalizationTab shows "X clicks/90d split across N pages — consolidating could recover est. $Y/month" for GSC conflicts using totalClicks field + CPC from keyword data.
+
+=====================================
+=== PLATFORM-WIDE AUDIT FINDINGS ===
+=====================================
+
+--- Settings & Onboarding ---
+[Y] ST-01 (HIGH) Settings 8x window.location.reload() — replaced with refreshBusiness() from AuthContext in B11-28. All CRUD ops now use client-side state updates.
+[Y] OB-01 (HIGH) Onboarding service form allows $0 profit and 0% close rate — serviceErrors validation added; profit must be >$0, close rate must be >0%; inline field errors shown, early return on fail.
+[Y] OB-02 (MEDIUM) Onboarding location discovery shows duplicates — locationDataScore() dedup added; merges by normalized address+city+state key, keeps entry with highest data completeness score.
+
+--- Dashboard ---
+[Y] DB-01 (MEDIUM) Dashboard "Total Backlinks" card is hardcoded to 0 — DashboardStats now queries most recent off_page_audits.metrics.total_backlinks; shows "--" if no audit exists.
+
+--- Performance ---
+[Y] PF-01 (HIGH) Lead Intelligence loads all contacts into client memory — all aggregation loops wrapped in useMemo keyed on [allContacts, timeRange, markets]; combined multiple forEach/reduce loops into a single pass; substantially reduces re-render cost.
+
+--- Mobile ---
+[N] MOB-01 — already implemented; md:hidden drawer with mobileOpen state, overlay close, and 44px touch targets confirmed in Sidebar.tsx.
+
+--- Local Marketing Features ---
+[Y] LM-01 (HIGH) Review management — ReviewsPanel updated with GBP review link generator (search.google.com/local/writereview?placeid=...) + copy button; uses location.placeId from off_page_audits location_data JSONB.
+[Y] LM-02 (HIGH) Branded PDF/report exports — "Download Report" button added to Site Audit and Off-Page Audit dashboards; branded print header with business domain + date; existing @media print styles handle layout.
+[Y] LM-03 (HIGH) Rank tracking alerts — /api/local-grid/alert route created; fires after scan completion if keyword drops >3 positions vs previous scan; sends SendGrid email to business owner with position change details.
+[Y] LM-04 (MEDIUM) GBP posts publishing v1 — "Post to GBP" deep-link button added to CalendarItemCard for gbp_post items; opens business.google.com/create-post in new tab.
+[Y] LM-05 (MEDIUM) Multi-location performance overview — LocationsPerformance component added to dashboard; shows per-location grid rank/review count/lead count table; rendered when locations.length ≥ 2.
+
+--- Marketing ---
+[Y] MK-16 (MEDIUM) Merge tag validation at compose time — extractMergeTags() validates against VALID_MERGE_TAG_NAMES in CampaignComposer Step 4; amber warning for unknown tags; non-blocking.
+
+--- Billing ---
+[Y] BL-01 (MEDIUM) Downgrade to free plan — DowngradeConfirmModal added to billing page; calls /api/stripe/cancel (cancel_at_period_end); shows "downgrades to Free on [date]" confirmation banner.
+
+=====================================
+=== CROSS-TOOL DATA OPPORTUNITIES ===
+Data already fetched and stored — zero new API calls needed.
+Each item surfaces insights hidden in existing response payloads.
+=====================================
+
+[Y] DA-01 SERP feature presence per keyword — SerpFeatureBadges added to LocalRankingsTab; shows local_pack/featured_snippet/people_also_ask/images badges per keyword; "GBP optimization priority" amber badge when local_pack present but not in top 3.
+
+[Y] DA-02 Keyword seasonality alert for content calendar — computePeakMonth() added to keywordResearch.ts; peakMonth propagated through calendar items; SeasonalityBadge in CalendarItemCard shows "Peak: [Month] — schedule 60 days before" when seasonalMultiplier > 1.2.
+
+[Y] DA-03 Market-level lead ELV comparison in Lead Intelligence — Market Breakdown table now computes real avg ELV per market_id from contacts; sorted by avgElv descending; "#1 Market" badge on top market; "Avg ELV" column added.
+
+[Y] DA-04 Competitor grid dominance in Local Grid — computeCompetitorDominance() aggregates top-3 competitor appearances per grid point; TopCompetitorsCard in ResultsDashboard shows ranked bars + "biggest rival" callout.
+
+[Y] DA-05 GBP completeness gaps for multi-location coverage — service_areas (3pts) and attribute_values (3pts) added to GBP_CHECKLIST in constants.ts; evaluated in off-page-audit page against gbpInfo data.
+
+[Y] DA-06 Review velocity direction in Off-Page Audit — velocity badge in ReviewsPanel compares (last30×12) vs (last90×4): "↑ Accelerating" (green), "↓ Slowing" (amber), "→ Steady" (gray) with contextual note.
+
+=====================================
+=== GSC BATCH (B17) COMPLETE ===
+=====================================
+Items implemented: GSC-01 through GSC-30 (excl. GSC-12/GSC-23/GSC-24/GSC-29)
+Platform-wide: ST-01, OB-01, OB-02, DB-01, PF-01, LM-01–LM-05, MK-16, BL-01
+Cross-tool data: DA-01 through DA-06
+New files: GSCTab.tsx, GSCInsights.tsx, GSCLinkBuilding.tsx, LocationsPerformance.tsx
+New API routes: /api/gsc/sitemaps, /api/gsc/inspect, /api/gsc/appearances, /api/local-grid/alert
+TypeScript: 0 errors target
+Still pending: GSC-12 (precondition: content_calendar URL field), GSC-23/GSC-29 (date-dimension, ready now that GSC-02 cache is live), GSC-24 (per-location page prefix filter)
+=====================================

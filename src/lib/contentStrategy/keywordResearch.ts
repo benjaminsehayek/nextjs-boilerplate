@@ -14,6 +14,8 @@ export interface EnrichedKeyword {
    * Applied to volume already — stored here for rationale display.
    */
   seasonalMultiplier: number;
+  /** Month (1–12) of peak search volume. Undefined when insufficient data. */
+  peakMonth?: number;
   difficulty: number | null;       // KD 0-100
   competition: 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH' | null;
   cpc: number | null;
@@ -59,6 +61,36 @@ export function buildSeedKeywords(industry: string, locations: string[], limit =
   }
 
   return [...new Set(seeds)].slice(0, limit);
+}
+
+/**
+ * Compute which month (1–12) has the highest average search volume.
+ * Returns null when insufficient data is available (< 3 data points).
+ */
+export function computePeakMonth(
+  monthly: Array<{ year: number; month: number; search_volume: number }>
+): number | null {
+  if (!monthly || monthly.length < 3) return null;
+
+  // Average across all years for each calendar month
+  const monthTotals: Record<number, { sum: number; count: number }> = {};
+  for (const m of monthly) {
+    if (!monthTotals[m.month]) monthTotals[m.month] = { sum: 0, count: 0 };
+    monthTotals[m.month].sum += m.search_volume;
+    monthTotals[m.month].count++;
+  }
+
+  let peakMonth = 1;
+  let peakAvg = 0;
+  for (const [month, { sum, count }] of Object.entries(monthTotals)) {
+    const avg = sum / count;
+    if (avg > peakAvg) {
+      peakAvg = avg;
+      peakMonth = parseInt(month, 10);
+    }
+  }
+
+  return peakMonth;
 }
 
 /**

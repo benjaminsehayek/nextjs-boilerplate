@@ -345,6 +345,9 @@ function buildGBPItems(
           : `Est. ${k.vol.toLocaleString()} searches/mo · $${k.roi}/mo ROI potential at position 3`,
         priority: (i < 4 ? 'high' : i < 8 ? 'medium' : 'low') as 'high' | 'medium' | 'low',
         roiValue: k.roi,
+        ...(k.enriched?.seasonalMultiplier != null && k.enriched.seasonalMultiplier > 1.2
+          ? { seasonalMultiplier: k.enriched.seasonalMultiplier, peakMonth: k.enriched.peakMonth }
+          : {}),
       });
     }
   }
@@ -418,6 +421,9 @@ function buildBlogItems(
       priority: (i < 2 ? 'high' : 'medium') as 'high' | 'medium' | 'low',
       roiValue: Math.round(k.vol * 0.005 * cfg.conversionRate * cfg.profitPerJob * (cfg.closeRate / 100)),
       targetUrl: `/blog/${slug}`,
+      ...(k.enriched?.seasonalMultiplier != null && k.enriched.seasonalMultiplier > 1.2
+        ? { seasonalMultiplier: k.enriched.seasonalMultiplier, peakMonth: k.enriched.peakMonth }
+        : {}),
     };
   });
 }

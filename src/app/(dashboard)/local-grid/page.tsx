@@ -63,6 +63,8 @@ function LocalGridInner() {
   // pendingLocation holds the loc object passed to handleSelectLocation (may have fresher coords
   // than the hook's selectedLocation if auto-geocoding happened in LocationStep)
   const [pendingLocation, setPendingLocation] = useState<BusinessLocation | null>(null);
+  // GSC-15: pre-fill keyword from suggestion
+  const [suggestedKeyword, setSuggestedKeyword] = useState<string | undefined>(undefined);
 
   const addLog = useCallback((message: string, type: ScanLogEntry['type'] = 'info') => {
     setScanLog((prev) => [...prev, { message, type, timestamp: Date.now() }]);
@@ -432,6 +434,51 @@ function LocalGridInner() {
         addLog(`${cacheHits} cached results used (saved API calls)`, 'info');
       }
 
+      // LM-03: Rank tracking alert — compare with previous scan for same location/business
+      try {
+        const locationId = activeLocation?.id || null;
+        let prevQuery = (supabase as any)
+          .from('grid_scans')
+          .select('id, heatmap_data')
+          .eq('business_id', business!.id)
+          .eq('status', 'complete')
+          .neq('id', scanId)
+          .order('scan_date', { ascending: false })
+          .limit(1);
+
+        if (locationId) prevQuery = prevQuery.eq('location_id', locationId);
+
+        const { data: prevScan } = await prevQuery.maybeSingle();
+
+        if (prevScan?.heatmap_data) {
+          const drops: { keyword: string; oldRank: number; newRank: number }[] = [];
+          for (const keyword of config.keywords) {
+            const kw = keyword.text;
+            const prevAvg = (prevScan.heatmap_data as Record<string, HeatmapData>)[kw]?.averageRank;
+            const newAvg = heatmap[kw]?.averageRank;
+            if (prevAvg && newAvg && newAvg - prevAvg > 3) {
+              drops.push({
+                keyword: kw,
+                oldRank: Math.round(prevAvg),
+                newRank: Math.round(newAvg),
+              });
+            }
+          }
+
+          if (drops.length > 0) {
+            fetch('/api/local-grid/alert', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ scanId, businessId: business!.id, drops }),
+            }).catch((err) => console.warn('[LocalGrid] Failed to send rank alert:', err));
+            addLog(`Ranking alert sent for ${drops.length} keyword(s) with significant drops`, 'warning');
+          }
+        }
+      } catch (alertErr) {
+        // Non-critical — log but don't fail the scan
+        console.warn('[LocalGrid] Rank alert check failed:', alertErr);
+      }
+
       return heatmap;
     } catch (err) {
       console.error('Scan error:', err);
@@ -451,7 +498,25 @@ function LocalGridInner() {
     setScanLog([]);
     setScanCenter(null);
     setPendingLocation(null);
+    setSuggestedKeyword(undefined);
     clearScanCache();
+  };
+
+  // GSC-15: "Track in Grid" — keep same location, go to configure with keyword pre-filled
+  const handleTrackSuggestedKeyword = (keyword: string) => {
+    setSuggestedKeyword(keyword);
+    // If we already have a location selected, jump straight to configure
+    if (activeLocation && scanCenter) {
+      setCurrentScan(null);
+      setHeatmapData({});
+      setScanLog([]);
+      setScanState('configure');
+      clearScanCache();
+    } else {
+      // No location yet — go to location picker; keyword will be applied after selection
+      handleNewScan();
+      setSuggestedKeyword(keyword);
+    }
   };
 
   return (
@@ -509,6 +574,7 @@ function LocalGridInner() {
             onCenterChange={(lat, lng) => setScanCenter({ lat, lng })}
             onStartScan={handleStartScan}
             onBack={handleNewScan}
+            initialKeyword={suggestedKeyword}
           />
         )}
 
@@ -523,6 +589,8 @@ function LocalGridInner() {
             scan={currentScan}
             heatmapData={heatmapData}
             onNewScan={handleNewScan}
+            businessId={business?.id}
+            onSuggestKeyword={handleTrackSuggestedKeyword}
           />
         )}
       </ToolPageShell>

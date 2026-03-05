@@ -163,6 +163,11 @@ export interface CalendarItemV2 {
   /** GBP posts only — which physical location's GBP this post belongs to (e.g. "Vancouver, WA").
    *  Website and off-page items are domain-level and leave this undefined. */
   locationName?: string;
+  /** Ratio of peak-month volume to annual average (from EnrichedKeyword.seasonalMultiplier).
+   *  Values > 1.2 indicate a seasonal keyword. Undefined for items without keyword research. */
+  seasonalMultiplier?: number;
+  /** Month number (1–12) of peak search volume. Used to suggest scheduling 60 days before. */
+  peakMonth?: number;
 }
 
 export interface SimpleStrategyConfig {
@@ -254,4 +259,126 @@ export interface CheckoutResponse {
 export interface BillingError {
   message: string;
   code?: string;
+}
+
+// ── Website Builder: Location Enrichment ────────────────────────────────────
+
+export interface LocationEnrichment {
+  landmarks: string[];
+  neighborhoods: string[];
+  climate: {
+    heatingSeasonMonths: string;
+    avgWinterLow: number;
+    avgSummerHigh: number;
+    humidity: 'humid' | 'arid' | 'moderate';
+  };
+  housing: {
+    medianBuildYear: number;
+    pctSingleFamily: number;
+    pctOlderThan40Years: number;
+  };
+}
+
+// ── Website Builder: SERP Content Context ───────────────────────────────────
+
+export interface SerpContentContext {
+  keyword: string;
+  topPages: Array<{
+    url: string;
+    title: string;
+    h2s: string[];
+    wordCount: number;
+    hasFAQ: boolean;
+    hasVideo: boolean;
+    schemaTypes: string[];
+  }>;
+  peopleAlsoAsk: string[];
+  avgWordCount: number;
+  topicsToInclude: string[];
+  topicsThatDifferentiate: string[];
+}
+
+// ── Website Builder: Similarity Check ───────────────────────────────────────
+
+export interface SimilarityIssue {
+  slugA: string;
+  slugB: string;
+  similarity: number;
+  level: 'warn' | 'block';
+}
+
+// ── Website Builder: Publish Checklist ──────────────────────────────────────
+
+export interface ChecklistItem {
+  label: string;
+  passed: boolean;
+  blocking: boolean;
+  detail?: string;
+}
+
+export interface ChecklistResult {
+  passed: boolean;
+  blocking: ChecklistItem[];
+  warnings: ChecklistItem[];
+}
+
+// ── Website Builder: SitePage (partial for checklist input) ─────────────────
+
+export interface SitePage {
+  id: string;
+  business_id: string;
+  location_id: string | null;
+  market_id: string | null;
+  service_id: string | null;
+  slug: string;
+  title: string;
+  type: 'location_service' | 'city_landing' | 'blog_post' | 'foundation' | 'website_addition';
+  html: string;
+  css: string | null;
+  js: string | null;
+  meta_title: string | null;
+  meta_description: string | null;
+  schema_json: string | null;
+  status: 'draft' | 'published' | 'scheduled' | 'archived';
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ── Website Builder: Business Project (Project Library) ─────────────────────
+
+export interface BusinessProject {
+  id: string;
+  business_id: string;
+  service_id: string | null;
+  location_id: string | null;
+  market_id: string | null;
+  job_type: 'installation' | 'repair' | 'maintenance' | 'inspection' | 'other';
+  title: string | null;
+  problem: string | null;
+  work_performed: string;
+  outcome: string | null;
+  equipment_used: string | null;
+  home_type: string | null;
+  photo_urls: string[];
+  completed_date: string; // ISO date
+  city: string | null;
+  used_in_posts: string[];
+  created_at: string;
+}
+
+export interface BusinessDomain {
+  id: string;
+  business_id: string;
+  domain: string;
+  verification_token: string;
+  dns_verified: boolean;
+  dns_verified_at: string | null;
+  ssl_status: 'pending' | 'provisioning' | 'active' | 'failed';
+  ssl_active_at: string | null;
+  provider: 'vercel' | 'cloudflare' | 'caddy' | null;
+  provider_domain_id: string | null;
+  last_checked_at: string | null;
+  check_attempts: number;
+  created_at: string;
 }

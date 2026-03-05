@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/context/AuthContext';
 import { createBusiness, createLocation, createServices, createMarkets } from '@/app/actions/onboarding';
 import { dfsCall } from '@/lib/dataforseo';
 import { detectInputType, parseGoogleMapsUrl } from '@/components/tools/LocalGrid/utils';
+import { locationDedupKey } from '@/lib/offPageAudit/normalization';
 
 // ─── Domain Normalizer ────────────────────────────────────────────────────────
 
@@ -181,6 +182,7 @@ export function OnboardingWizard({
   const [services, setServices] = useState<ServiceForm[]>([
     { name: '', profit_per_job: '', close_rate: '30' },
   ]);
+  const [serviceErrors, setServiceErrors] = useState<Record<number, { profit?: string; closeRate?: string }>>({});
 
   // Markets discovery state
   const [discoveredLocations, setDiscoveredLocations] = useState<DiscoveredLocation[]>([]);
@@ -350,14 +352,39 @@ export function OnboardingWizard({
 
   const handleServicesSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError(null);
 
+    const validServices = services.filter((s) => s.name.trim());
+    if (validServices.length === 0) {
+      setError('Please add at least one service');
+      return;
+    }
+
+    // Per-service validation
+    const newErrors: Record<number, { profit?: string; closeRate?: string }> = {};
+    services.forEach((service, index) => {
+      if (!service.name.trim()) return; // skip unnamed rows — they won't be saved
+      const profitVal = parseFloat(service.profit_per_job);
+      const closeRateVal = parseFloat(service.close_rate);
+      const errs: { profit?: string; closeRate?: string } = {};
+      if (!service.profit_per_job || isNaN(profitVal) || profitVal <= 0) {
+        errs.profit = 'Profit must be at least $1';
+      }
+      if (!service.close_rate || isNaN(closeRateVal) || closeRateVal <= 0) {
+        errs.closeRate = 'Close rate must be at least 1%';
+      }
+      if (Object.keys(errs).length > 0) newErrors[index] = errs;
+    });
+
+    if (Object.keys(newErrors).length > 0) {
+      setServiceErrors(newErrors);
+      return;
+    }
+    setServiceErrors({});
+
+    setLoading(true);
     try {
       if (!businessId) throw new Error('Business not found');
-
-      const validServices = services.filter((s) => s.name.trim());
-      if (validServices.length === 0) throw new Error('Please add at least one service');
 
       const { error } = await createServices(
         businessId,
@@ -507,11 +534,31 @@ export function OnboardingWizard({
       raw.push(...extractCitiesFromSerp(items));
     }
 
+    // Deduplicate: normalize city+state, keep the entry with more data (prefer gbp > serp > manual)
+    function locationDataScore(loc: DiscoveredLocation): number {
+      let score = 0;
+      if (loc.address) score++;
+      if (loc.phone) score++;
+      if (loc.place_id) score++;
+      if (loc.cid) score++;
+      if (loc.latitude) score++;
+      if (loc.longitude) score++;
+      if (loc.area_codes?.length) score++;
+      if (loc.source === 'gbp') score += 10;
+      else if (loc.source === 'serp') score += 5;
+      return score;
+    }
+
     const seen = new Map<string, DiscoveredLocation>();
     for (const loc of raw) {
       if (!loc.city || !loc.state) continue;
-      const key = `${loc.city.toLowerCase()}|${loc.state.toLowerCase()}`;
-      if (!seen.has(key) || loc.source === 'gbp') {
+      // Use locationDedupKey for address-aware dedup; fall back to city|state for serp/manual
+      // locationDedupKey signature: (name, address, city, state) — pass empty name for discovered locations
+      const key = loc.address
+        ? locationDedupKey('', loc.address, loc.city, loc.state)
+        : `${loc.city.toLowerCase().trim().replace(/\s+/g, ' ')}|${loc.state.toLowerCase().trim()}`;
+      const existing = seen.get(key);
+      if (!existing || locationDataScore(loc) > locationDataScore(existing)) {
         seen.set(key, loc);
       }
     }
@@ -541,6 +588,19 @@ export function OnboardingWizard({
     const city = manualCity.trim();
     const state = manualState.trim().toUpperCase();
     if (!city || !state) return;
+    const normalizedCity = city.toLowerCase().replace(/\s+/g, ' ');
+    const normalizedState = state.toLowerCase();
+    // Check for duplicate before adding
+    const isDuplicate = discoveredLocations.some(
+      (loc) =>
+        loc.city.toLowerCase().replace(/\s+/g, ' ') === normalizedCity &&
+        loc.state.toLowerCase() === normalizedState
+    );
+    if (isDuplicate) {
+      setManualCity('');
+      setManualState('');
+      return;
+    }
     const loc: DiscoveredLocation = { id: crypto.randomUUID(), city, state, source: 'manual' };
     setDiscoveredLocations((prev) => [...prev, loc]);
     setSelectedIds((prev) => new Set([...prev, loc.id]));
@@ -604,6 +664,20 @@ export function OnboardingWizard({
     const updated = [...services];
     updated[index] = { ...updated[index], [field]: value };
     setServices(updated);
+    // Clear the field-level error for this index when user edits
+    if (field === 'profit_per_job' || field === 'close_rate') {
+      setServiceErrors((prev) => {
+        const next = { ...prev };
+        if (next[index]) {
+          const fieldErr = field === 'profit_per_job' ? 'profit' : 'closeRate';
+          const updated2 = { ...next[index] };
+          delete updated2[fieldErr as keyof typeof updated2];
+          if (Object.keys(updated2).length === 0) delete next[index];
+          else next[index] = updated2;
+        }
+        return next;
+      });
+    }
   };
 
   const steps = [
@@ -997,10 +1071,13 @@ export function OnboardingWizard({
                           type="number"
                           value={service.profit_per_job}
                           onChange={(e) => updateService(index, 'profit_per_job', e.target.value)}
-                          className="input"
+                          className={`input${serviceErrors[index]?.profit ? ' border-danger' : ''}`}
                           placeholder="450"
                           step="0.01"
                         />
+                        {serviceErrors[index]?.profit && (
+                          <p className="text-danger text-xs mt-1">{serviceErrors[index].profit}</p>
+                        )}
                       </div>
                       <div>
                         <label className="input-label text-xs">Close Rate (%)</label>
@@ -1008,11 +1085,14 @@ export function OnboardingWizard({
                           type="number"
                           value={service.close_rate}
                           onChange={(e) => updateService(index, 'close_rate', e.target.value)}
-                          className="input"
+                          className={`input${serviceErrors[index]?.closeRate ? ' border-danger' : ''}`}
                           placeholder="30"
                           min="0"
                           max="100"
                         />
+                        {serviceErrors[index]?.closeRate && (
+                          <p className="text-danger text-xs mt-1">{serviceErrors[index].closeRate}</p>
+                        )}
                       </div>
                     </div>
                   </div>

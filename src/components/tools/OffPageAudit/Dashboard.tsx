@@ -10,7 +10,10 @@ import type {
   DashboardProps,
 } from './types';
 import { CitationScoreCard } from './CitationScoreCard';
+import { GSCLinkBuilding } from './GSCLinkBuilding';
 import { createClient } from '@/lib/supabase/client';
+import { useBusiness } from '@/lib/hooks/useBusiness';
+import { getPublishedPageCountsByLocations } from '@/lib/websiteBuilder/offpageFeedback';
 import dynamic from 'next/dynamic';
 
 const DomainTab = dynamic(() => import('./DomainTab'));
@@ -59,6 +62,16 @@ export default function Dashboard(props: DashboardProps | EnhancedDashboardProps
 
   return (
     <div className="space-y-6">
+      {/* Print header — only visible when printing */}
+      <div className="hidden print:block mb-6 pb-4 border-b-2 border-gray-300">
+        <div className="text-2xl font-bold text-black">{enhanced.domain}</div>
+        <div className="text-sm text-gray-600 mt-1">Off-Page SEO Audit Report</div>
+        <div className="text-sm text-gray-500 mt-0.5">
+          Generated: {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+          {' · '}Scanned: {new Date(enhanced.completedAt).toLocaleDateString()}
+        </div>
+      </div>
+
       <div className="card p-6">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
@@ -70,9 +83,9 @@ export default function Dashboard(props: DashboardProps | EnhancedDashboardProps
               {new Date(enhanced.completedAt).toLocaleTimeString()}
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3" data-no-print>
             <button onClick={() => window.print()} className="btn-ghost">
-              <span className="flex items-center gap-2"><span>📄</span>Export PDF</span>
+              <span className="flex items-center gap-2"><span>📄</span>Download Report</span>
             </button>
             <button
               onClick={() => {
@@ -172,6 +185,17 @@ export default function Dashboard(props: DashboardProps | EnhancedDashboardProps
 
 function OverviewTab({ results, onTabChange }: { results: EnhancedOffPageResults; onTabChange: (tab: EnhancedTabId) => void }) {
   const overall = results.categoryScores?.overall ?? results.metrics.domainRating;
+  const { business } = useBusiness();
+  const [locationPageCounts, setLocationPageCounts] = useState<Map<string, number>>(new Map());
+
+  // Fetch published page counts per location for missing-page alerts
+  useEffect(() => {
+    if (!results.locations || results.locations.length === 0) return;
+    const locationIds = results.locations.map(l => l.locationId);
+    getPublishedPageCountsByLocations(locationIds)
+      .then(setLocationPageCounts)
+      .catch(() => {});
+  }, [results.locations]);
 
   return (
     <div className="space-y-6">
@@ -200,6 +224,50 @@ function OverviewTab({ results, onTabChange }: { results: EnhancedOffPageResults
           </div>
         )}
       </div>
+
+      {/* GSC-18 + GSC-19: Link building priorities from GSC */}
+      {business?.id && (
+        <GSCLinkBuilding
+          businessId={business.id}
+          referringDomains={results.referringDomains}
+        />
+      )}
+
+      {/* Missing Page Alerts — show when citations exist but no builder pages */}
+      {results.locations && results.locations.length > 0 && (() => {
+        const citationCount = results.citations?.filter(c => c.found).length ?? 0;
+        if (citationCount < 3) return null;
+
+        const alerts = results.locations.filter(
+          loc => (locationPageCounts.get(loc.locationId) ?? 0) === 0
+        );
+        if (alerts.length === 0) return null;
+
+        return (
+          <div className="space-y-2">
+            {alerts.map(loc => (
+              <div key={loc.locationId} className="missing-page-alert">
+                <div className="flex items-start gap-3">
+                  <span className="text-amber-400 text-lg flex-shrink-0">&#9888;</span>
+                  <div className="flex-1">
+                    <p className="text-sm text-ash-200">
+                      You have <strong>{citationCount}</strong> citations but no published page
+                      targeting your services in <strong>{loc.city}</strong>. Citations linking to your homepage
+                      lose local SEO value.
+                    </p>
+                    <a
+                      href={`/website-builder?location=${loc.locationId}&type=location_service`}
+                      className="text-flame-500 text-sm hover:underline mt-1 inline-block"
+                    >
+                      Build a location page &rarr;
+                    </a>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {results.locations && results.locations.length > 0 && (
         <div>

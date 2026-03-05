@@ -123,4 +123,6 @@ export const GBP_CHECKLIST: GBPChecklistItem[] = [
   { key: 'hours', label: 'Business Hours', maxPoints: 8 },
   { key: 'reviews', label: 'Has Reviews', maxPoints: 5 },
   { key: 'bookingUrl', label: 'Booking URL', maxPoints: 2 },
+  { key: 'serviceAreas', label: 'Service Areas listed', maxPoints: 3 },
+  { key: 'attributeValues', label: 'Business attributes set (accessibility, payment methods)', maxPoints: 3 },
 ];

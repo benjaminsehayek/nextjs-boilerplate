@@ -848,6 +848,13 @@ export default function OffPageAuditPage() {
                 case 'hours': status = gbpInfo.work_hours ? 'complete' : 'missing'; points = gbpInfo.work_hours ? item.maxPoints : 0; break;
                 case 'reviews': status = totalReviewCount > 0 ? 'complete' : 'missing'; points = totalReviewCount > 0 ? item.maxPoints : 0; break;
                 case 'bookingUrl': status = gbpInfo.booking_url ? 'complete' : 'missing'; points = gbpInfo.booking_url ? item.maxPoints : 0; break;
+                case 'serviceAreas': status = (Array.isArray(gbpInfo.service_areas) && gbpInfo.service_areas.length > 0) ? 'complete' : 'missing'; points = (Array.isArray(gbpInfo.service_areas) && gbpInfo.service_areas.length > 0) ? item.maxPoints : 0; break;
+                case 'attributeValues': {
+                  const hasAttribs = gbpInfo.attribute_values && (Array.isArray(gbpInfo.attribute_values) ? gbpInfo.attribute_values.length > 0 : Object.keys(gbpInfo.attribute_values).length > 0);
+                  status = hasAttribs ? 'complete' : 'missing';
+                  points = hasAttribs ? item.maxPoints : 0;
+                  break;
+                }
               }
             }
 

@@ -676,14 +676,32 @@ export interface GSCRow {
  * Groups rows by query — any query where 2+ distinct pages appear = confirmed
  * cannibalization backed by real Google data (not estimated).
  *
- * @param rows   Raw rows from /api/gsc/analytics (dimensions: query × page)
- * @param domain Business domain (e.g. "fivestarvancouver.com"), used for URL classification
+ * @param rows    Raw rows from /api/gsc/analytics (dimensions: query × page)
+ * @param domain  Business domain (e.g. "fivestarvancouver.com"), used for URL classification
+ * @param markets Optional DataForSEO keyword markets — used to look up CPC for each query
+ *                since GSC does not provide CPC data directly.
  */
 export function detectCannibalizationFromGSC(
   rows: GSCRow[],
   domain: string,
+  markets?: Record<string, MarketData>,
 ): CannibalizationConflict[] {
   const MIN_IMPRESSIONS = 10; // Filter out noise / near-zero queries
+
+  // Build CPC lookup from DataForSEO keyword markets (best CPC found across all markets per keyword)
+  const cpcByKeyword = new Map<string, number>();
+  if (markets) {
+    for (const marketData of Object.values(markets)) {
+      for (const item of marketData.items) {
+        const kw = item.keyword_data.keyword.toLowerCase().trim();
+        const cpc = item.keyword_data.keyword_info?.cpc ?? 0;
+        if (cpc > 0) {
+          const existing = cpcByKeyword.get(kw) ?? 0;
+          if (cpc > existing) cpcByKeyword.set(kw, cpc);
+        }
+      }
+    }
+  }
 
   // Group by query → list of {page, clicks, impressions, position}
   const queryMap = new Map<string, Array<{ url: string; clicks: number; impressions: number; position: number }>>();
@@ -722,10 +740,17 @@ export function detectCannibalizationFromGSC(
     else if (impressions >= 100 || primary.position <= 10) severity = 'high';
     else severity = 'medium';
 
+    // Look up CPC from keyword market data; GSC does not provide it directly
+    const cpc = cpcByKeyword.get(query.toLowerCase().trim()) ?? 0;
+
+    // Sum clicks across all competing pages for this query
+    const totalClicks = sorted.reduce((sum, p) => sum + p.clicks, 0);
+
     conflicts.push({
       keyword: query,
       volume: impressions, // GSC impressions used as volume proxy
-      cpc: 0,             // Not available from GSC
+      cpc,
+      totalClicks,
       market: 'GSC Data',
       primary: {
         url: primary.url,

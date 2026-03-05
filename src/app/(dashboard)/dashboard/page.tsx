@@ -10,6 +10,10 @@ import { QuickStats } from '@/components/dashboard/QuickStats';
 import { OnboardingWizard } from '@/components/dashboard/OnboardingWizard';
 import { ToolGrid } from '@/components/dashboard/ToolGrid';
 import { useRouter } from 'next/navigation';
+import { useLocations } from '@/lib/hooks/useLocations';
+import dynamic from 'next/dynamic';
+
+const LocationsPerformance = dynamic(() => import('@/components/dashboard/LocationsPerformance'), { ssr: false });
 
 // ─── Dashboard Page ───────────────────────────────────────────────────────────
 
@@ -19,9 +23,21 @@ export default function DashboardPage() {
   const { user, profile, loading, business, refreshProfile } = useAuth();
   const router = useRouter();
   const supabase = createClient();
+  const { locations } = useLocations(business?.id);
 
   // Market count — loaded once after business is available
   const [marketCount, setMarketCount] = useState<number | null>(null);
+
+  // Local Search Visibility (GSC-27)
+  interface LocalSearchMetrics {
+    localClicks: number;
+    localImpressions: number;
+    avgLocalPosition: number | null;
+    nearMeImpressions: number;
+  }
+  const [localSearchMetrics, setLocalSearchMetrics] = useState<LocalSearchMetrics | null>(null);
+  const [localSearchLoading, setLocalSearchLoading] = useState(false);
+
   // Local mirror of onboarding completed steps (for optimistic UI)
   const [localCompletedSteps, setLocalCompletedSteps] = useState<string[]>([]);
   // Local override: once dismissed, hide wizard even before profile refresh
@@ -54,6 +70,89 @@ export default function DashboardPage() {
         if (error) console.error('Failed to fetch market count:', error);
         if (!cancelled) setMarketCount(count ?? 0);
       });
+
+    return () => { cancelled = true; };
+  }, [business?.id]);
+
+  // GSC-27: fetch local search visibility metrics
+  useEffect(() => {
+    if (!business?.id) return;
+    let cancelled = false;
+    setLocalSearchLoading(true);
+
+    (async () => {
+      try {
+        // Fetch markets for city name matching
+        const { data: marketsData } = await (supabase as any)
+          .from('markets')
+          .select('cities, name')
+          .eq('business_id', business.id);
+
+        const marketCityNames: string[] = [];
+        if (marketsData) {
+          for (const m of marketsData) {
+            if (Array.isArray(m.cities)) {
+              for (const c of m.cities) {
+                if (typeof c === 'string' && c.trim()) {
+                  marketCityNames.push(c.trim().toLowerCase());
+                }
+              }
+            }
+            // Also extract city from the market name like "Portland, OR"
+            if (typeof m.name === 'string') {
+              const cityPart = m.name.split(',')[0].trim().toLowerCase();
+              if (cityPart) marketCityNames.push(cityPart);
+            }
+          }
+        }
+
+        // Fetch GSC analytics
+        const gscRes = await fetch('/api/gsc/analytics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ businessId: business.id }),
+        });
+
+        if (!gscRes.ok) return; // GSC not connected or error — silently skip
+
+        const { rows } = await gscRes.json() as { rows: Array<{ keys: string[]; clicks: number; impressions: number; position: number }> };
+        if (!rows?.length) return;
+
+        // Filter to local queries
+        let localClicks = 0;
+        let localImpressions = 0;
+        let weightedPositionSum = 0;
+        let nearMeImpressions = 0;
+
+        for (const row of rows) {
+          const query = (row.keys?.[0] ?? '').toLowerCase();
+          const isNearMe = query.includes('near me');
+          const isLocalCity = marketCityNames.some((city) => query.includes(city));
+
+          if (isNearMe || isLocalCity) {
+            localClicks += row.clicks ?? 0;
+            localImpressions += row.impressions ?? 0;
+            weightedPositionSum += (row.position ?? 0) * (row.impressions ?? 0);
+          }
+          if (isNearMe) {
+            nearMeImpressions += row.impressions ?? 0;
+          }
+        }
+
+        if (!cancelled) {
+          setLocalSearchMetrics({
+            localClicks,
+            localImpressions,
+            avgLocalPosition: localImpressions > 0 ? weightedPositionSum / localImpressions : null,
+            nearMeImpressions,
+          });
+        }
+      } catch (err) {
+        console.error('Failed to fetch GSC local metrics:', err);
+      } finally {
+        if (!cancelled) setLocalSearchLoading(false);
+      }
+    })();
 
     return () => { cancelled = true; };
   }, [business?.id]);
@@ -166,6 +265,54 @@ export default function DashboardPage() {
             <a href="/settings?tab=markets" className="text-xs text-flame-500 hover:text-flame-400 mt-2 inline-block">Add Markets →</a>
           </div>
         </div>
+      )}
+
+      {/* Local Search Visibility (GSC-27) — only shown when GSC data is available */}
+      {business && (localSearchLoading || localSearchMetrics !== null) && (
+        <div className="card p-5 mb-6">
+          <h3 className="font-display text-ash-100 text-sm font-semibold mb-3">Local Search Visibility</h3>
+          {localSearchLoading ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-12 bg-char-700 animate-pulse rounded" />
+              ))}
+            </div>
+          ) : localSearchMetrics && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <div className="text-2xl font-display text-flame-500">
+                  {localSearchMetrics.localClicks.toLocaleString()}
+                </div>
+                <div className="text-xs text-ash-400 mt-0.5">Local Clicks</div>
+              </div>
+              <div>
+                <div className="text-2xl font-display text-heat-500">
+                  {localSearchMetrics.localImpressions.toLocaleString()}
+                </div>
+                <div className="text-xs text-ash-400 mt-0.5">Local Impressions</div>
+              </div>
+              <div>
+                <div className="text-2xl font-display text-ember-500">
+                  {localSearchMetrics.avgLocalPosition !== null
+                    ? localSearchMetrics.avgLocalPosition.toFixed(1)
+                    : '--'}
+                </div>
+                <div className="text-xs text-ash-400 mt-0.5">Avg Position</div>
+              </div>
+              <div>
+                <div className="text-2xl font-display text-flame-500">
+                  {localSearchMetrics.nearMeImpressions.toLocaleString()}
+                </div>
+                <div className="text-xs text-ash-400 mt-0.5">"Near Me" Impressions</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Locations Performance — only shown when business has 2+ locations */}
+      {business && locations.length >= 2 && (
+        <LocationsPerformance business={business} locations={locations} />
       )}
 
       {/* Tools Grid */}

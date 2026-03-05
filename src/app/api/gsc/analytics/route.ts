@@ -1,10 +1,37 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { checkRateLimit } from '@/lib/rateLimit';
 
 const BodySchema = z.object({
   businessId: z.string().uuid(),
 });
+
+// ── In-memory response cache ─────────────────────────────────────────────────
+
+interface CacheEntry {
+  rows: unknown[];
+  deviceRows: unknown[];
+  expiresAt: number;
+}
+
+const responseCache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+// Periodic cleanup: remove expired entries every hour
+const cleanupInterval = setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of responseCache.entries()) {
+    if (now > entry.expiresAt) {
+      responseCache.delete(key);
+    }
+  }
+}, 60 * 60 * 1000);
+
+// Allow Node.js to exit without waiting for this interval
+if (cleanupInterval.unref) cleanupInterval.unref();
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function refreshAccessToken(
   refreshToken: string,
@@ -52,6 +79,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Rate limiting: 10 requests per minute per user
+  const { allowed } = checkRateLimit(`gsc:${user.id}`, 10, 60_000);
+  if (!allowed) {
+    return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+  }
+
   let body: { businessId: string };
   try {
     const raw = await request.json();
@@ -60,6 +93,16 @@ export async function POST(request: NextRequest) {
     body = parsed.data;
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
+
+  // Check cache before hitting the GSC API
+  const cacheKey = body.businessId;
+  const cached = responseCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return NextResponse.json(
+      { rows: cached.rows, deviceRows: cached.deviceRows },
+      { headers: { 'X-Cache': 'HIT' } },
+    );
   }
 
   // Load connection — RLS ensures only owner can read
@@ -98,21 +141,37 @@ export async function POST(request: NextRequest) {
   const siteUrl = encodeURIComponent(conn.account_id);
   const analyticsUrl = `https://www.googleapis.com/webmasters/v3/sites/${siteUrl}/searchAnalytics/query`;
 
+  const authHeaders = {
+    Authorization: `Bearer ${accessToken}`,
+    'Content-Type': 'application/json',
+  };
+
   try {
-    const res = await fetch(analyticsUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        startDate: fmt(startDate),
-        endDate: fmt(endDate),
-        dimensions: ['query', 'page'],
-        rowLimit: 25000,
-        dataState: 'final',
+    // Run both queries in parallel
+    const [res, deviceRes] = await Promise.all([
+      fetch(analyticsUrl, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          startDate: fmt(startDate),
+          endDate: fmt(endDate),
+          dimensions: ['query', 'page'],
+          rowLimit: 25000,
+          dataState: 'final',
+        }),
       }),
-    });
+      fetch(analyticsUrl, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          startDate: fmt(startDate),
+          endDate: fmt(endDate),
+          dimensions: ['device'],
+          rowLimit: 1000,
+          dataState: 'final',
+        }),
+      }),
+    ]);
 
     if (!res.ok) {
       const errText = await res.text();
@@ -120,7 +179,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `GSC API error ${res.status}` }, { status: res.status });
     }
 
-    const data = await res.json();
+    if (!deviceRes.ok) {
+      const errText = await deviceRes.text();
+      console.error('[GSC analytics] Device API error:', deviceRes.status, errText);
+      return NextResponse.json({ error: `GSC API error ${deviceRes.status}` }, { status: deviceRes.status });
+    }
+
+    const [data, deviceData] = await Promise.all([res.json(), deviceRes.json()]);
+
+    const rows: unknown[] = data.rows || [];
+    const deviceRows: unknown[] = deviceData.rows || [];
+
+    // Store in cache
+    responseCache.set(cacheKey, { rows, deviceRows, expiresAt: Date.now() + CACHE_TTL_MS });
 
     // Update last_sync
     await (supabase as any)
@@ -129,7 +200,7 @@ export async function POST(request: NextRequest) {
       .eq('business_id', body.businessId)
       .eq('platform', 'search_console');
 
-    return NextResponse.json({ rows: data.rows || [] });
+    return NextResponse.json({ rows, deviceRows });
   } catch (e: any) {
     console.error('[GSC analytics] Fetch error:', e);
     return NextResponse.json({ error: 'Failed to reach GSC API' }, { status: 502 });

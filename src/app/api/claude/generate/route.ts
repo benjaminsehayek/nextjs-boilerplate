@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
         model: ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001'].includes(body.model)
           ? body.model
           : 'claude-sonnet-4-6',
-        max_tokens: Math.min(body.max_tokens || body.maxTokens || 1024, 2048),
+        max_tokens: Math.min(body.max_tokens || body.maxTokens || 1024, 4096),
         temperature: body.temperature ?? 0.7,
         // B13-10: Do NOT forward client-supplied system prompt — prevents prompt injection
         messages,

@@ -13,7 +13,7 @@ import {
   validateSMSCompliance,
   filterEligibleContacts,
 } from '@/lib/marketing/compliance';
-import { AVAILABLE_TAGS, previewTemplate } from '@/lib/marketing/merge-tags';
+import { AVAILABLE_TAGS, previewTemplate, extractMergeTags } from '@/lib/marketing/merge-tags';
 import { CAMPAIGN_TEMPLATES } from '@/lib/marketing/templates';
 import { useAuth } from '@/lib/context/AuthContext';
 import AudienceSelector from './AudienceSelector';
@@ -39,6 +39,9 @@ const STEP_LABELS: Record<Step, string> = {
   3: 'Audience',
   4: 'Review & Send',
 };
+
+// MK-16: Set of known valid merge tag field names (without braces)
+const VALID_MERGE_TAG_NAMES = new Set(AVAILABLE_TAGS.map((mt) => mt.tag.replace(/\{\{|\}\}/g, '')));
 
 export default function CampaignComposer({
   templates,
@@ -177,6 +180,16 @@ export default function CampaignComposer({
     }
     return validateSMSCompliance(textBody);
   }, [channel, htmlBody, textBody, senderName, senderEmail]);
+
+  // MK-16: Merge tag validation — warn about unknown tags (non-blocking)
+  const unknownMergeTags = useMemo(() => {
+    const combined = [htmlBody, textBody].join('\n');
+    const found = extractMergeTags(combined);
+    return found.filter((tag) => {
+      const name = tag.replace(/\{\{|\}\}/g, '');
+      return !VALID_MERGE_TAG_NAMES.has(name);
+    });
+  }, [htmlBody, textBody]);
 
   // Audience eligible count
   const audienceStats = useMemo(() => {
@@ -1000,6 +1013,21 @@ export default function CampaignComposer({
                   </svg>
                   All compliance checks passed
                 </div>
+              </div>
+            )}
+
+            {/* MK-16: Unknown merge tag warning */}
+            {unknownMergeTags.length > 0 && (
+              <div className="rounded-btn border border-amber-500/30 bg-amber-500/5 p-4 space-y-1">
+                <div className="flex items-center gap-2 text-sm font-medium text-amber-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  Unknown merge tags
+                </div>
+                <p className="text-xs text-amber-300 pl-7">
+                  {unknownMergeTags.join(', ')} — these will appear as-is in sent emails. Check for typos or remove them.
+                </p>
               </div>
             )}
 

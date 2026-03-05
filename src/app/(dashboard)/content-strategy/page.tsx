@@ -48,6 +48,620 @@ function autoRefreshDue(lastGeneratedAt: string | null, tier: string): boolean {
   return Date.now() - new Date(lastGeneratedAt).getTime() > days * 24 * 60 * 60 * 1000;
 }
 
+// ── GSC types ─────────────────────────────────────────────────────────────────
+
+interface GSCRow {
+  keys: string[]; // [query, page] from analytics API
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+interface GSCQuerySummary {
+  query: string;
+  clicks: number;
+  impressions: number;
+  position: number; // average position
+}
+
+interface ContentGap {
+  query: string;
+  impressions: number;
+  position: number;
+}
+
+interface LocalOpportunity {
+  query: string;
+  impressions: number;
+  position: number;
+  city: string;
+}
+
+// Aggregate multi-page rows for the same query into a single summary
+function aggregateGSCRows(rows: GSCRow[]): GSCQuerySummary[] {
+  const map = new Map<string, { clicks: number; impressions: number; posSum: number; posCount: number }>();
+  for (const row of rows) {
+    const query = row.keys[0] ?? '';
+    if (!query) continue;
+    const existing = map.get(query);
+    if (existing) {
+      existing.clicks += row.clicks;
+      existing.impressions += row.impressions;
+      existing.posSum += row.position;
+      existing.posCount += 1;
+    } else {
+      map.set(query, { clicks: row.clicks, impressions: row.impressions, posSum: row.position, posCount: 1 });
+    }
+  }
+  return Array.from(map.entries()).map(([query, v]) => ({
+    query,
+    clicks: v.clicks,
+    impressions: v.impressions,
+    position: v.posCount > 0 ? v.posSum / v.posCount : 0,
+  }));
+}
+
+// ── GSC Insights Panel ────────────────────────────────────────────────────────
+
+interface GSCInsightsPanelProps {
+  businessId: string;
+  industry: string;
+  city: string;
+  // Called when "Import from GSC" is clicked — provides top queries
+  onImportKeywords: (queries: string[]) => void;
+  // Called with the GSC map so keyword results can show actual traffic
+  onGscMapReady: (map: Map<string, { clicks: number; impressions: number; position: number }>) => void;
+}
+
+function GSCInsightsPanel({ businessId, industry, city, onImportKeywords, onGscMapReady }: GSCInsightsPanelProps) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [gscConnected, setGscConnected] = useState<boolean | null>(null); // null = unknown
+  const [querySummaries, setQuerySummaries] = useState<GSCQuerySummary[]>([]);
+  const [importDone, setImportDone] = useState(false);
+
+  // Check GSC connection and fetch data
+  useEffect(() => {
+    if (!businessId) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    fetch('/api/gsc/analytics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ businessId }),
+    })
+      .then(async (r) => {
+        if (cancelled) return;
+        if (r.status === 404) {
+          // GSC not connected
+          setGscConnected(false);
+          return;
+        }
+        const json = await r.json();
+        if (!r.ok) throw new Error(json.error || `HTTP ${r.status}`);
+        setGscConnected(true);
+        const rows: GSCRow[] = json.rows || [];
+        const summaries = aggregateGSCRows(rows);
+        setQuerySummaries(summaries);
+
+        // Build query → { clicks, impressions, position } map for GSC-25
+        const gscMap = new Map<string, { clicks: number; impressions: number; position: number }>();
+        for (const s of summaries) {
+          gscMap.set(s.query.toLowerCase(), { clicks: s.clicks, impressions: s.impressions, position: s.position });
+        }
+        onGscMapReady(gscMap);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) {
+          setError(e.message || 'Failed to load GSC data');
+          setGscConnected(false);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [businessId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // GSC-10: Top import keywords — position > 5 OR impressions >= 100, top 20 by impressions
+  const importKeywords = useMemo(() => {
+    return querySummaries
+      .filter(q => q.position > 5 || q.impressions >= 100)
+      .sort((a, b) => b.impressions - a.impressions)
+      .slice(0, 20)
+      .map(q => q.query);
+  }, [querySummaries]);
+
+  // GSC-11: Content gaps — impressions >= 100 AND position > 10, top 10 by impressions
+  const contentGaps = useMemo((): ContentGap[] => {
+    return querySummaries
+      .filter(q => q.impressions >= 100 && q.position > 10)
+      .sort((a, b) => b.impressions - a.impressions)
+      .slice(0, 10)
+      .map(q => ({ query: q.query, impressions: q.impressions, position: Math.round(q.position) }));
+  }, [querySummaries]);
+
+  // GSC-13: Local landing page opportunities — queries containing city names, position > 5
+  const localOpportunities = useMemo((): LocalOpportunity[] => {
+    if (!city) return [];
+    // We only have the primary city here; parent can pass more via markets
+    const cityLower = city.toLowerCase();
+    return querySummaries
+      .filter(q => {
+        const ql = q.query.toLowerCase();
+        return q.position > 5 && ql.includes(cityLower);
+      })
+      .sort((a, b) => b.impressions - a.impressions)
+      .slice(0, 10)
+      .map(q => ({
+        query: q.query,
+        impressions: q.impressions,
+        position: Math.round(q.position),
+        city,
+      }));
+  }, [querySummaries, city]);
+
+  if (loading) {
+    return (
+      <div className="card p-4 flex items-center gap-3 text-sm text-ash-400">
+        <div className="w-4 h-4 border-2 border-ash-600 border-t-flame-500 rounded-full animate-spin shrink-0" />
+        Loading GSC data…
+      </div>
+    );
+  }
+
+  if (gscConnected === false || error) {
+    return (
+      <div className="card p-4 border-char-600 bg-char-800/50">
+        <p className="text-xs text-ash-500">
+          <span className="text-ash-300 font-medium">Connect GSC in Settings</span> to unlock keyword import, content gap detection, and local page opportunities.
+        </p>
+      </div>
+    );
+  }
+
+  if (gscConnected === null || querySummaries.length === 0) return null;
+
+  return (
+    <div className="space-y-4">
+      {/* GSC-10: Import from GSC */}
+      {importKeywords.length > 0 && (
+        <div className="card p-4 border-brand-500/20 bg-brand-500/5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <h3 className="text-sm font-display text-ash-200 mb-1">Import from GSC</h3>
+              <p className="text-xs text-ash-500">
+                {importKeywords.length} opportunity keywords found — queries with high impressions or ranking below position 5.
+              </p>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {importKeywords.slice(0, 5).map(kw => (
+                  <span key={kw} className="text-[10px] bg-char-700 text-ash-400 px-2 py-0.5 rounded-full">{kw}</span>
+                ))}
+                {importKeywords.length > 5 && (
+                  <span className="text-[10px] text-ash-600">+{importKeywords.length - 5} more</span>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => { onImportKeywords(importKeywords); setImportDone(true); }}
+              disabled={importDone}
+              className="btn-primary text-xs py-1.5 px-3 shrink-0 disabled:opacity-50"
+            >
+              {importDone ? 'Imported' : 'Import top keywords from GSC'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* GSC-11: Content Gaps */}
+      {contentGaps.length > 0 && (
+        <div className="card p-0 overflow-hidden">
+          <div className="p-4 border-b border-char-700">
+            <h3 className="text-sm font-display text-ash-200 flex items-center gap-2">
+              <span className="text-amber-400">◆</span>
+              Content Gaps
+              <span className="text-xs text-ash-500 font-normal">({contentGaps.length})</span>
+            </h3>
+            <p className="text-xs text-ash-500 mt-0.5">
+              Queries with confirmed demand (100+ impressions) but no strong ranking page (position &gt; 10). Each is a new-page opportunity.
+            </p>
+          </div>
+          <div className="divide-y divide-char-700">
+            {contentGaps.map((gap, i) => (
+              <div key={i} className="flex items-center justify-between px-4 py-2.5 gap-4">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-ash-200 truncate">"{gap.query}"</p>
+                  <p className="text-[10px] text-amber-400 mt-0.5">
+                    Create a <span className="font-medium">{gap.query}</span> page
+                  </p>
+                </div>
+                <div className="flex items-center gap-4 shrink-0 text-right">
+                  <div>
+                    <p className="text-xs font-display text-ash-100">{gap.impressions.toLocaleString()}</p>
+                    <p className="text-[10px] text-ash-500">impr.</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-display text-ash-400">#{gap.position}</p>
+                    <p className="text-[10px] text-ash-500">position</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* GSC-13: Local Page Opportunities */}
+      {localOpportunities.length > 0 && (
+        <div className="card p-0 overflow-hidden">
+          <div className="p-4 border-b border-char-700">
+            <h3 className="text-sm font-display text-ash-200 flex items-center gap-2">
+              <span className="text-sky-400">📍</span>
+              Local Page Opportunities
+              <span className="text-xs text-ash-500 font-normal">({localOpportunities.length})</span>
+            </h3>
+            <p className="text-xs text-ash-500 mt-0.5">
+              Queries containing your city name where you're not ranking well (position &gt; 5). Create dedicated local pages to capture this traffic.
+            </p>
+          </div>
+          <div className="divide-y divide-char-700">
+            {localOpportunities.map((opp, i) => {
+              // Extract the service portion of the query (remove city name)
+              const servicePart = opp.query.replace(new RegExp(opp.city, 'gi'), '').trim().replace(/\s+/g, ' ');
+              const cityFormatted = opp.city.charAt(0).toUpperCase() + opp.city.slice(1);
+              const suggestion = servicePart
+                ? `Create ${cityFormatted} ${servicePart} page`
+                : `Create dedicated ${cityFormatted} page`;
+              return (
+                <div key={i} className="flex items-center justify-between px-4 py-2.5 gap-4">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-ash-200 truncate">"{opp.query}"</p>
+                    <p className="text-[10px] text-sky-400 mt-0.5">{suggestion}</p>
+                  </div>
+                  <div className="flex items-center gap-4 shrink-0 text-right">
+                    <div>
+                      <p className="text-xs font-display text-ash-100">{opp.impressions.toLocaleString()}</p>
+                      <p className="text-[10px] text-ash-500">impr.</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-display text-ash-400">#{opp.position}</p>
+                      <p className="text-[10px] text-ash-500">position</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── GSCInsightsPanel with markets cities (GSC-13 extended) ────────────────────
+
+interface GSCInsightsPanelWithMarketsProps extends GSCInsightsPanelProps {
+  marketCities: string[];
+  querySummariesForMarkets?: GSCQuerySummary[];
+}
+
+function GSCInsightsPanelWithMarkets({
+  businessId, industry, city, onImportKeywords, onGscMapReady, marketCities,
+}: GSCInsightsPanelWithMarketsProps) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [gscConnected, setGscConnected] = useState<boolean | null>(null);
+  const [querySummaries, setQuerySummaries] = useState<GSCQuerySummary[]>([]);
+  const [importDone, setImportDone] = useState(false);
+
+  useEffect(() => {
+    if (!businessId) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    fetch('/api/gsc/analytics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ businessId }),
+    })
+      .then(async (r) => {
+        if (cancelled) return;
+        if (r.status === 404) { setGscConnected(false); return; }
+        const json = await r.json();
+        if (!r.ok) throw new Error(json.error || `HTTP ${r.status}`);
+        setGscConnected(true);
+        const rows: GSCRow[] = json.rows || [];
+        const summaries = aggregateGSCRows(rows);
+        setQuerySummaries(summaries);
+
+        // Build GSC map for GSC-25
+        const gscMap = new Map<string, { clicks: number; impressions: number; position: number }>();
+        for (const s of summaries) {
+          gscMap.set(s.query.toLowerCase(), { clicks: s.clicks, impressions: s.impressions, position: s.position });
+        }
+        onGscMapReady(gscMap);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) { setError(e.message || 'Failed to load GSC data'); setGscConnected(false); }
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [businessId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // All cities to match against: primary city + market cities, deduped, lowercase
+  const allCities = useMemo(() => {
+    const set = new Set<string>();
+    if (city) set.add(city.toLowerCase());
+    for (const c of marketCities) {
+      if (c) set.add(c.toLowerCase());
+    }
+    return Array.from(set);
+  }, [city, marketCities]);
+
+  // GSC-10
+  const importKeywords = useMemo(() => {
+    return querySummaries
+      .filter(q => q.position > 5 || q.impressions >= 100)
+      .sort((a, b) => b.impressions - a.impressions)
+      .slice(0, 20)
+      .map(q => q.query);
+  }, [querySummaries]);
+
+  // GSC-11
+  const contentGaps = useMemo((): ContentGap[] => {
+    return querySummaries
+      .filter(q => q.impressions >= 100 && q.position > 10)
+      .sort((a, b) => b.impressions - a.impressions)
+      .slice(0, 10)
+      .map(q => ({ query: q.query, impressions: q.impressions, position: Math.round(q.position) }));
+  }, [querySummaries]);
+
+  // GSC-13: extended with all market cities
+  const localOpportunities = useMemo((): LocalOpportunity[] => {
+    if (allCities.length === 0) return [];
+    const results: LocalOpportunity[] = [];
+    const seen = new Set<string>();
+
+    for (const q of querySummaries) {
+      if (q.position <= 5) continue;
+      const ql = q.query.toLowerCase();
+      for (const c of allCities) {
+        if (ql.includes(c) && !seen.has(q.query)) {
+          seen.add(q.query);
+          results.push({
+            query: q.query,
+            impressions: q.impressions,
+            position: Math.round(q.position),
+            city: c,
+          });
+          break;
+        }
+      }
+    }
+
+    return results
+      .sort((a, b) => b.impressions - a.impressions)
+      .slice(0, 10);
+  }, [querySummaries, allCities]);
+
+  if (loading) {
+    return (
+      <div className="card p-4 flex items-center gap-3 text-sm text-ash-400">
+        <div className="w-4 h-4 border-2 border-ash-600 border-t-flame-500 rounded-full animate-spin shrink-0" />
+        Loading GSC data…
+      </div>
+    );
+  }
+
+  if (gscConnected === false || error) {
+    return (
+      <div className="card p-4 border-char-600 bg-char-800/50">
+        <p className="text-xs text-ash-500">
+          <span className="text-ash-300 font-medium">Connect GSC in Settings</span> to unlock keyword import, content gap detection, and local page opportunities.
+        </p>
+      </div>
+    );
+  }
+
+  if (gscConnected === null || querySummaries.length === 0) return null;
+
+  return (
+    <div className="space-y-4">
+      {/* GSC-10: Import from GSC */}
+      {importKeywords.length > 0 && (
+        <div className="card p-4 border-brand-500/20 bg-brand-500/5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <h3 className="text-sm font-display text-ash-200 mb-1">Import from GSC</h3>
+              <p className="text-xs text-ash-500">
+                {importKeywords.length} opportunity keywords found — queries with high impressions or ranking below position 5.
+              </p>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {importKeywords.slice(0, 5).map(kw => (
+                  <span key={kw} className="text-[10px] bg-char-700 text-ash-400 px-2 py-0.5 rounded-full">{kw}</span>
+                ))}
+                {importKeywords.length > 5 && (
+                  <span className="text-[10px] text-ash-600">+{importKeywords.length - 5} more</span>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => { onImportKeywords(importKeywords); setImportDone(true); }}
+              disabled={importDone}
+              className="btn-primary text-xs py-1.5 px-3 shrink-0 disabled:opacity-50"
+            >
+              {importDone ? 'Imported' : 'Import top keywords from GSC'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* GSC-11: Content Gaps */}
+      {contentGaps.length > 0 && (
+        <div className="card p-0 overflow-hidden">
+          <div className="p-4 border-b border-char-700">
+            <h3 className="text-sm font-display text-ash-200 flex items-center gap-2">
+              <span className="text-amber-400">◆</span>
+              Content Gaps
+              <span className="text-xs text-ash-500 font-normal">({contentGaps.length})</span>
+            </h3>
+            <p className="text-xs text-ash-500 mt-0.5">
+              Queries with confirmed demand (100+ impressions) but no strong ranking page (position &gt; 10). Each is a new-page opportunity.
+            </p>
+          </div>
+          <div className="divide-y divide-char-700">
+            {contentGaps.map((gap, i) => (
+              <div key={i} className="flex items-center justify-between px-4 py-2.5 gap-4">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-ash-200 truncate">"{gap.query}"</p>
+                  <p className="text-[10px] text-amber-400 mt-0.5">
+                    Create a <span className="font-medium">{gap.query}</span> page
+                  </p>
+                </div>
+                <div className="flex items-center gap-4 shrink-0 text-right">
+                  <div>
+                    <p className="text-xs font-display text-ash-100">{gap.impressions.toLocaleString()}</p>
+                    <p className="text-[10px] text-ash-500">impr.</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-display text-ash-400">#{gap.position}</p>
+                    <p className="text-[10px] text-ash-500">position</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* GSC-13: Local Page Opportunities */}
+      {localOpportunities.length > 0 && (
+        <div className="card p-0 overflow-hidden">
+          <div className="p-4 border-b border-char-700">
+            <h3 className="text-sm font-display text-ash-200 flex items-center gap-2">
+              <span className="text-sky-400">📍</span>
+              Local Page Opportunities
+              <span className="text-xs text-ash-500 font-normal">({localOpportunities.length})</span>
+            </h3>
+            <p className="text-xs text-ash-500 mt-0.5">
+              Queries containing your market cities where you're not ranking well (position &gt; 5). Create dedicated local pages to capture this traffic.
+            </p>
+          </div>
+          <div className="divide-y divide-char-700">
+            {localOpportunities.map((opp, i) => {
+              const servicePart = opp.query.replace(new RegExp(opp.city, 'gi'), '').trim().replace(/\s+/g, ' ');
+              const cityFormatted = opp.city.charAt(0).toUpperCase() + opp.city.slice(1);
+              const suggestion = servicePart
+                ? `Create ${cityFormatted} ${servicePart} page`
+                : `Create dedicated ${cityFormatted} page`;
+              return (
+                <div key={i} className="flex items-center justify-between px-4 py-2.5 gap-4">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-ash-200 truncate">"{opp.query}"</p>
+                    <p className="text-[10px] text-sky-400 mt-0.5">{suggestion}</p>
+                  </div>
+                  <div className="flex items-center gap-4 shrink-0 text-right">
+                    <div>
+                      <p className="text-xs font-display text-ash-100">{opp.impressions.toLocaleString()}</p>
+                      <p className="text-[10px] text-ash-500">impr.</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-display text-ash-400">#{opp.position}</p>
+                      <p className="text-[10px] text-ash-500">position</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── GSC-25: Keyword Research Results with actual GSC traffic ─────────────────
+
+interface GSCKeywordTableProps {
+  keywords: EnrichedKeyword[];
+  gscMap: Map<string, { clicks: number; impressions: number; position: number }>;
+}
+
+function GSCKeywordTable({ keywords, gscMap }: GSCKeywordTableProps) {
+  if (keywords.length === 0) return null;
+
+  return (
+    <div className="card p-0 overflow-hidden">
+      <div className="p-4 border-b border-char-700">
+        <h3 className="text-sm font-display text-ash-200">Keyword Research Results</h3>
+        <p className="text-xs text-ash-500 mt-0.5">
+          Keywords imported from GSC. Where your business already ranks, actual 90-day traffic is shown.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-char-700">
+              <th className="text-left text-ash-500 font-medium py-2 px-4">Keyword</th>
+              <th className="text-right text-ash-500 font-medium py-2 px-3">Est. Volume</th>
+              <th className="text-right text-ash-500 font-medium py-2 px-3">Actual traffic (90d)</th>
+              <th className="text-right text-ash-500 font-medium py-2 px-3">Position</th>
+              <th className="text-right text-ash-500 font-medium py-2 px-3">Difficulty</th>
+            </tr>
+          </thead>
+          <tbody>
+            {keywords.map((kw, i) => {
+              const gsc = gscMap.get(kw.keyword.toLowerCase());
+              const hasGsc = gsc && gsc.position <= 20;
+              return (
+                <tr key={i} className="border-b border-char-800 hover:bg-char-800/50 transition-colors">
+                  <td className="py-2 px-4 text-ash-200">{kw.keyword}</td>
+                  <td className="py-2 px-3 text-right text-ash-400">
+                    {kw.avgVolume > 0 ? kw.avgVolume.toLocaleString() : '—'}
+                  </td>
+                  <td className="py-2 px-3 text-right">
+                    {hasGsc ? (
+                      <span className="text-flame-400 font-medium">{gsc.clicks.toLocaleString()}</span>
+                    ) : (
+                      <span className="text-ash-600">—</span>
+                    )}
+                  </td>
+                  <td className="py-2 px-3 text-right">
+                    {hasGsc ? (
+                      <span className={`font-display ${gsc.position <= 3 ? 'text-success' : gsc.position <= 10 ? 'text-ash-200' : 'text-ash-400'}`}>
+                        #{Math.round(gsc.position)}
+                      </span>
+                    ) : kw.currentRank ? (
+                      <span className="text-ash-400">#{kw.currentRank}</span>
+                    ) : (
+                      <span className="text-ash-600">—</span>
+                    )}
+                  </td>
+                  <td className="py-2 px-3 text-right">
+                    {kw.difficulty != null ? (
+                      <span className={`${kw.difficulty >= 70 ? 'text-danger' : kw.difficulty >= 40 ? 'text-warning' : 'text-success'}`}>
+                        {kw.difficulty}
+                      </span>
+                    ) : '—'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
+
 export default function ContentStrategyPage() {
   const { user, business, profile, loading: authLoading } = useAuth();
   const supabase = createClient();
@@ -75,6 +689,70 @@ export default function ContentStrategyPage() {
 
   // Debounce status saves
   const statusDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // GSC state
+  const [gscMap, setGscMap] = useState<Map<string, { clicks: number; impressions: number; position: number }>>(new Map());
+  const [importedGscKeywords, setImportedGscKeywords] = useState<string[]>([]);
+  const [importedEnrichedKeywords, setImportedEnrichedKeywords] = useState<EnrichedKeyword[]>([]);
+  const [gscKeywordsLoading, setGscKeywordsLoading] = useState(false);
+
+  // Markets cities for GSC-13 extended
+  const [marketCities, setMarketCities] = useState<string[]>([]);
+
+  // ── Load markets cities ────────────────────────────────────────────
+  useEffect(() => {
+    if (!business?.id) return;
+    (supabase as any)
+      .from('markets')
+      .select('cities, name')
+      .eq('business_id', business.id)
+      .then(({ data }: { data: Array<{ cities: string[] | null; name: string }> | null }) => {
+        if (!data) return;
+        // Flatten cities arrays + extract city portion from market names like "Dallas County, TX"
+        const cities: string[] = [];
+        for (const m of data) {
+          if (m.cities) {
+            for (const c of m.cities) { if (c) cities.push(c.toLowerCase()); }
+          }
+          // Also extract first part of market name (e.g. "Dallas" from "Dallas County, TX")
+          const namePart = m.name.split(',')[0].trim().toLowerCase();
+          if (namePart && !namePart.includes('county')) cities.push(namePart);
+        }
+        setMarketCities([...new Set(cities)]);
+      });
+  }, [business?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Handle GSC keyword import → enrich via keyword-research API ───
+  const handleImportKeywords = useCallback(async (queries: string[]) => {
+    if (!business?.id || queries.length === 0) return;
+    setImportedGscKeywords(queries);
+    setGscKeywordsLoading(true);
+
+    const auditCity = (siteAudit as any)?.crawl_data?.business?.city ?? (business as any)?.city ?? '';
+
+    try {
+      const kwRes = await fetch('/api/content-strategy/keyword-research', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          industry: (business as any)?.industry ?? '',
+          city: auditCity,
+          state: (business as any)?.state ?? '',
+          locations: auditCity ? [auditCity] : [],
+          siteAuditKeywords: queries.map(q => ({ keyword: q, volume: 0, currentRank: null, cpc: null })),
+          businessName: business?.name ?? '',
+        }),
+      });
+      if (kwRes.ok) {
+        const kwData = await kwRes.json();
+        if (kwData.keywords?.length) setImportedEnrichedKeywords(kwData.keywords);
+      }
+    } catch {
+      // Non-fatal
+    } finally {
+      setGscKeywordsLoading(false);
+    }
+  }, [business?.id, siteAudit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Load existing data on mount ────────────────────────────────────
   const loadData = useCallback(async () => {
@@ -559,6 +1237,49 @@ export default function ContentStrategyPage() {
             <p className="text-sm text-ash-400 animate-pulse">
               {generationStep || 'Building your 12-week calendar…'}
             </p>
+          )}
+        </div>
+      )}
+
+      {/* ── GSC Insights (shown on config, generating, and complete phases) ── */}
+      {(phase === 'config' || phase === 'generating' || phase === 'complete') && business?.id && (
+        <div className="space-y-2">
+          <h2 className="text-base font-display font-semibold text-ash-200">GSC Insights</h2>
+          <GSCInsightsPanelWithMarkets
+            businessId={business.id}
+            industry={industry}
+            city={city}
+            marketCities={marketCities}
+            onImportKeywords={handleImportKeywords}
+            onGscMapReady={setGscMap}
+          />
+        </div>
+      )}
+
+      {/* GSC-25: Keyword Research Results (shown after import) */}
+      {importedGscKeywords.length > 0 && (
+        <div className="space-y-2">
+          {gscKeywordsLoading ? (
+            <div className="card p-4 flex items-center gap-3 text-sm text-ash-400">
+              <div className="w-4 h-4 border-2 border-ash-600 border-t-flame-500 rounded-full animate-spin shrink-0" />
+              Enriching keywords with volume data…
+            </div>
+          ) : importedEnrichedKeywords.length > 0 ? (
+            <GSCKeywordTable keywords={importedEnrichedKeywords} gscMap={gscMap} />
+          ) : (
+            <div className="card p-4">
+              <p className="text-xs text-ash-400">
+                {importedGscKeywords.length} keywords queued for next strategy generation.
+              </p>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {importedGscKeywords.slice(0, 8).map(kw => (
+                  <span key={kw} className="text-[10px] bg-char-700 text-ash-400 px-2 py-0.5 rounded-full">{kw}</span>
+                ))}
+                {importedGscKeywords.length > 8 && (
+                  <span className="text-[10px] text-ash-600">+{importedGscKeywords.length - 8} more</span>
+                )}
+              </div>
+            </div>
           )}
         </div>
       )}

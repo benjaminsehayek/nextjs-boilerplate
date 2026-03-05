@@ -41,6 +41,26 @@ const STATUS_STYLE: Record<string, string> = {
   skipped: 'bg-char-800 text-ash-600 line-through',
 };
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function SeasonalityBadge({ peakMonth, multiplier }: { peakMonth?: number; multiplier?: number }) {
+  if (!multiplier || multiplier <= 1.2) return null;
+
+  const monthLabel = peakMonth != null ? MONTH_NAMES[peakMonth - 1] : null;
+  const scheduleNote = monthLabel
+    ? `Peak: ${monthLabel} — schedule 60 days before`
+    : `Seasonal keyword — schedule before peak`;
+
+  return (
+    <span
+      title={scheduleNote}
+      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-400 border-amber-500/20"
+    >
+      🌊 {scheduleNote}
+    </span>
+  );
+}
+
 function buildPrompt(item: CalendarItemV2, businessName: string, domain: string, industry: string, city: string) {
   switch (item.type) {
     case 'gbp_post':
@@ -184,6 +204,7 @@ Format as clean structured text, no markdown beyond headers.`;
                 {item.primaryKeyword}
               </span>
             )}
+            <SeasonalityBadge peakMonth={item.peakMonth} multiplier={item.seasonalMultiplier} />
             {item.roiValue > 0 && (
               <span className="text-xs text-success font-display ml-auto">${item.roiValue.toLocaleString()}/mo</span>
             )}
@@ -251,6 +272,24 @@ Format as clean structured text, no markdown beyond headers.`;
             >
               {generatingBrief ? 'Generating Brief…' : 'Generate Brief'}
             </button>
+          )}
+          {item.type === 'gbp_post' && (
+            <a
+              href="https://business.google.com/create-post"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-ghost text-xs py-1.5 inline-flex items-center gap-1"
+            >
+              <span>📍</span>Post to GBP
+            </a>
+          )}
+          {(item.type === 'website_addition' || item.type === 'blog_post') && (
+            <a
+              href={`/website-builder?type=${item.type}&keyword=${encodeURIComponent(item.primaryKeyword)}&title=${encodeURIComponent(item.title)}`}
+              className="btn-ghost text-xs py-1.5 inline-flex items-center gap-1 text-amber-400 border-amber-400/20 hover:bg-amber-400/10"
+            >
+              <span>🏗️</span>Build Page
+            </a>
           )}
           {genError && <span className="text-xs text-danger">{genError}</span>}
           {briefError && <span className="text-xs text-danger">{briefError}</span>}

@@ -9,8 +9,10 @@ export default function ReviewsPanel({
   businessCategory,
   businessCity,
   businessPhone,
+  placeId,
 }: ReviewsPanelProps) {
   const [expandedReviews, setExpandedReviews] = useState<Set<number>>(new Set());
+  const [linkCopied, setLinkCopied] = useState(false);
   const [draftingReviewIndex, setDraftingReviewIndex] = useState<number | null>(null);
   const [draftLength, setDraftLength] = useState<'short' | 'standard' | 'detailed'>('standard');
   const [generatedDraft, setGeneratedDraft] = useState('');
@@ -94,6 +96,22 @@ export default function ReviewsPanel({
         ? 'text-ember-500'
         : 'text-danger';
 
+  // DA-06: Review velocity direction
+  // Compare annualized rate of last 30 days vs last 90 days
+  const annualizedLast30 = reviews.velocity.last30 * 12;
+  const annualizedLast90 = reviews.velocity.last90 * 4;
+  const velocityDirection: 'accelerating' | 'slowing' | 'steady' =
+    annualizedLast30 > annualizedLast90
+      ? 'accelerating'
+      : annualizedLast30 < annualizedLast90 * 0.8
+        ? 'slowing'
+        : 'steady';
+  const velocityBadge = {
+    accelerating: { label: '↑ Accelerating', className: 'text-green-400 bg-green-500/10 border-green-500/20' },
+    slowing:      { label: '↓ Slowing',       className: 'text-amber-400 bg-amber-500/10 border-amber-500/20' },
+    steady:       { label: '→ Steady',         className: 'text-ash-400 bg-char-700 border-char-600' },
+  }[velocityDirection];
+
   return (
     <div className="space-y-6">
       {/* Rating Header */}
@@ -138,22 +156,37 @@ export default function ReviewsPanel({
       </div>
 
       {/* Velocity Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="card p-5 text-center">
-          <div className="text-3xl font-display text-flame-500 mb-1">{reviews.velocity.last30}</div>
-          <div className="text-sm text-ash-400">Last 30 Days</div>
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="card p-5 text-center">
+            <div className="text-3xl font-display text-flame-500 mb-1">{reviews.velocity.last30}</div>
+            <div className="text-sm text-ash-400">Last 30 Days</div>
+          </div>
+          <div className="card p-5 text-center">
+            <div className="text-3xl font-display text-heat-500 mb-1">{reviews.velocity.last90}</div>
+            <div className="text-sm text-ash-400">Last 90 Days</div>
+          </div>
+          <div className="card p-5 text-center">
+            <div className="text-3xl font-display text-ember-500 mb-1">{reviews.velocity.last180}</div>
+            <div className="text-sm text-ash-400">Last 180 Days</div>
+          </div>
+          <div className="card p-5 text-center">
+            <div className="text-3xl font-display text-ash-300 mb-1">{reviews.velocity.avgPerMonth.toFixed(1)}</div>
+            <div className="text-sm text-ash-400">Avg / Month</div>
+          </div>
         </div>
-        <div className="card p-5 text-center">
-          <div className="text-3xl font-display text-heat-500 mb-1">{reviews.velocity.last90}</div>
-          <div className="text-sm text-ash-400">Last 90 Days</div>
-        </div>
-        <div className="card p-5 text-center">
-          <div className="text-3xl font-display text-ember-500 mb-1">{reviews.velocity.last180}</div>
-          <div className="text-sm text-ash-400">Last 180 Days</div>
-        </div>
-        <div className="card p-5 text-center">
-          <div className="text-3xl font-display text-ash-300 mb-1">{reviews.velocity.avgPerMonth.toFixed(1)}</div>
-          <div className="text-sm text-ash-400">Avg / Month</div>
+        {/* DA-06: Velocity direction badge */}
+        <div className="flex items-center gap-2">
+          <span className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border font-medium ${velocityBadge.className}`}>
+            {velocityBadge.label}
+          </span>
+          <span className="text-xs text-ash-500">
+            {velocityDirection === 'accelerating'
+              ? 'Review pace is picking up vs. the last 90 days'
+              : velocityDirection === 'slowing'
+                ? 'Review pace has slowed vs. the last 90 days'
+                : 'Review pace is consistent'}
+          </span>
         </div>
       </div>
 
@@ -191,6 +224,50 @@ export default function ReviewsPanel({
           <span className="text-ember-500">Neutral {sentimentPct.neutral}%</span>
           <span className="text-danger">Negative {sentimentPct.negative}%</span>
         </div>
+      </div>
+
+      {/* Review Link Generator */}
+      <div className="card p-6">
+        <h3 className="text-lg font-display text-ash-300 mb-3">Request a Review</h3>
+        {placeId ? (
+          <div className="space-y-3">
+            <p className="text-sm text-ash-400">
+              Share this link with customers to collect more Google reviews.
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                value={`https://search.google.com/local/writereview?placeid=${placeId}`}
+                className="input flex-1 text-xs font-mono text-ash-300 bg-char-900"
+                onFocus={(e) => e.target.select()}
+              />
+              <a
+                href={`https://search.google.com/local/writereview?placeid=${placeId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-ghost text-sm px-3 py-2 whitespace-nowrap"
+              >
+                Open
+              </a>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    `https://search.google.com/local/writereview?placeid=${placeId}`,
+                  );
+                  setLinkCopied(true);
+                  setTimeout(() => setLinkCopied(false), 2000);
+                }}
+                className="btn-primary text-sm px-3 py-2 whitespace-nowrap"
+              >
+                {linkCopied ? 'Copied!' : 'Copy Link'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-ash-500">
+            No Place ID found for this location. Run the audit with a place ID to generate a review link.
+          </p>
+        )}
       </div>
 
       {/* Recent Reviews */}

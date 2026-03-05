@@ -38,6 +38,7 @@ const navItems = [
     { href: '/lead-intelligence', label: 'Lead Intelligence', icon: '📡' },
     { href: '/lead-database', label: 'Lead Database', icon: '👥' },
     { href: '/marketing', label: 'Marketing', icon: '📧' },
+    { href: '/website-builder', label: 'Website Builder', icon: '🏗️' },
   ]},
   { section: 'Account', items: [
     { href: '/billing', label: 'Billing', icon: '💳' },

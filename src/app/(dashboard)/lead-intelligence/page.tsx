@@ -17,7 +17,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
 import { LocationSelector } from '@/components/ui/LocationSelector';
@@ -64,6 +64,7 @@ interface MarketBreakdown {
   marketName: string;
   leadCount: number;
   avgScore: number;
+  avgElv: number;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -345,7 +346,17 @@ function TrendBadge({ trend }: { trend: number }) {
   );
 }
 
-function ChannelCard({ stats }: { stats: ChannelStats }) {
+// GSC-16: Extended ChannelCard that can show organic visit volume from GSC
+function ChannelCard({ stats, gscClicks }: { stats: ChannelStats; gscClicks?: number | null }) {
+  const isOrganic = stats.source === 'website';
+  const showGsc = isOrganic && gscClicks != null && gscClicks > 0;
+
+  // Estimate conversion rate: organic leads / gsc clicks (only if both are non-zero)
+  const conversionRate =
+    showGsc && stats.totalLeads > 0
+      ? ((stats.totalLeads / gscClicks!) * 100).toFixed(2)
+      : null;
+
   return (
     <div className="card p-5">
       <div className="flex items-start justify-between mb-3">
@@ -386,6 +397,25 @@ function ChannelCard({ stats }: { stats: ChannelStats }) {
           <LeadScoreBadge score={stats.avgScore} />
         </div>
       </div>
+
+      {/* GSC-16: Organic visit volume from GSC */}
+      {showGsc && (
+        <div className="mt-3 pt-3 border-t border-char-700">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs text-ash-500 mb-0.5">Organic visits (90d)</p>
+              <p className="text-base font-bold text-flame-400">{gscClicks!.toLocaleString()}</p>
+            </div>
+            {conversionRate && (
+              <div className="text-right">
+                <p className="text-xs text-ash-500 mb-0.5">Lead conv. rate</p>
+                <p className="text-base font-bold text-ash-200">{conversionRate}%</p>
+              </div>
+            )}
+          </div>
+          <p className="text-[10px] text-ash-600 mt-1">Source: Google Search Console</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -449,6 +479,34 @@ export default function LeadIntelligencePage() {
   const [dataLoading, setDataLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // GSC-16: Organic traffic from GSC (90-day total clicks)
+  const [gscClicks, setGscClicks] = useState<number | null>(null);
+
+  // GSC-16: Fetch GSC data once business is ready
+  useEffect(() => {
+    if (authLoading || !business?.id) return;
+    let cancelled = false;
+
+    fetch('/api/gsc/analytics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ businessId: business.id }),
+    })
+      .then(async (r) => {
+        if (cancelled) return;
+        if (!r.ok) return; // GSC not connected or error — silently skip
+        const json = await r.json();
+        const rows: Array<{ clicks: number }> = json.rows || [];
+        const total = rows.reduce((sum, row) => sum + (row.clicks || 0), 0);
+        if (!cancelled) setGscClicks(total);
+      })
+      .catch(() => {
+        // Non-fatal — GSC not connected; just don't show the data
+      });
+
+    return () => { cancelled = true; };
+  }, [business?.id, authLoading]);
+
   // Load contacts + markets once business is ready
   useEffect(() => {
     if (authLoading || !business?.id) return;
@@ -489,41 +547,50 @@ export default function LeadIntelligencePage() {
 
     load();
     return () => { cancelled = true; };
-  }, [business?.id, authLoading]);
+  }, [business?.id, authLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const now = new Date();
-  const days = parseInt(timeRange, 10);
+  // PF-01: Memoize all aggregations so they only recompute when contacts/timeRange/markets change
+  const aggregations = useMemo(() => {
+    const now = new Date();
+    const days = parseInt(timeRange, 10);
 
-  // Apply time-range filter
-  const filteredContacts = filterByTimeRange(allContacts, days, now);
+    // Apply time-range filter
+    const displayContacts = filterByTimeRange(allContacts, days, now);
 
-  // If a location is selected, show all contacts in the time range
-  // (contacts link to markets not locations; all = no extra filter)
-  const displayContacts = filteredContacts;
+    const channelStats = buildChannelStats(displayContacts, now);
 
-  const channelStats = buildChannelStats(displayContacts, now);
-
-  // Market breakdown
-  const marketMap = new Map(markets.map((m) => [m.id, m.name]));
-  const marketContactsMap = new Map<string, RawContact[]>();
-  for (const c of displayContacts) {
-    if (c.market_id) {
-      if (!marketContactsMap.has(c.market_id)) marketContactsMap.set(c.market_id, []);
-      marketContactsMap.get(c.market_id)!.push(c);
+    // Market breakdown + summary stats — single combined pass over displayContacts
+    const marketMap = new Map(markets.map((m) => [m.id, m.name]));
+    const marketContactsMap = new Map<string, RawContact[]>();
+    let totalElv = 0;
+    for (const c of displayContacts) {
+      totalElv += c.elv_score ?? 0;
+      if (c.market_id) {
+        if (!marketContactsMap.has(c.market_id)) marketContactsMap.set(c.market_id, []);
+        marketContactsMap.get(c.market_id)!.push(c);
+      }
     }
-  }
-  const marketBreakdown: MarketBreakdown[] = Array.from(marketContactsMap.entries())
-    .map(([marketId, contacts]) => ({
-      marketId,
-      marketName: marketMap.get(marketId) ?? 'Unknown Market',
-      leadCount: contacts.length,
-      avgScore: avgScoreOf(contacts),
-    }))
-    .sort((a, b) => b.leadCount - a.leadCount);
 
-  const totalLeads = displayContacts.length;
-  const totalElv = displayContacts.reduce((sum, c) => sum + (c.elv_score ?? 0), 0);
-  const overallAvgScore = avgScoreOf(displayContacts);
+    const marketBreakdown: MarketBreakdown[] = Array.from(marketContactsMap.entries())
+      .map(([marketId, contacts]) => {
+        const mktElv = contacts.reduce((sum, c) => sum + (c.elv_score ?? 0), 0);
+        return {
+          marketId,
+          marketName: marketMap.get(marketId) ?? 'Unknown Market',
+          leadCount: contacts.length,
+          avgScore: avgScoreOf(contacts),
+          avgElv: contacts.length > 0 ? mktElv / contacts.length : 0,
+        };
+      })
+      .sort((a, b) => b.avgElv - a.avgElv);
+
+    const totalLeads = displayContacts.length;
+    const overallAvgScore = avgScoreOf(displayContacts);
+
+    return { now, displayContacts, channelStats, marketBreakdown, totalLeads, totalElv, overallAvgScore };
+  }, [allContacts, timeRange, markets]);
+
+  const { channelStats, marketBreakdown, totalLeads, totalElv, overallAvgScore } = aggregations;
 
   const loading = authLoading || dataLoading;
 
@@ -643,8 +710,35 @@ export default function LeadIntelligencePage() {
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {channelStats.map((ch) => (
-                    <ChannelCard key={ch.source} stats={ch} />
+                    <ChannelCard
+                      key={ch.source}
+                      stats={ch}
+                      gscClicks={ch.source === 'website' ? gscClicks : undefined}
+                    />
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* GSC-16: Organic Search card when no website-sourced leads exist but GSC is connected */}
+            {!error && channelStats.every(ch => ch.source !== 'website') && gscClicks != null && gscClicks > 0 && (
+              <div>
+                <h2 className="text-base font-display font-semibold text-ash-200 mb-3">
+                  Organic Search
+                </h2>
+                <div className="card p-5 max-w-sm">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-2xl">🌐</span>
+                    <span className="font-display font-semibold text-ash-100">Organic/SEO</span>
+                  </div>
+                  <div>
+                    <p className="text-xs text-ash-500 mb-0.5">Organic visits (90d)</p>
+                    <p className="text-2xl font-bold text-flame-400">{gscClicks.toLocaleString()}</p>
+                  </div>
+                  <p className="text-xs text-ash-500 mt-2">
+                    No organic leads tracked yet — add contacts with source "website" to measure conversion.
+                  </p>
+                  <p className="text-[10px] text-ash-600 mt-1">Source: Google Search Console</p>
                 </div>
               </div>
             )}
@@ -662,28 +756,42 @@ export default function LeadIntelligencePage() {
             {/* Market breakdown */}
             {marketBreakdown.length > 0 && (
               <div className="card p-6">
-                <h3 className="font-display font-semibold text-ash-100 mb-4">
+                <h3 className="font-display font-semibold text-ash-100 mb-1">
                   Leads by Market
                 </h3>
+                <p className="text-xs text-ash-500 mb-4">Ranked by average lead value — highest-value markets first</p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-char-700">
                         <th className="text-left text-ash-500 font-medium py-2 pr-4">Market</th>
                         <th className="text-right text-ash-500 font-medium py-2">Leads</th>
+                        <th className="text-right text-ash-500 font-medium py-2 pl-4">Avg ELV</th>
                         <th className="text-right text-ash-500 font-medium py-2 pl-4">Share</th>
                         <th className="text-right text-ash-500 font-medium py-2 pl-4">Avg Score</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {marketBreakdown.map((row) => (
+                      {marketBreakdown.map((row, idx) => (
                         <tr
                           key={row.marketId}
                           className="border-b border-char-800 hover:bg-char-800/50 transition-colors"
                         >
-                          <td className="py-2 pr-4 text-ash-200">{row.marketName}</td>
+                          <td className="py-2 pr-4 text-ash-200">
+                            <div className="flex items-center gap-2">
+                              {idx === 0 && (
+                                <span className="inline-flex items-center text-xs px-1.5 py-0.5 rounded bg-flame-500/15 text-flame-400 border border-flame-500/20 flex-shrink-0">
+                                  #1
+                                </span>
+                              )}
+                              {row.marketName}
+                            </div>
+                          </td>
                           <td className="py-2 text-right font-medium text-ash-100">
                             {row.leadCount}
+                          </td>
+                          <td className="py-2 pl-4 text-right font-medium text-flame-400">
+                            {formatCurrency(row.avgElv)}
                           </td>
                           <td className="py-2 pl-4 text-right text-ash-400">
                             {totalLeads > 0

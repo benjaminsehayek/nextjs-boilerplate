@@ -13,6 +13,19 @@ import { SUBSCRIPTION_TIERS, type BillingInterval } from '@/lib/stripe/config';
 import type { CheckoutResponse } from '@/types';
 import { useState, useEffect } from 'react';
 
+// ── Feature loss lists when downgrading to Free ───────────────────────────────
+
+const FREE_TIER_FEATURES_LOST: string[] = [
+  'Email/SMS campaigns',
+  'Contact database',
+  'Site & off-page auditing',
+  'Lead intelligence',
+  'AI content generation',
+  'Local grid scanning',
+  'Keyword research tools',
+  'Priority support',
+];
+
 // ── Feature loss lists by tier ────────────────────────────────────────────────
 
 const TIER_FEATURES_LOST: Record<string, string[]> = {
@@ -110,6 +123,73 @@ function CancelConfirmModal({
   );
 }
 
+// ── DowngradeConfirmModal ─────────────────────────────────────────────────────
+
+function DowngradeConfirmModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  periodEnd,
+  loading,
+  error,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  periodEnd: string;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="animate-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="animate-modal-card card max-w-md w-full p-6">
+        <h2 className="font-display text-xl mb-2">Downgrade to Free?</h2>
+        <p className="text-sm text-ash-300 mb-4">
+          Downgrading to Free will cancel your subscription at the end of the current billing period.
+          You&apos;ll keep full access until{' '}
+          <span className="font-semibold text-ash-100">{periodEnd}</span>.
+        </p>
+
+        <p className="text-sm text-ash-400 mb-2">At that time, you&apos;ll lose access to:</p>
+        <ul className="mb-5 space-y-1.5">
+          {FREE_TIER_FEATURES_LOST.map((feature) => (
+            <li key={feature} className="flex items-center gap-2 text-sm text-ash-300">
+              <span className="text-danger text-xs">✕</span>
+              {feature}
+            </li>
+          ))}
+        </ul>
+
+        {error && (
+          <p className="text-sm text-danger mb-4">{error}</p>
+        )}
+
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="btn-secondary flex-1"
+            disabled={loading}
+          >
+            Keep My Plan
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className="btn-danger flex-1 disabled:opacity-50"
+          >
+            {loading ? 'Downgrading...' : 'Downgrade to Free'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function BillingPage() {
   const { profile, tier, loading } = useSubscription();
   const { refreshProfile } = useUser();
@@ -124,6 +204,12 @@ export default function BillingPage() {
   const [cancelLoading, setCancelLoading] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [cancelledAt, setCancelledAt] = useState<number | null>(null);
+
+  // BL-01: Downgrade to free state
+  const [showDowngradeConfirm, setShowDowngradeConfirm] = useState(false);
+  const [downgradeLoading, setDowngradeLoading] = useState(false);
+  const [downgradeError, setDowngradeError] = useState<string | null>(null);
+  const [downgradedAt, setDowngradedAt] = useState<number | null>(null);
 
   // Check for success redirect from Stripe — refresh profile to pick up new tier/credits
   useEffect(() => {
@@ -143,7 +229,11 @@ export default function BillingPage() {
     if (checkoutLoading !== null) return;
 
     if (planTier === 'free') {
-      setError('Downgrading to free tier is not yet supported. Please contact support.');
+      // BL-01: Show downgrade confirmation modal
+      if (tier !== 'free') {
+        setShowDowngradeConfirm(true);
+        setDowngradeError(null);
+      }
       return;
     }
 
@@ -203,6 +293,32 @@ export default function BillingPage() {
       setCancelError('Network error. Please try again.');
     } finally {
       setCancelLoading(false);
+    }
+  };
+
+  // BL-01: Downgrade to free — same cancel endpoint, cancel_at_period_end
+  const handleDowngradeToFree = async () => {
+    setDowngradeLoading(true);
+    setDowngradeError(null);
+    try {
+      const res = await fetch('/api/stripe/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setDowngradeError(data.error || 'Failed to downgrade. Please try again.');
+        return;
+      }
+      setDowngradedAt(data.cancelsAt as number);
+      setShowDowngradeConfirm(false);
+      toast.success('Plan will downgrade to Free at period end');
+      refreshProfile();
+    } catch {
+      setDowngradeError('Network error. Please try again.');
+    } finally {
+      setDowngradeLoading(false);
     }
   };
 
@@ -274,6 +390,20 @@ export default function BillingPage() {
         </div>
       )}
 
+      {/* BL-01: Downgrade to free confirmation banner */}
+      {downgradedAt !== null && (
+        <div className="mb-6 p-4 bg-char-800 border border-ash-600 rounded-btn flex items-center gap-3">
+          <span className="inline-block px-2 py-0.5 bg-ash-700 text-ash-300 rounded-full text-xs font-medium shrink-0">
+            Downgrading to Free
+          </span>
+          <p className="text-sm text-ash-300">
+            Your plan will downgrade to Free on{' '}
+            <span className="font-semibold text-ash-100">{formatUnixDate(downgradedAt)}</span>.
+            You have full access until then.
+          </p>
+        </div>
+      )}
+
       {/* Current Plan & Usage */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <CurrentPlanCard profile={profile} tier={tier} />
@@ -318,6 +448,24 @@ export default function BillingPage() {
         tier={tier}
         loading={cancelLoading}
         error={cancelError}
+      />
+
+      {/* BL-01: Downgrade to Free Confirmation Modal */}
+      <DowngradeConfirmModal
+        isOpen={showDowngradeConfirm}
+        onClose={() => { setShowDowngradeConfirm(false); setDowngradeError(null); }}
+        onConfirm={handleDowngradeToFree}
+        periodEnd={
+          profile?.subscription_period_end
+            ? new Date(profile.subscription_period_end).toLocaleDateString('en-US', {
+                month: 'long',
+                day: 'numeric',
+                year: 'numeric',
+              })
+            : 'the end of your billing period'
+        }
+        loading={downgradeLoading}
+        error={downgradeError}
       />
 
       {/* Upgrade Plans Section */}

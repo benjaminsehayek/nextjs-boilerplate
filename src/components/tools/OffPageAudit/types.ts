@@ -375,6 +375,7 @@ export interface ReviewsPanelProps {
   businessCategory: string;
   businessCity: string;
   businessPhone: string;
+  placeId?: string;
 }
 
 export interface NAPConsistencyProps {

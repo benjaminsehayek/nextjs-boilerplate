@@ -20,6 +20,7 @@ const LocalRankingsTab = dynamic(() => import('./LocalRankingsTab'));
 const PageHealthTab = dynamic(() => import('./PageHealthTab'));
 const StructureTab = dynamic(() => import('./StructureTab'));
 const CannibalizationTab = dynamic(() => import('./CannibalizationTab'));
+const GSCTab = dynamic(() => import('./GSCTab'));
 
 export default function Dashboard({ results, activeTab, onTabChange }: DashboardProps) {
   const [quickWinCompletions, setQuickWinCompletions] = useState<Record<string, boolean>>({});
@@ -51,6 +52,7 @@ export default function Dashboard({ results, activeTab, onTabChange }: Dashboard
         return count > 0 ? count : undefined;
       })(),
     },
+    { id: 'gsc', name: 'GSC Insights' },
   ];
 
   function handleCategoryClick(category: string) {
@@ -73,6 +75,16 @@ export default function Dashboard({ results, activeTab, onTabChange }: Dashboard
 
   return (
     <div className="space-y-6">
+      {/* Print header — only visible when printing */}
+      <div className="hidden print:block mb-6 pb-4 border-b-2 border-gray-300">
+        <div className="text-2xl font-bold text-black">{results.domain}</div>
+        <div className="text-sm text-gray-600 mt-1">Site Audit Report · {results.pageCount} pages crawled</div>
+        <div className="text-sm text-gray-500 mt-0.5">
+          Generated: {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+          {' · '}Scanned: {new Date(results.completedAt).toLocaleDateString()}
+        </div>
+      </div>
+
       {/* Header */}
       <div className="card p-6">
         <div className="flex items-center justify-between flex-wrap gap-4">
@@ -84,9 +96,9 @@ export default function Dashboard({ results, activeTab, onTabChange }: Dashboard
               {results.pageCount} pages crawled · Scanned {new Date(results.completedAt).toLocaleDateString()}
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3" data-no-print>
             <button onClick={() => window.print()} className="btn-ghost text-sm">
-              📄 Export PDF
+              📄 Download Report
             </button>
           </div>
         </div>
@@ -148,6 +160,7 @@ export default function Dashboard({ results, activeTab, onTabChange }: Dashboard
         {activeTab === 'pagehealth' && <PageHealthTab results={results} />}
         {activeTab === 'structure' && <StructureTab results={results} />}
         {activeTab === 'cannibalization' && <CannibalizationTab results={results} />}
+        {activeTab === 'gsc' && <GSCTab results={results} />}
       </div>
 
       {/* Footer */}

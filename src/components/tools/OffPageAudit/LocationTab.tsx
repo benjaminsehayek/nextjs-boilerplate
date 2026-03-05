@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { ScoreRing } from '@/components/ui/ScoreRing';
 import type { LocationTabProps } from './types';
 import ReviewsPanel from './ReviewsPanel';
@@ -8,6 +9,7 @@ import GBPCompleteness from './GBPCompleteness';
 import GBPPostsCard from './GBPPostsCard';
 import NAPConsistency from './NAPConsistency';
 import Recommendations from './Recommendations';
+import { getPublishedPagesForLocation, type PageSummary } from '@/lib/websiteBuilder/offpageFeedback';
 
 function Section({ id, title, open, onToggle, children, badge }: {
   id: string; title: string; open: boolean; onToggle: (id: string) => void;
@@ -34,6 +36,19 @@ function Section({ id, title, open, onToggle, children, badge }: {
 
 export default function LocationTab({ location, domainScore, businessName, businessCategories, onNavigateTab }: LocationTabProps) {
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['reviews']));
+  const [builderPages, setBuilderPages] = useState<PageSummary[]>([]);
+  const [builderPagesLoading, setBuilderPagesLoading] = useState(false);
+  const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
+
+  // Fetch published builder pages for this location
+  useEffect(() => {
+    if (!location.locationId) return;
+    setBuilderPagesLoading(true);
+    getPublishedPagesForLocation(location.locationId)
+      .then(setBuilderPages)
+      .catch(() => setBuilderPages([]))
+      .finally(() => setBuilderPagesLoading(false));
+  }, [location.locationId]);
 
   const toggle = (id: string) => {
     setOpenSections(prev => {
@@ -42,6 +57,12 @@ export default function LocationTab({ location, domainScore, businessName, busin
       else next.add(id);
       return next;
     });
+  };
+
+  const handleCopyUrl = (slug: string) => {
+    navigator.clipboard.writeText(slug).catch(() => {});
+    setCopiedSlug(slug);
+    setTimeout(() => setCopiedSlug(null), 2000);
   };
 
   return (
@@ -131,6 +152,53 @@ export default function LocationTab({ location, domainScore, businessName, busin
 
       {/* Collapsible Sections */}
       <div className="space-y-3">
+        <Section id="builder-pages" title="Builder Pages" open={openSections.has('builder-pages')} onToggle={toggle}
+          badge={builderPagesLoading ? '...' : `${builderPages.length}`}>
+          {builderPagesLoading ? (
+            <div className="text-sm text-ash-400">Loading published pages...</div>
+          ) : builderPages.length === 0 ? (
+            <div className="p-4 bg-char-900/30 rounded-lg text-center">
+              <p className="text-sm text-ash-400 mb-3">
+                No pages published for this location yet.
+              </p>
+              <Link
+                href={`/website-builder?location=${location.locationId}&type=location_service`}
+                className="btn-primary text-sm inline-block"
+              >
+                Build pages &rarr;
+              </Link>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-ash-400">
+                Link your citations to these specific pages for maximum local SEO value.
+              </p>
+              {builderPages.map(page => (
+                <div key={page.id} className="p-4 bg-char-900/30 rounded-lg flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-display text-sm text-ash-200 truncate">{page.title}</span>
+                      <span className="builder-page-type-badge">{page.type.replace(/_/g, ' ')}</span>
+                    </div>
+                    <div className="text-xs text-ash-500 truncate">/{page.slug}</div>
+                    {page.published_at && (
+                      <div className="text-xs text-ash-500 mt-0.5">
+                        Published {new Date(page.published_at).toLocaleDateString()}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleCopyUrl(`/${page.slug}`)}
+                    className="btn-ghost text-xs flex-shrink-0"
+                  >
+                    {copiedSlug === `/${page.slug}` ? 'Copied!' : 'Copy URL'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Section>
+
         <Section id="reviews" title="Reviews" open={openSections.has('reviews')} onToggle={toggle}
           badge={`${location.reviews.rating.toFixed(1)} ★ (${location.reviews.totalCount})`}>
           <ReviewsPanel
@@ -139,6 +207,7 @@ export default function LocationTab({ location, domainScore, businessName, busin
             businessCategory={businessCategories[0] || ''}
             businessCity={location.city}
             businessPhone={location.phone}
+            placeId={location.placeId}
           />
         </Section>
 

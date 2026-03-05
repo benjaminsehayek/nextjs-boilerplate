@@ -1,5 +1,6 @@
 'use client';
 
+import type { JSX } from 'react';
 import { useMemo } from 'react';
 import type { TabProps, MarketKeywordItem, MarketData } from './types';
 import { DataTable } from './shared/DataTable';
@@ -13,6 +14,58 @@ interface KeywordRow {
   market: string;
   mapsRank: number | 'NF' | null;
   _isCannibalized: boolean;
+  serpFeatures: string[];
+}
+
+// ─── SERP Feature Badges ─────────────────────────────────────────────
+
+const SERP_FEATURE_META: Record<string, { label: string; icon: string; color: string }> = {
+  local_pack:       { label: 'Local Pack',         icon: '📍', color: 'bg-blue-500/15 text-blue-400 border-blue-500/20' },
+  maps:             { label: 'Local Pack',         icon: '📍', color: 'bg-blue-500/15 text-blue-400 border-blue-500/20' },
+  featured_snippet: { label: 'Featured Snippet',  icon: '⭐', color: 'bg-amber-500/15 text-amber-400 border-amber-500/20' },
+  ai_overview:      { label: 'AI Overview',        icon: '⭐', color: 'bg-amber-500/15 text-amber-400 border-amber-500/20' },
+  people_also_ask:  { label: 'PAA',                icon: '💬', color: 'bg-violet-500/15 text-violet-400 border-violet-500/20' },
+  images:           { label: 'Images',             icon: '🖼', color: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20' },
+};
+
+// Canonical feature key to avoid showing duplicates (e.g. maps = local_pack)
+const FEATURE_CANONICAL: Record<string, string> = { maps: 'local_pack', ai_overview: 'featured_snippet' };
+
+function SerpFeatureBadges({ features, position }: { features: string[]; position: number }) {
+  const seen = new Set<string>();
+  const rendered: JSX.Element[] = [];
+
+  for (const f of features) {
+    const key = FEATURE_CANONICAL[f] ?? f;
+    const meta = SERP_FEATURE_META[key];
+    if (!meta || seen.has(key)) continue;
+    seen.add(key);
+    rendered.push(
+      <span
+        key={key}
+        title={meta.label}
+        className={`inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded border ${meta.color}`}
+      >
+        {meta.icon} {meta.label}
+      </span>
+    );
+  }
+
+  if (rendered.length === 0) return null;
+
+  const hasLocalPack = features.some(f => f === 'local_pack' || f === 'maps');
+  const notTop3 = position === 0 || position > 3;
+
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {rendered}
+      {hasLocalPack && notTop3 && (
+        <span className="inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded border bg-flame-500/15 text-flame-400 border-flame-500/20">
+          GBP optimization priority
+        </span>
+      )}
+    </div>
+  );
 }
 
 interface CannibalizationWarning {
@@ -58,6 +111,7 @@ export default function LocalRankingsTab({ results }: TabProps) {
           market: marketName,
           mapsRank,
           _isCannibalized: !!item._isCannibalized,
+          serpFeatures: item.serp_item_types ?? [],
         });
 
         // Track cannibalization
@@ -107,7 +161,12 @@ export default function LocalRankingsTab({ results }: TabProps) {
       label: 'Keyword',
       sortable: true,
       render: (row: KeywordRow) => (
-        <span className="text-ash-100 text-sm font-medium">{row.keyword}</span>
+        <div>
+          <span className="text-ash-100 text-sm font-medium">{row.keyword}</span>
+          {row.serpFeatures.length > 0 && (
+            <SerpFeatureBadges features={row.serpFeatures} position={row.position} />
+          )}
+        </div>
       ),
     },
     {

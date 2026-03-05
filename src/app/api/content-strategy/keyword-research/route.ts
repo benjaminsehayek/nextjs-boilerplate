@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   buildSeedKeywords,
   computeSeasonalMultiplier,
+  computePeakMonth,
   formatLocationName,
   type EnrichedKeyword,
   type SiteAuditKeyword,
@@ -399,6 +400,7 @@ ${kwList}`,
       ? cityVolumeData.monthlySearches
       : k.monthlySearches;
     const seasonalMultiplier = computeSeasonalMultiplier(monthlySearches);
+    const peakMonth = computePeakMonth(monthlySearches) ?? undefined;
     const volume = Math.max(1, Math.round(avgVolume * seasonalMultiplier));
 
     // Competition priority: city search_volume string → related_keywords string → null
@@ -441,6 +443,7 @@ ${kwList}`,
       volume,
       avgVolume,
       seasonalMultiplier,
+      peakMonth,
       difficulty,
       competition,
       cpc: k.cpc,

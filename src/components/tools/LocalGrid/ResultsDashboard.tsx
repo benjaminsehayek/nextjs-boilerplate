@@ -1,11 +1,124 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { MapDisplay } from './MapDisplay';
+import { GSCInsights } from './GSCInsights';
 import type { GridScanResult, HeatmapData, GridPoint } from './types';
+import { getKeywordSiteAuditContext, type KeywordContext } from '@/lib/websiteBuilder/gridFeedback';
 
 const LS_HEATMAP_KEY = 'local-grid-heatmap';
+
+// ─── Competitor Dominance ────────────────────────────────────────────
+
+interface CompetitorDominance {
+  name: string;
+  top3Points: number;
+  totalPoints: number;
+}
+
+function computeCompetitorDominance(scan: GridScanResult): CompetitorDominance[] {
+  // rank_data is stored in the DB but not typed in GridScanResult — cast as any
+  const rankData: Array<{
+    topResults?: Array<{ position: number; title: string }>;
+  }> = (scan as any).rank_data ?? [];
+
+  const totalGridPoints = scan.config.size * scan.config.size;
+
+  if (rankData.length === 0) {
+    // Fall back to scan.points[].competitors (represents last-scanned keyword only)
+    const counts = new Map<string, number>();
+    for (const point of scan.points) {
+      for (const comp of point.competitors ?? []) {
+        if (comp.rank <= 3 && comp.name && comp.name !== 'Unknown') {
+          counts.set(comp.name, (counts.get(comp.name) ?? 0) + 1);
+        }
+      }
+    }
+    return Array.from(counts.entries())
+      .map(([name, top3Points]) => ({ name, top3Points, totalPoints: totalGridPoints }))
+      .sort((a, b) => b.top3Points - a.top3Points)
+      .slice(0, 3);
+  }
+
+  const counts = new Map<string, number>();
+  const keywordCount = scan.config.keywords.length || 1;
+
+  for (const rd of rankData) {
+    for (const result of rd.topResults ?? []) {
+      if (result.position <= 3 && result.title && result.title !== 'Unknown') {
+        counts.set(result.title, (counts.get(result.title) ?? 0) + 1);
+      }
+    }
+  }
+
+  // Each keyword-point combo counts separately — normalize by keyword count
+  return Array.from(counts.entries())
+    .map(([name, total]) => ({
+      name,
+      top3Points: Math.round(total / keywordCount),
+      totalPoints: totalGridPoints,
+    }))
+    .sort((a, b) => b.top3Points - a.top3Points)
+    .slice(0, 3);
+}
+
+function TopCompetitorsCard({ scan }: { scan: GridScanResult }) {
+  const competitors = useMemo(() => computeCompetitorDominance(scan), [scan]);
+
+  if (competitors.length === 0) return null;
+
+  const top = competitors[0];
+  const totalPoints = scan.config.size * scan.config.size;
+
+  return (
+    <div className="card p-6">
+      <h3 className="text-lg font-display mb-1">Top Competitors</h3>
+      <p className="text-sm text-ash-400 mb-4">
+        Businesses dominating your service area in top-3 map positions
+      </p>
+
+      {/* Biggest rival callout */}
+      <div className="p-4 mb-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
+        <span className="text-xl mt-0.5">⚔️</span>
+        <div>
+          <p className="text-sm font-medium text-ash-100">
+            Biggest rival: <span className="text-red-400">{top.name}</span>
+          </p>
+          <p className="text-xs text-ash-400 mt-0.5">
+            Dominant at {top.top3Points}/{totalPoints} grid points in top 3
+          </p>
+        </div>
+      </div>
+
+      {/* Ranked list */}
+      <div className="space-y-3">
+        {competitors.map((comp, idx) => {
+          const pct = totalPoints > 0 ? (comp.top3Points / totalPoints) * 100 : 0;
+          return (
+            <div key={comp.name} className="flex items-center gap-3">
+              <span className="text-xs text-ash-500 w-4 text-right font-display">{idx + 1}</span>
+              <div className="flex-1">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-ash-200 truncate max-w-[220px]">{comp.name}</span>
+                  <span className="text-xs text-ash-400 ml-2 flex-shrink-0">
+                    {comp.top3Points}/{totalPoints} pts
+                  </span>
+                </div>
+                <div className="relative h-1.5 bg-char-900 rounded-full overflow-hidden">
+                  <div
+                    className="absolute inset-y-0 left-0 bg-red-500/60 rounded-full"
+                    style={{ width: `${Math.min(100, pct)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function getRankStyle(rank: number | null | undefined): { bg: string; text: string } {
   if (rank == null) return { bg: 'bg-red-900/60', text: 'text-red-400' };
@@ -57,14 +170,32 @@ interface ResultsDashboardProps {
   scan: GridScanResult;
   heatmapData: Record<string, HeatmapData>;
   onNewScan: () => void;
+  businessId?: string;
+  onSuggestKeyword?: (keyword: string) => void;
 }
 
-export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashboardProps) {
+export function ResultsDashboard({ scan, heatmapData, onNewScan, businessId, onSuggestKeyword }: ResultsDashboardProps) {
   const [selectedKeyword, setSelectedKeyword] = useState(
     scan.config.keywords[0]?.text || ''
   );
   const [heatmapMode, setHeatmapMode] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
+  const [keywordContextMap, setKeywordContextMap] = useState<Map<string, KeywordContext>>(new Map());
+
+  // Stable key for keyword list — prevents re-fetching when scan object reference changes
+  const keywordTextsKey = useMemo(
+    () => scan.config.keywords.map(k => k.text).join('\0'),
+    [scan.config.keywords]
+  );
+
+  // Fetch Site Audit keyword context (volume, intent, local pack)
+  useEffect(() => {
+    if (!businessId) return;
+    const keywordTexts = keywordTextsKey.split('\0').filter(Boolean);
+    getKeywordSiteAuditContext(businessId, keywordTexts)
+      .then(setKeywordContextMap)
+      .catch(() => {});
+  }, [businessId, keywordTextsKey]);
 
   // Load heatmap preference from localStorage
   useEffect(() => {
@@ -222,6 +353,25 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
                     </span>
                   </div>
                 )}
+                {(() => {
+                  const ctx = keywordContextMap.get(keyword.text.toLowerCase());
+                  if (!ctx) return null;
+                  return (
+                    <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                      <span className={`kw-context-badge ${isSelected ? 'kw-context-badge-active' : ''}`}>
+                        {ctx.volumeRange}
+                      </span>
+                      <span className={`kw-context-badge ${isSelected ? 'kw-context-badge-active' : ''}`}>
+                        {ctx.intent}
+                      </span>
+                      {ctx.hasLocalPack && (
+                        <span className={`kw-context-badge ${isSelected ? 'kw-context-badge-active' : ''}`}>
+                          Local Pack
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
               </button>
             );
           })}
@@ -397,8 +547,23 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
             return (
               <div key={keyword.id} className="p-4 bg-char-900/30 rounded-lg">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="font-medium">{keyword.text}</span>
-                  <div className="flex items-center gap-3 text-sm">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">{keyword.text}</span>
+                    {(() => {
+                      const ctx = keywordContextMap.get(keyword.text.toLowerCase());
+                      if (!ctx) return null;
+                      return (
+                        <div className="flex items-center gap-1">
+                          <span className="kw-context-badge">{ctx.volumeRange}</span>
+                          <span className="kw-context-badge">{ctx.intent}</span>
+                          {ctx.hasLocalPack && (
+                            <span className="kw-context-badge">Local Pack</span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <div className="flex items-center gap-3 text-sm flex-shrink-0">
                     <span className={visibilityColor(data.visibilityScore)}>
                       {data.visibilityScore.toFixed(0)}% top 3
                     </span>
@@ -426,6 +591,18 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan }: ResultsDashbo
           })}
         </div>
       </div>
+
+      {/* Top Competitors */}
+      <TopCompetitorsCard scan={scan} />
+
+      {/* GSC-14 + GSC-15: GSC Traffic Insights */}
+      {businessId && (
+        <GSCInsights
+          businessId={businessId}
+          scanKeywords={scan.config.keywords}
+          onSuggestKeyword={onSuggestKeyword}
+        />
+      )}
 
       {/* Scan Info */}
       <div className="card p-4 bg-char-900/30">

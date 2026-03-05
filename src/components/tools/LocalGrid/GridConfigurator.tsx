@@ -10,6 +10,8 @@ interface GridConfiguratorProps {
   onCenterChange: (lat: number, lng: number) => void;
   onStartScan: (config: GridConfig) => void;
   onBack: () => void;
+  /** Pre-fill a keyword (e.g. from a GSC suggestion) */
+  initialKeyword?: string;
 }
 
 const GRID_SIZES: { size: GridSize; points: number; description: string }[] = [
@@ -22,10 +24,14 @@ const GRID_SIZES: { size: GridSize; points: number; description: string }[] = [
 const MAX_KEYWORDS = 5;
 const RADIUS_CHIPS = [0.5, 1, 2, 3, 5, 10];
 
-export function GridConfigurator({ business, scanCenter, onCenterChange, onStartScan, onBack }: GridConfiguratorProps) {
+export function GridConfigurator({ business, scanCenter, onCenterChange, onStartScan, onBack, initialKeyword }: GridConfiguratorProps) {
   const [gridSize, setGridSize] = useState<GridSize>(5);
   const [radius, setRadius] = useState(2);
-  const [keywords, setKeywords] = useState<Keyword[]>([]);
+  const [keywords, setKeywords] = useState<Keyword[]>(() =>
+    initialKeyword
+      ? [{ id: Date.now().toString(), text: initialKeyword, active: true }]
+      : [],
+  );
   const [keywordInput, setKeywordInput] = useState('');
 
   const selectedGrid = GRID_SIZES.find((g) => g.size === gridSize)!;

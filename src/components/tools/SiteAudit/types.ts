@@ -20,7 +20,7 @@ export type TabId =
   | 'overview' | 'issues' | 'meta' | 'content'
   | 'links' | 'resources' | 'technical' | 'pages'
   | 'pagespeed' | 'social' | 'localrankings'
-  | 'pagehealth' | 'structure' | 'cannibalization';
+  | 'pagehealth' | 'structure' | 'cannibalization' | 'gsc';
 
 export type UrlType =
   | 'homepage' | 'service' | 'blog' | 'location'
@@ -388,6 +388,8 @@ export interface CannibalizationConflict {
   volume: number;
   cpc: number;
   market: string;
+  /** Total clicks across all competing pages for this query (GSC conflicts only) */
+  totalClicks?: number;
   primary: {
     url: string;
     path: string;
