@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { verifyDomainTxt } from '@/lib/websiteBuilder/domainVerification';
+import { addDomainToVercel } from '@/lib/websiteBuilder/vercelDomains';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -58,18 +59,29 @@ export async function POST(request: NextRequest) {
   const verified = await verifyDomainTxt(domainRow.domain, domainRow.verification_token);
 
   if (verified) {
+    // Register domain with Vercel so it routes traffic to this deployment
+    const vercelResult = await addDomainToVercel(domainRow.domain);
+
     await (supabase as any)
       .from('business_domains')
       .update({
         dns_verified: true,
         dns_verified_at: new Date().toISOString(),
-        ssl_status: 'provisioning',
+        // ssl_status reflects whether Vercel accepted the domain
+        ssl_status: vercelResult.ok ? 'provisioning' : 'failed',
       })
       .eq('id', body.domainId);
 
+    if (!vercelResult.ok) {
+      return NextResponse.json({
+        verified: true,
+        warning: `DNS verified but Vercel domain registration failed: ${vercelResult.error}. Contact support.`,
+      });
+    }
+
     return NextResponse.json({
       verified: true,
-      message: 'Domain verified! SSL provisioning will begin shortly.',
+      message: 'Domain verified and registered. SSL provisioning will begin shortly.',
     });
   }
 
