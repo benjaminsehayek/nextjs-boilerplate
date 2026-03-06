@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
-import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/context/AuthContext';
 import { useUser } from '@/lib/hooks/useUser';
@@ -21,15 +20,83 @@ import { MarketModal } from '@/components/settings/MarketModal';
 import { MarketsList } from '@/components/settings/MarketsList';
 import { profileUpdateSchema } from '@/lib/validations/profile';
 import { useGSCConnection } from '@/lib/hooks/useGSCConnection';
+import { CurrentPlanCard } from '@/components/billing/CurrentPlanCard';
+import { UsageCard } from '@/components/billing/UsageCard';
+import { PaymentMethodCard } from '@/components/billing/PaymentMethodCard';
+import { BillingToggle } from '@/components/billing/BillingToggle';
+import { PlanCard } from '@/components/billing/PlanCard';
+import { SUBSCRIPTION_TIERS, type BillingInterval } from '@/lib/stripe/config';
+import type { CheckoutResponse } from '@/types';
 import { z } from 'zod';
 import type { BusinessLocation } from '@/types';
+
+// ── Billing modal helpers ─────────────────────────────────────────────────────
+
+const FREE_TIER_FEATURES_LOST: string[] = [
+  'Email/SMS campaigns', 'Contact database', 'Site & off-page auditing',
+  'Lead intelligence', 'AI content generation', 'Local grid scanning',
+  'Keyword research tools', 'Priority support',
+];
+
+const TIER_FEATURES_LOST: Record<string, string[]> = {
+  growth: ['AI content generation', 'Local grid scanning', 'Campaign sending limit increases', 'Priority support'],
+  analysis: ['Site auditing', 'Off-page auditing', 'Lead intelligence', 'Keyword research tools'],
+  marketing: ['Email/SMS campaigns', 'Contact database', 'SendGrid integration', 'Campaign analytics'],
+};
+
+function CancelConfirmModal({ isOpen, onClose, onConfirm, periodEnd, tier, loading, error }: {
+  isOpen: boolean; onClose: () => void; onConfirm: () => void;
+  periodEnd: string; tier: string; loading: boolean; error: string | null;
+}) {
+  if (!isOpen) return null;
+  const featuresLost = TIER_FEATURES_LOST[tier] || [];
+  return (
+    <div className="animate-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="animate-modal-card card max-w-md w-full p-6">
+        <h2 className="font-display text-xl mb-2">Cancel Subscription?</h2>
+        <p className="text-sm text-ash-300 mb-4">Your plan will remain active until <span className="font-semibold text-ash-100">{periodEnd}</span>.</p>
+        {featuresLost.length > 0 && (<>
+          <p className="text-sm text-ash-400 mb-2">After that, you&apos;ll lose access to:</p>
+          <ul className="mb-5 space-y-1.5">{featuresLost.map((f) => (<li key={f} className="flex items-center gap-2 text-sm text-ash-300"><span className="text-danger text-xs">✕</span>{f}</li>))}</ul>
+        </>)}
+        {error && <p className="text-sm text-danger mb-4">{error}</p>}
+        <div className="flex gap-3">
+          <button onClick={onClose} className="btn-secondary flex-1" disabled={loading}>Keep My Plan</button>
+          <button onClick={onConfirm} disabled={loading} className="btn-danger flex-1 disabled:opacity-50">{loading ? 'Cancelling...' : 'Cancel Subscription'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DowngradeConfirmModal({ isOpen, onClose, onConfirm, periodEnd, loading, error }: {
+  isOpen: boolean; onClose: () => void; onConfirm: () => void;
+  periodEnd: string; loading: boolean; error: string | null;
+}) {
+  if (!isOpen) return null;
+  return (
+    <div className="animate-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="animate-modal-card card max-w-md w-full p-6">
+        <h2 className="font-display text-xl mb-2">Downgrade to Free?</h2>
+        <p className="text-sm text-ash-300 mb-4">Downgrading to Free will cancel your subscription at the end of the current billing period. You&apos;ll keep full access until <span className="font-semibold text-ash-100">{periodEnd}</span>.</p>
+        <p className="text-sm text-ash-400 mb-2">At that time, you&apos;ll lose access to:</p>
+        <ul className="mb-5 space-y-1.5">{FREE_TIER_FEATURES_LOST.map((f) => (<li key={f} className="flex items-center gap-2 text-sm text-ash-300"><span className="text-danger text-xs">✕</span>{f}</li>))}</ul>
+        {error && <p className="text-sm text-danger mb-4">{error}</p>}
+        <div className="flex gap-3">
+          <button onClick={onClose} className="btn-secondary flex-1" disabled={loading}>Keep My Plan</button>
+          <button onClick={onConfirm} disabled={loading} className="btn-danger flex-1 disabled:opacity-50">{loading ? 'Downgrading...' : 'Downgrade to Free'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function SettingsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { refreshBusiness } = useAuth();
   const { user, profile, loading: userLoading, refreshProfile } = useUser();
-  const { tier, scansRemaining, tokensRemaining } = useSubscription();
+  const { tier } = useSubscription();
   const { business } = useBusiness();
   const { locations, loading: locationsLoading } = useLocations(business?.id);
   const { toast } = useToast();
@@ -96,6 +163,20 @@ function SettingsPageContent() {
   const [sitemapsError, setSitemapsError] = useState<string | null>(null);
   const [sitemapsFetched, setSitemapsFetched] = useState(false);
 
+  // ── Billing state ─────────────────────────────────────────────────────────
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>('monthly');
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [showBillingSuccess, setShowBillingSuccess] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelledAt, setCancelledAt] = useState<number | null>(null);
+  const [showDowngradeConfirm, setShowDowngradeConfirm] = useState(false);
+  const [downgradeLoading, setDowngradeLoading] = useState(false);
+  const [downgradeError, setDowngradeError] = useState<string | null>(null);
+  const [downgradedAt, setDowngradedAt] = useState<number | null>(null);
+
   // Load WordPress URL from localStorage — password intentionally NOT persisted (security)
   useEffect(() => {
     if (!business?.id) return;
@@ -118,6 +199,20 @@ function SettingsPageContent() {
     if (gscParam === 'connected') toast.success('Google Search Console connected!');
     if (gscParam === 'error') toast.error('Failed to connect Google Search Console. Please try again.');
     if (gscParam === 'noproperty') toast.error('No Search Console property found. Make sure the site is verified in Google Search Console and try again.');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Handle Stripe checkout success redirect
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('session_id')) {
+      setShowBillingSuccess(true);
+      window.history.replaceState({}, '', '/settings?tab=billing');
+      setActiveTab('billing');
+      refreshProfile();
+      setTimeout(() => setShowBillingSuccess(false), 5000);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -565,12 +660,74 @@ function SettingsPageContent() {
     }
   };
 
-  const scansUsed = profile?.scan_credits_used || 0;
-  const scansLimit = profile?.scan_credits_limit || 1;
-  const tokensUsed = profile?.content_tokens_used || 0;
-  const tokensLimit = profile?.content_tokens_limit || 0;
-  const scansPercentage = Math.round((scansUsed / scansLimit) * 100);
-  const tokensPercentage = tokensLimit > 0 ? Math.round((tokensUsed / tokensLimit) * 100) : 0;
+  // ── Billing handlers ───────────────────────────────────────────────────────
+  const handleSelectPlan = async (planTier: string, planInterval: BillingInterval) => {
+    if (checkoutLoading !== null) return;
+    if (planTier === 'free') {
+      if (tier !== 'free') { setShowDowngradeConfirm(true); setDowngradeError(null); }
+      return;
+    }
+    if (planTier === tier) return;
+    setCheckoutLoading(planTier);
+    setCheckoutError(null);
+    try {
+      const response = await fetch('/api/stripe/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tier: planTier, interval: planInterval }),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to create checkout session');
+      }
+      const { url }: CheckoutResponse = await response.json();
+      window.location.href = url;
+    } catch (err) {
+      setCheckoutError(err instanceof Error ? err.message : 'Failed to initiate checkout. Please try again.');
+      setCheckoutLoading(null);
+    }
+  };
+
+  const handleCancelSubscription = async () => {
+    setCancelLoading(true);
+    setCancelError(null);
+    try {
+      const res = await fetch('/api/stripe/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      const data = await res.json();
+      if (!res.ok) { setCancelError(data.error || 'Failed to cancel subscription. Please try again.'); return; }
+      setCancelledAt(data.cancelsAt as number);
+      setShowCancelConfirm(false);
+      toast.success('Subscription cancelled');
+      refreshProfile();
+    } catch { setCancelError('Network error. Please try again.'); }
+    finally { setCancelLoading(false); }
+  };
+
+  const handleDowngradeToFree = async () => {
+    setDowngradeLoading(true);
+    setDowngradeError(null);
+    try {
+      const res = await fetch('/api/stripe/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      const data = await res.json();
+      if (!res.ok) { setDowngradeError(data.error || 'Failed to downgrade. Please try again.'); return; }
+      setDowngradedAt(data.cancelsAt as number);
+      setShowDowngradeConfirm(false);
+      toast.success('Plan will downgrade to Free at period end');
+      refreshProfile();
+    } catch { setDowngradeError('Network error. Please try again.'); }
+    finally { setDowngradeLoading(false); }
+  };
+
+  const formatUnixDate = (ts: number) =>
+    new Date(ts * 1000).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  const isCancelling = cancelledAt !== null || (profile as any)?.subscription_status === 'cancelling';
+  const cancelsOnDate =
+    cancelledAt !== null
+      ? formatUnixDate(cancelledAt)
+      : profile?.subscription_period_end
+        ? new Date(profile.subscription_period_end).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+        : null;
 
   if (userLoading) {
     return (
@@ -1282,112 +1439,143 @@ function SettingsPageContent() {
       {/* Billing Tab */}
       {activeTab === 'billing' && (
         <div className="space-y-6">
-          {/* Current Plan Card */}
-          <div className="card p-6">
-            <div className="flex items-center justify-between mb-6">
+          {/* Success Message */}
+          {showBillingSuccess && (
+            <div className="p-4 bg-success/10 border border-success rounded-btn flex items-center gap-3">
+              <span className="text-success text-xl">✓</span>
               <div>
-                <h2 className="font-display text-xl">Current Plan</h2>
-                <p className="text-sm text-ash-400">Manage your subscription</p>
-              </div>
-              <Link href="/billing" className="btn-primary text-sm">
-                View All Plans
-              </Link>
-            </div>
-
-            <div className="flex items-center gap-4 mb-6">
-              <div className="flex-1">
-                <p className="text-3xl font-display capitalize mb-1">{tier}</p>
-                {profile?.subscription_status === 'active' && (
-                  <span className="inline-block px-3 py-1 bg-success/20 text-success text-sm rounded-full">
-                    Active
-                  </span>
-                )}
+                <p className="font-semibold text-success">Subscription updated successfully!</p>
+                <p className="text-sm text-success/80">Your account has been upgraded. Changes may take a few moments to reflect.</p>
               </div>
             </div>
-          </div>
-
-          {/* Usage Card */}
-          <div className="card p-6">
-            <h2 className="font-display text-xl mb-6">Usage This Period</h2>
-
-            <div className="space-y-6">
-              {/* Scans */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium">Site Audits</span>
-                  <span className="text-sm text-ash-400">
-                    {scansUsed} / {scansLimit}
-                  </span>
-                </div>
-                <div className="h-2 bg-char-700 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full transition-all ${
-                      scansPercentage >= 90
-                        ? 'bg-danger'
-                        : scansPercentage >= 70
-                        ? 'bg-warning'
-                        : 'bg-flame-500'
-                    }`}
-                    style={{ width: `${Math.min(scansPercentage, 100)}%` }}
-                  />
-                </div>
-                <p className="text-xs text-ash-500 mt-1">
-                  {scansLimit - scansUsed} scans remaining
-                </p>
-              </div>
-
-              {/* Content Tokens */}
-              {tokensLimit > 0 && (
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium">Content Articles</span>
-                    <span className="text-sm text-ash-400">
-                      {tokensUsed} / {tokensLimit}
-                    </span>
-                  </div>
-                  <div className="h-2 bg-char-700 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full transition-all ${
-                        tokensPercentage >= 90
-                          ? 'bg-danger'
-                          : tokensPercentage >= 70
-                          ? 'bg-warning'
-                          : 'bg-heat-500'
-                      }`}
-                      style={{ width: `${Math.min(tokensPercentage, 100)}%` }}
-                    />
-                  </div>
-                  <p className="text-xs text-ash-500 mt-1">
-                    {tokensLimit - tokensUsed} articles remaining
-                  </p>
-                </div>
-              )}
-
-              {/* Reset Date */}
-              {profile?.subscription_period_end && (
-                <div className="pt-4 border-t border-char-700">
-                  <p className="text-sm text-ash-400">
-                    Resets on{' '}
-                    <span className="font-semibold text-ash-200">
-                      {new Date(profile.subscription_period_end).toLocaleDateString('en-US', {
-                        month: 'long',
-                        day: 'numeric',
-                      })}
-                    </span>
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Upgrade CTA if free tier */}
-          {tier === 'free' && (
-            <UpgradeCTA
-              title="Unlock More Power"
-              description="Upgrade to get more scans, content generation, and premium features."
-              feature="Starting at just $99/month for the Analysis tier"
-            />
           )}
+
+          {/* Cancelled success banner */}
+          {cancelledAt !== null && cancelsOnDate && (
+            <div className="p-4 bg-char-800 border border-ash-600 rounded-btn">
+              <p className="text-sm text-ash-300">
+                Subscription cancelled. Access continues until{' '}
+                <span className="font-semibold text-ash-100">{cancelsOnDate}</span>.
+              </p>
+            </div>
+          )}
+
+          {/* Downgrade to free banner */}
+          {downgradedAt !== null && (
+            <div className="p-4 bg-char-800 border border-ash-600 rounded-btn flex items-center gap-3">
+              <span className="inline-block px-2 py-0.5 bg-ash-700 text-ash-300 rounded-full text-xs font-medium shrink-0">Downgrading to Free</span>
+              <p className="text-sm text-ash-300">
+                Your plan will downgrade to Free on{' '}
+                <span className="font-semibold text-ash-100">{formatUnixDate(downgradedAt)}</span>.
+                You have full access until then.
+              </p>
+            </div>
+          )}
+
+          {/* Current Plan & Usage */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <CurrentPlanCard profile={profile} tier={tier} />
+            <UsageCard profile={profile} />
+          </div>
+
+          {/* Cancel subscription */}
+          {tier !== 'free' && (
+            <div>
+              {isCancelling && cancelsOnDate ? (
+                <p className="text-sm text-ash-400">
+                  <span className="inline-block px-2 py-0.5 bg-danger/10 text-danger rounded-full text-xs font-medium mr-2">
+                    Cancels on {cancelsOnDate}
+                  </span>
+                  Your plan remains active until then.
+                </p>
+              ) : (
+                <button
+                  onClick={() => { setShowCancelConfirm(true); setCancelError(null); }}
+                  className="btn-ghost text-danger text-sm"
+                >
+                  Cancel Subscription
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Upgrade Plans */}
+          <div>
+            <h2 className="font-display text-2xl mb-2">Upgrade Your Plan</h2>
+            <p className="text-ash-400 mb-6">Choose the plan that fits your business needs</p>
+
+            <div className="flex justify-center mb-8">
+              <BillingToggle interval={billingInterval} onChange={setBillingInterval} />
+            </div>
+
+            {checkoutError && (
+              <div className="mb-6 bg-danger/10 border border-danger text-danger px-4 py-3 rounded-btn text-sm flex items-center justify-between gap-3">
+                <p>{checkoutError}</p>
+                <button onClick={() => setCheckoutError(null)} className="hover:opacity-80 flex-shrink-0">✕</button>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+              {Object.values(SUBSCRIPTION_TIERS).map((tierConfig) => (
+                <PlanCard
+                  key={tierConfig.tier}
+                  tier={tierConfig}
+                  interval={billingInterval}
+                  currentTier={tier}
+                  onSelectPlan={handleSelectPlan}
+                  loading={checkoutLoading === tierConfig.tier}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Additional Services */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+            <div className="card">
+              <div className="p-6">
+                <h3 className="font-display text-lg mb-2 flex items-center gap-2">
+                  <span>📞</span>
+                  <span>Need Marketing Strategy Help?</span>
+                </h3>
+                <p className="text-sm text-ash-400 mb-4">
+                  Want personalized marketing strategy and consulting? Give us a call!
+                </p>
+                <a href="tel:425-232-6029" className="btn-primary w-full block text-center">
+                  Call 425-232-6029
+                </a>
+              </div>
+            </div>
+            <PaymentMethodCard />
+          </div>
+
+          {/* Cancel Confirmation Modal */}
+          <CancelConfirmModal
+            isOpen={showCancelConfirm}
+            onClose={() => { setShowCancelConfirm(false); setCancelError(null); }}
+            onConfirm={handleCancelSubscription}
+            periodEnd={
+              profile?.subscription_period_end
+                ? new Date(profile.subscription_period_end).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                : 'the end of your billing period'
+            }
+            tier={tier}
+            loading={cancelLoading}
+            error={cancelError}
+          />
+
+          {/* Downgrade to Free Confirmation Modal */}
+          <DowngradeConfirmModal
+            isOpen={showDowngradeConfirm}
+            onClose={() => { setShowDowngradeConfirm(false); setDowngradeError(null); }}
+            onConfirm={handleDowngradeToFree}
+            periodEnd={
+              profile?.subscription_period_end
+                ? new Date(profile.subscription_period_end).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                : 'the end of your billing period'
+            }
+            loading={downgradeLoading}
+            error={downgradeError}
+          />
         </div>
       )}
     </div>
