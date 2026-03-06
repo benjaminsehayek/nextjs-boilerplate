@@ -9,16 +9,17 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder'
 );
 
-// B14-11: In-memory idempotency guard — prevents double-processing on Stripe retries
-// Entries expire after 2 hours (well beyond Stripe's retry window)
-const processedEvents = new Map<string, number>();
+// B16-11: DB-backed idempotency (replaces B14-11 in-memory-only guard)
+// In-memory cache for fast-path; DB table for restart durability.
+const processedEventsCache = new Map<string, number>();
 const EVENT_TTL_MS = 2 * 60 * 60 * 1000;
-function isEventProcessed(eventId: string): boolean {
-  const ts = processedEvents.get(eventId);
+
+function isInMemoryProcessed(eventId: string): boolean {
+  const ts = processedEventsCache.get(eventId);
   if (ts && Date.now() - ts < EVENT_TTL_MS) return true;
-  // Cleanup stale entries opportunistically
-  for (const [id, stamp] of processedEvents) {
-    if (Date.now() - stamp >= EVENT_TTL_MS) processedEvents.delete(id);
+  // Opportunistic cleanup of expired entries
+  for (const [id, stamp] of processedEventsCache) {
+    if (Date.now() - stamp >= EVENT_TTL_MS) processedEventsCache.delete(id);
   }
   return false;
 }
@@ -43,11 +44,27 @@ export async function POST(request: Request) {
     return new NextResponse('Webhook signature failed', { status: 400 });
   }
 
-  // B14-11: Idempotency check — skip already-processed events
-  if (isEventProcessed(event.id)) {
+  // B16-11: Idempotency — fast-path in-memory, then DB for restart durability
+  if (isInMemoryProcessed(event.id)) {
     return new NextResponse('OK');
   }
-  processedEvents.set(event.id, Date.now());
+
+  // DB-backed: INSERT with unique constraint — duplicate = already processed
+  const { error: idempotencyError } = await supabase
+    .from('stripe_webhook_events')
+    .insert({ event_id: event.id });
+
+  if (idempotencyError?.code === '23505') {
+    // Unique violation — event was processed before (e.g. after restart)
+    processedEventsCache.set(event.id, Date.now());
+    return new NextResponse('OK');
+  }
+  if (idempotencyError) {
+    // Non-fatal — log and continue; worst case is a rare duplicate (operations are idempotent)
+    console.error('[Stripe webhook] idempotency insert error:', idempotencyError.message);
+  }
+
+  processedEventsCache.set(event.id, Date.now());
 
   switch (event.type) {
     case 'checkout.session.completed': {

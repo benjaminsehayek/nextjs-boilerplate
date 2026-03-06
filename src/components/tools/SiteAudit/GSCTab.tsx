@@ -472,6 +472,106 @@ function LocalQuerySpotlight({ rows, cities }: LocalSpotlightProps) {
   );
 }
 
+// ─── GSC-24: Per-Location Organic Breakdown ──────────────────────────────────
+
+interface LocationOrganicBreakdownProps {
+  rows: GSCRow[];
+  cities: string[];
+}
+
+interface LocationStat {
+  city: string;
+  clicks: number;
+  impressions: number;
+  avgPosition: number;
+  rowCount: number;
+}
+
+function LocationOrganicBreakdown({ rows, cities }: LocationOrganicBreakdownProps) {
+  const locationStats = useMemo((): LocationStat[] => {
+    if (cities.length === 0 || rows.length === 0) return [];
+
+    return cities
+      .map((city): LocationStat | null => {
+        const citySlug = city.toLowerCase().replace(/\s+/g, '-');
+        const cityPlain = city.toLowerCase();
+        // Match pages containing city as slug (e.g. "/services/denver/") or plain name
+        const cityRows = rows.filter((r) => {
+          const page = (r.keys[1] ?? '').toLowerCase();
+          return page.includes(citySlug) || page.includes(cityPlain);
+        });
+        if (cityRows.length === 0) return null;
+
+        const totalClicks = cityRows.reduce((s, r) => s + r.clicks, 0);
+        const totalImpressions = cityRows.reduce((s, r) => s + r.impressions, 0);
+        const avgPosition = cityRows.reduce((s, r) => s + r.position, 0) / cityRows.length;
+        return { city, clicks: totalClicks, impressions: totalImpressions, avgPosition, rowCount: cityRows.length };
+      })
+      .filter((s): s is LocationStat => s !== null)
+      .sort((a, b) => b.clicks - a.clicks);
+  }, [rows, cities]);
+
+  if (locationStats.length === 0) return null;
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <h3 className="font-display text-lg mb-1">Per-Location Organic Performance</h3>
+        <p className="text-xs text-ash-500 mb-1">
+          GSC data filtered to pages whose URL contains each location city name
+        </p>
+        <p className="text-xs text-ash-600">
+          {locationStats.length} location{locationStats.length !== 1 ? 's' : ''} with location-specific pages in GSC
+        </p>
+      </div>
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-char-700 bg-char-900">
+                <th className="text-left text-xs text-ash-500 font-display px-4 py-2.5">Location</th>
+                <th className="text-right text-xs text-ash-500 font-display px-4 py-2.5">Clicks</th>
+                <th className="text-right text-xs text-ash-500 font-display px-4 py-2.5">Impressions</th>
+                <th className="text-right text-xs text-ash-500 font-display px-4 py-2.5">Avg Position</th>
+                <th className="text-right text-xs text-ash-500 font-display px-4 py-2.5">Rows</th>
+              </tr>
+            </thead>
+            <tbody>
+              {locationStats.map((stat) => (
+                <tr key={stat.city} className="border-b border-char-800 last:border-0 hover:bg-char-800/50 transition-colors">
+                  <td className="px-4 py-2.5">
+                    <span className="text-ash-200 text-sm font-display">{stat.city}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-display tabular-nums text-ash-200">
+                    {fmtN(stat.clicks)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-ash-400">
+                    {fmtN(stat.impressions)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <span className={`font-display tabular-nums ${
+                      stat.avgPosition <= 3
+                        ? 'text-success'
+                        : stat.avgPosition <= 10
+                        ? 'text-yellow-400'
+                        : 'text-ash-400'
+                    }`}>
+                      {fmtPos(stat.avgPosition)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-ash-500">
+                    {stat.rowCount}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── GSC-29: Position Volatility ─────────────────────────────────────────────
 
 interface VolatilityProps {
@@ -697,6 +797,14 @@ export default function GSCTab({ results }: TabProps) {
       {/* GSC-09: Local Spotlight */}
       <div className="border-t border-char-700" />
       <LocalQuerySpotlight rows={rows} cities={cities} />
+
+      {/* GSC-24: Per-Location Organic Breakdown */}
+      {cities.length > 0 && (
+        <>
+          <div className="border-t border-char-700" />
+          <LocationOrganicBreakdown rows={rows} cities={cities} />
+        </>
+      )}
 
       {/* GSC-29: Position Volatility */}
       {recentRows.length > 0 && (

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Monitor } from 'lucide-react';
 import { useAuth } from '@/lib/context/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 import type { CalendarItemV2, SimpleStrategyConfig, SiteAudit } from '@/types';
@@ -346,16 +347,18 @@ function GSCInsightsPanel({ businessId, industry, city, onImportKeywords, onGscM
 
 interface GSCInsightsPanelWithMarketsProps extends GSCInsightsPanelProps {
   marketCities: string[];
+  calendarItems?: CalendarItemV2[];
   querySummariesForMarkets?: GSCQuerySummary[];
 }
 
 function GSCInsightsPanelWithMarkets({
-  businessId, industry, city, onImportKeywords, onGscMapReady, marketCities,
+  businessId, industry, city, onImportKeywords, onGscMapReady, marketCities, calendarItems = [],
 }: GSCInsightsPanelWithMarketsProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [gscConnected, setGscConnected] = useState<boolean | null>(null);
   const [querySummaries, setQuerySummaries] = useState<GSCQuerySummary[]>([]);
+  const [gscRows, setGscRows] = useState<GSCRow[]>([]);
   const [importDone, setImportDone] = useState(false);
 
   useEffect(() => {
@@ -378,6 +381,7 @@ function GSCInsightsPanelWithMarkets({
         const rows: GSCRow[] = json.rows || [];
         const summaries = aggregateGSCRows(rows);
         setQuerySummaries(summaries);
+        setGscRows(rows);
 
         // Build GSC map for GSC-25
         const gscMap = new Map<string, { clicks: number; impressions: number; position: number }>();
@@ -393,6 +397,30 @@ function GSCInsightsPanelWithMarkets({
 
     return () => { cancelled = true; };
   }, [businessId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // GSC-12: Underperforming content — calendar items whose targetUrl ranks position > 15
+  const underperformingItems = useMemo((): UnderperformingItem[] => {
+    if (gscRows.length === 0 || calendarItems.length === 0) return [];
+    const pagePositions = buildPagePositionMap(gscRows);
+    return calendarItems
+      .filter((item) => {
+        if (!item.targetUrl) return false;
+        const path = item.targetUrl.startsWith('/') ? item.targetUrl : `/${item.targetUrl}`;
+        const pos = pagePositions.get(path);
+        return pos !== undefined && pos > 15;
+      })
+      .map((item) => {
+        const path = item.targetUrl!.startsWith('/') ? item.targetUrl! : `/${item.targetUrl!}`;
+        return {
+          id: item.id,
+          title: item.title,
+          targetUrl: item.targetUrl!,
+          position: Math.round(pagePositions.get(path)!),
+        };
+      })
+      .sort((a, b) => b.position - a.position)
+      .slice(0, 10);
+  }, [gscRows, calendarItems]);
 
   // All cities to match against: primary city + market cities, deduped, lowercase
   const allCities = useMemo(() => {
@@ -540,6 +568,41 @@ function GSCInsightsPanelWithMarkets({
         </div>
       )}
 
+      {/* GSC-12: Underperforming Content */}
+      {underperformingItems.length > 0 && (
+        <div className="card p-0 overflow-hidden">
+          <div className="p-4 border-b border-char-700">
+            <h3 className="text-sm font-display text-ash-200 flex items-center gap-2">
+              <span className="text-danger">⚠</span>
+              Underperforming Content
+              <span className="text-xs text-ash-500 font-normal">({underperformingItems.length})</span>
+            </h3>
+            <p className="text-xs text-ash-500 mt-0.5">
+              Calendar items whose target page ranks beyond position 15 — content isn't gaining traction. Refresh, consolidate, or promote these pages.
+            </p>
+          </div>
+          <div className="divide-y divide-char-700">
+            {underperformingItems.map((item) => (
+              <div key={item.id} className="flex items-center justify-between px-4 py-2.5 gap-4">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-ash-200 truncate">{item.title}</p>
+                  <p className="text-[10px] font-mono text-ash-500 mt-0.5 truncate">{item.targetUrl}</p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="text-[10px] bg-danger/10 text-danger border border-danger/30 px-2 py-0.5 rounded-full whitespace-nowrap">
+                    Refresh or consolidate
+                  </span>
+                  <div className="text-right">
+                    <p className="text-xs font-display text-danger">#{item.position}</p>
+                    <p className="text-[10px] text-ash-500">position</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* GSC-13: Local Page Opportunities */}
       {localOpportunities.length > 0 && (
         <div className="card p-0 overflow-hidden">
@@ -584,6 +647,36 @@ function GSCInsightsPanelWithMarkets({
       )}
     </div>
   );
+}
+
+// ── GSC-12: Underperforming content detection ─────────────────────────────────
+
+interface UnderperformingItem {
+  id: string;
+  title: string;
+  targetUrl: string;
+  position: number;
+}
+
+function buildPagePositionMap(rows: GSCRow[]): Map<string, number> {
+  const pageMap = new Map<string, { posSum: number; count: number }>();
+  for (const row of rows) {
+    const rawPage = row.keys[1] ?? '';
+    if (!rawPage) continue;
+    let pathname: string;
+    try {
+      pathname = new URL(rawPage).pathname;
+    } catch {
+      pathname = rawPage.startsWith('/') ? rawPage : `/${rawPage}`;
+    }
+    const prev = pageMap.get(pathname) ?? { posSum: 0, count: 0 };
+    pageMap.set(pathname, { posSum: prev.posSum + row.position, count: prev.count + 1 });
+  }
+  const result = new Map<string, number>();
+  for (const [path, d] of pageMap) {
+    result.set(path, d.posSum / d.count);
+  }
+  return result;
 }
 
 // ── GSC-25: Keyword Research Results with actual GSC traffic ─────────────────
@@ -1073,6 +1166,13 @@ export default function ContentStrategyPage() {
   const industry = (business as any)?.industry ?? '';
 
   return (
+    <>
+      <div className="md:hidden flex flex-col items-center justify-center py-32 gap-6 px-8 text-center">
+        <Monitor className="w-12 h-12 text-ash-400" />
+        <h2 className="text-xl font-display text-ash-100">Best on desktop</h2>
+        <p className="text-sm text-ash-400 max-w-xs">This tool is designed for larger screens. Visit on a desktop for the full experience.</p>
+      </div>
+      <div className="hidden md:block">
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
       {/*
         INTENTIONALLY domain-level — no location selector.
@@ -1252,6 +1352,7 @@ export default function ContentStrategyPage() {
             marketCities={marketCities}
             onImportKeywords={handleImportKeywords}
             onGscMapReady={setGscMap}
+            calendarItems={itemsWithStatus}
           />
         </div>
       )}
@@ -1304,5 +1405,7 @@ export default function ContentStrategyPage() {
         </ErrorBoundary>
       )}
     </div>
+      </div>
+    </>
   );
 }

@@ -435,7 +435,7 @@ STILL OPEN (deferred / complex):
 [Y] B16-08 MEDIUM: multiple pages — missing error.tsx boundaries.
 [Y] B16-09 MEDIUM: marketing/page.tsx — no error toast on fetch failure. Fixed: added toast.error() in catch.
 [Y] B16-10 LOW: api/claude/generate/route.ts — client can specify any model. Fixed: whitelist to sonnet + haiku.
-[ ] B16-11 LOW: api/stripe/webhook/route.ts — in-memory idempotency lost on restart.
+[Y] B16-11 LOW: api/stripe/webhook/route.ts — in-memory idempotency lost on restart. Fixed: DB-backed stripe_webhook_events table (event_id PRIMARY KEY); INSERT + 23505 unique-violation = already processed; fast in-memory Map retained for same-process dedup.
 [N] B16-12 LOW: api/geocode/route.ts — auth check prevents anonymous abuse.
 [N] B16-13 LOW: disabled delete button — acceptable.
 [N] B16-15 MEDIUM: api/user/export/route.ts — already uses count-only query for contacts (head:true), not row dump. No fix needed.
@@ -463,7 +463,7 @@ Note: national GSC data is still valuable for local — most searchers for a loc
 --- Content Strategy enhancements ---
 [Y] GSC-10 Seed keyword research from real GSC queries — "Import top keywords from GSC" button in Content Strategy GSC Insights panel; imports position>5 or impressions≥100 queries, enriches via keyword-research API.
 [Y] GSC-11 Content gap detection — Content Gaps section shows queries with ≥100 impressions and position>10 as "Create a [query] page" suggestions; top 10 by impressions.
-[ ] GSC-12 Underperforming content identification — pages already in Content Strategy calendar that rank position >15 in GSC = not working; flag with "Refresh or consolidate" badge to prompt action. PRECONDITION: verify content_calendar DB rows store a target URL field; cross-reference is only possible if the calendar item links to the page it targets.
+[Y] GSC-12 Underperforming content identification — calendar items with targetUrl ranking >15 in GSC flagged with "Refresh or consolidate" badge in GSCInsightsPanelWithMarkets; buildPagePositionMap() normalises full GSC URLs to pathname for cross-reference; calendarItems prop threaded from content-strategy/page.tsx.
 [Y] GSC-13 Local landing page opportunities — Local Page Opportunities section filters city-name queries with position>5 from all markets.cities[]; shows "Create [City] service page" suggestions.
 
 --- Local Grid enhancements ---
@@ -485,7 +485,7 @@ NOTE: All items below are FREE within GSC API quota. GSC data is REAL (actual Go
 [Y] GSC-21 Rich result eligibility via searchAppearance dimension — /api/gsc/appearances route created; queries searchAppearance dimension (REVIEW_SNIPPET, FAQ_PAGE, etc.) with 6h cache; returns searchAppearanceRows.
 [Y] GSC-22 Sitemap coverage report via GSC Sitemaps API — /api/gsc/sitemaps route created; Sitemap Coverage table in settings/integrations shows submitted vs indexed per sitemap with warning when indexed < 80%.
 [Y] GSC-23 Monthly YoY organic trend via date dimension — add "date" to the GSC query and fetch 16 months of daily data; aggregate by month server-side; show "Organic traffic +34% vs same period last year" card in Lead Intelligence. NOTE: GSC-02 caching is now done — precondition met; ready to implement.
-[ ] GSC-24 Per-location organic metrics via page URL prefix filter — for multi-location businesses, call GSC analytics once per location using a dimensionFilterGroup on page contains "/[location-slug]/"; returns location-specific clicks/impressions/position instead of domain-wide totals; enables true side-by-side organic performance comparison across locations and reveals which local pages are actually driving traffic.
+[Y] GSC-24 Per-location organic metrics via page URL prefix filter — LocationOrganicBreakdown component in GSCTab filters existing rows client-side by city slug/name in page URL; shows per-location clicks/impressions/avg position table; no extra API calls needed.
 [Y] GSC-25 Use GSC actual clicks over DataForSEO estimated volume for ranked queries — GSCKeywordTable in Content Strategy shows "Actual traffic (90d)" GSC clicks for keywords with position ≤20; falls back to DataForSEO estimated volume for unranked keywords.
 [Y] GSC-26 Device dimension + mobile/PageSpeed cross-reference — device dimension query added to /api/gsc/analytics (parallel to main query); deviceRows returned for mobile/desktop/tablet breakdown.
 [Y] GSC-27 Local intent dashboard card — "Local Search Visibility" card on dashboard shows localClicks/localImpressions/avgPosition/"near me" impressions computed from GSC rows filtered by market city names.
@@ -550,12 +550,12 @@ Each item surfaces insights hidden in existing response payloads.
 =====================================
 === GSC BATCH (B17) COMPLETE ===
 =====================================
-Items implemented: GSC-01 through GSC-30 (excl. GSC-12/GSC-24)
+Items implemented: GSC-01 through GSC-30 (all)
 Platform-wide: ST-01, OB-01, OB-02, DB-01, PF-01, LM-01–LM-05, MK-16, BL-01
 Cross-tool data: DA-01 through DA-06
 New files: GSCTab.tsx, GSCInsights.tsx, GSCLinkBuilding.tsx, LocationsPerformance.tsx
 New API routes: /api/gsc/sitemaps, /api/gsc/inspect, /api/gsc/appearances, /api/local-grid/alert
 Deferred batch (B17+): B11-12, B12-05, AQ-09, AQ-11, B16-07/08, GSC-23, GSC-29 — all now implemented
 TypeScript: 0 errors target
-Still pending: GSC-12 (precondition: content_calendar URL field), GSC-24 (per-location page prefix filter), B16-11 (stripe webhook idempotency)
+All items complete. No pending items remaining.
 =====================================
