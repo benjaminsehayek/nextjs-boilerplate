@@ -16,6 +16,7 @@ import {
   buildSerpContextBlock,
 } from '@/lib/websiteBuilder/serpContext';
 import { checkBulkSimilarity } from '@/lib/websiteBuilder/similarityCheck';
+import { buildSchemaPrompt } from '@/lib/websiteBuilder/prompts';
 import type {
   BusinessLocation,
   Service,
@@ -168,6 +169,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Too many requests — try again in a few minutes' }, { status: 429 });
   }
 
+  // Subscription gate — bulk generation requires marketing tier or higher
+  const { data: profile } = await (supabase as any)
+    .from('profiles')
+    .select('subscription_tier')
+    .eq('id', user.id)
+    .single();
+
+  const tier = profile?.subscription_tier ?? 'free';
+  const ALLOWED_TIERS = new Set(['marketing', 'growth']);
+  if (!ALLOWED_TIERS.has(tier)) {
+    return NextResponse.json(
+      { error: 'Bulk generation requires a Marketing or Growth plan. Upgrade in Billing.' },
+      { status: 403 },
+    );
+  }
+
   let body: z.infer<typeof BodySchema>;
   try {
     const raw = await request.json();
@@ -271,6 +288,51 @@ export async function POST(request: NextRequest) {
     services.map((svc) => ({ location: loc, service: svc }))
   );
 
+  // Pre-compute all slugs and titles for internal linking
+  const allPageMeta = matrix.map(({ location, service }) => ({
+    slug: `${toSlug(location.city)}-${toSlug(location.state)}/${toSlug(service.name)}`,
+    title: `${service.name} in ${location.city}, ${location.state}`,
+    city: location.city,
+    state: location.state,
+    serviceName: service.name,
+  }));
+
+  function getRelatedPages(
+    city: string,
+    state: string,
+    serviceName: string,
+  ): { slug: string; title: string }[] {
+    // Same city, other services (up to 3)
+    const sameCity = allPageMeta
+      .filter((p) => p.city === city && p.state === state && p.serviceName !== serviceName)
+      .slice(0, 3);
+    // Same service, other cities (up to 3)
+    const sameService = allPageMeta
+      .filter((p) => p.serviceName === serviceName && (p.city !== city || p.state !== state))
+      .slice(0, 3);
+    return [...sameCity, ...sameService];
+  }
+
+  function injectRelatedLinks(
+    html: string,
+    businessSlug: string,
+    related: { slug: string; title: string }[],
+  ): string {
+    if (related.length === 0) return html;
+    const items = related
+      .map((r) => `<li><a href="/sites/${businessSlug}/${r.slug}">${r.title}</a></li>`)
+      .join('\n');
+    return (
+      html +
+      `\n<section>\n<h2>Related Services</h2>\n<ul>\n${items}\n</ul>\n</section>`
+    );
+  }
+
+  // Derive a stable business slug from domain or id
+  const businessSlug = biz.domain
+    ? biz.domain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].split('.')[0]
+    : biz.id;
+
   // Pre-fetch enrichment for unique locations (deduplicated by lat/lng bucket)
   const enrichmentCache = new Map<string, LocationEnrichment>();
   const uniqueLocations = new Map<string, BusinessLocation>();
@@ -351,7 +413,7 @@ export async function POST(request: NextRequest) {
           );
 
           // Generate with Claude
-          const { html, meta_title, meta_description } =
+          const { html: rawHtml, meta_title, meta_description } =
             await generateLocationPageHtml(
               service,
               location,
@@ -361,6 +423,46 @@ export async function POST(request: NextRequest) {
               serpBlock,
               keywordAssignment
             );
+
+          // Inject internal links to related location/service pages
+          const related = getRelatedPages(location.city, location.state, service.name);
+          const html = injectRelatedLinks(rawHtml, businessSlug, related);
+
+          // Auto-generate Schema.org JSON-LD (best-effort, uses Haiku)
+          let schema_json: string | null = null;
+          try {
+            const schemaPrompt = buildSchemaPrompt(
+              title,
+              'location_service',
+              biz.name,
+              location.city,
+              location.state,
+              location.phone || biz.phone,
+              biz.domain ?? '',
+            );
+            const schemaRes = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+                'anthropic-version': '2023-06-01',
+              },
+              body: JSON.stringify({
+                model: 'claude-haiku-4-5-20251001',
+                max_tokens: 800,
+                temperature: 0,
+                messages: [{ role: 'user', content: schemaPrompt }],
+              }),
+            });
+            if (schemaRes.ok) {
+              const schemaData = await schemaRes.json();
+              const rawSchema: string = schemaData.content?.[0]?.text ?? '';
+              JSON.parse(rawSchema);
+              schema_json = rawSchema;
+            }
+          } catch {
+            // Best-effort — continue without schema
+          }
 
           // Save as draft
           const { data: page, error: insertError } = await (supabase as any)
@@ -376,6 +478,7 @@ export async function POST(request: NextRequest) {
               html,
               meta_title,
               meta_description,
+              schema_json,
               status: 'draft',
             })
             .select('id, slug, title')

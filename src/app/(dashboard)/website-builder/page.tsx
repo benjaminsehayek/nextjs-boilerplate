@@ -54,6 +54,7 @@ function WebsiteBuilderInner() {
   const [generating, setGenerating] = useState(false);
   const [showGeneratePanel, setShowGeneratePanel] = useState(!!urlKeyword);
   const [showBulkPanel, setShowBulkPanel] = useState(false);
+  const [syncingGsc, setSyncingGsc] = useState(false);
   const [markets, setMarkets] = useState<Market[]>([]);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
@@ -240,6 +241,29 @@ function WebsiteBuilderInner() {
     }
   }
 
+  // ── Sync GSC rankings ────────────────────────────────────────────────────────
+
+  async function handleSyncGsc() {
+    if (!business) return;
+    setSyncingGsc(true);
+    try {
+      const res = await fetch('/api/website-builder/pages/sync-gsc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ businessId: business.id }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        await loadPages(); // refresh to show new gsc_position values
+        showToast(`Rankings synced — ${data.synced} page(s) updated`);
+      } else {
+        showToast(data.error ?? 'GSC sync failed', 'error');
+      }
+    } finally {
+      setSyncingGsc(false);
+    }
+  }
+
   // ── Delete page ──────────────────────────────────────────────────────────────
 
   async function handleDelete(id: string) {
@@ -349,6 +373,14 @@ function WebsiteBuilderInner() {
                   </button>
                 ))}
               </div>
+              <button
+                onClick={handleSyncGsc}
+                disabled={syncingGsc}
+                className="btn-ghost text-sm"
+                title="Sync GSC ranking data for published pages"
+              >
+                {syncingGsc ? '⟳ Syncing…' : '📊 Sync Rankings'}
+              </button>
               <button
                 onClick={() => { setShowBulkPanel(!showBulkPanel); setShowGeneratePanel(false); }}
                 className="btn-ghost text-sm"
@@ -486,10 +518,15 @@ function WebsiteBuilderInner() {
         <div className="card mb-4 flex-shrink-0">
           <BulkGeneratePanel
             markets={markets}
-            onComplete={() => {
+            onComplete={(result) => {
               loadPages();
-              setShowBulkPanel(false);
-              showToast('Bulk generation complete — drafts added to Pages');
+              // Keep panel open so user can review similarity issues / generated list
+              if (!result.similarityIssues?.length) {
+                setShowBulkPanel(false);
+                showToast('Bulk generation complete — drafts added to Pages');
+              } else {
+                showToast(`Bulk generation complete — ${result.similarityIssues.length} similarity issue(s) to review`, 'error');
+              }
             }}
           />
           <div className="mt-4 pt-3 border-t border-char-700">

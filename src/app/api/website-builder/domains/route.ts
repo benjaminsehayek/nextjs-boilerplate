@@ -90,6 +90,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Business not found' }, { status: 404 });
   }
 
+  // Subscription gate — custom domains require Growth tier
+  const { data: profile } = await (supabase as any)
+    .from('profiles')
+    .select('subscription_tier')
+    .eq('id', user.id)
+    .single();
+
+  if (profile?.subscription_tier !== 'growth') {
+    return NextResponse.json(
+      { error: 'Custom domains require a Growth plan. Upgrade in Billing.' },
+      { status: 403 },
+    );
+  }
+
   const normalizedDomain = body.domain.toLowerCase().replace(/^www\./, '');
   const token = generateVerificationToken();
 

@@ -65,6 +65,20 @@ export default function PageList({ pages, selectedId, onSelect, onDelete, loadin
             <div className="text-xs text-ash-500 truncate">/{page.slug}</div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            {page.gsc_position != null && (
+              <span
+                className={`text-xs px-1.5 py-0.5 rounded font-mono ${
+                  page.gsc_position <= 3
+                    ? 'bg-success/15 text-success'
+                    : page.gsc_position <= 10
+                    ? 'bg-ember-500/15 text-ember-400'
+                    : 'bg-char-700 text-ash-400'
+                }`}
+                title={`GSC position: ${page.gsc_position} | Clicks: ${page.gsc_clicks ?? 0} | Impressions: ${page.gsc_impressions ?? 0}`}
+              >
+                #{page.gsc_position}
+              </span>
+            )}
             <span className={`text-xs px-1.5 py-0.5 rounded ${STATUS_STYLE[page.status] ?? STATUS_STYLE.draft}`}>
               {page.status}
             </span>

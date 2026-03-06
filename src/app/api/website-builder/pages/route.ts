@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
 
   const { data: pages, error } = await (supabase as any)
     .from('site_pages')
-    .select('id, slug, title, type, status, meta_title, meta_description, schema_json, published_at, created_at, updated_at')
+    .select('id, slug, title, type, status, meta_title, meta_description, schema_json, published_at, created_at, updated_at, gsc_position, gsc_clicks, gsc_impressions, gsc_synced_at')
     .eq('business_id', businessId)
     .order('updated_at', { ascending: false });
 

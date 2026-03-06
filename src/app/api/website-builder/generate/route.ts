@@ -158,6 +158,42 @@ export async function POST(request: NextRequest) {
   // Map blog_post → blog for DB CHECK constraint
   const dbType = body.pageType === 'blog_post' ? 'blog' : body.pageType;
 
+  // Auto-generate Schema.org JSON-LD (best-effort, uses fast Haiku model)
+  let schema_json: string | null = null;
+  try {
+    const schemaPrompt = buildSchemaPrompt(
+      title,
+      body.pageType,
+      biz.name,
+      body.city ?? null,
+      body.state ?? null,
+      biz.phone,
+      biz.domain ?? '',
+    );
+    const schemaRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 800,
+        temperature: 0,
+        messages: [{ role: 'user', content: schemaPrompt }],
+      }),
+    });
+    if (schemaRes.ok) {
+      const schemaData = await schemaRes.json();
+      const rawSchema: string = schemaData.content?.[0]?.text ?? '';
+      JSON.parse(rawSchema); // validate — throws if invalid JSON
+      schema_json = rawSchema;
+    }
+  } catch {
+    // Schema gen is best-effort; user can regenerate manually from the sidebar
+  }
+
   // Save as draft
   const { data: page, error: insertError } = await (supabase as any)
     .from('site_pages')
@@ -169,6 +205,7 @@ export async function POST(request: NextRequest) {
       html,
       meta_title,
       meta_description,
+      schema_json,
       status: 'draft',
     })
     .select('*')
