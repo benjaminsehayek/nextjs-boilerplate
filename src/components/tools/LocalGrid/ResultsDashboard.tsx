@@ -79,11 +79,11 @@ function TopCompetitorsCard({ scan }: { scan: GridScanResult }) {
       </p>
 
       {/* Biggest rival callout */}
-      <div className="p-4 mb-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
+      <div className="p-4 mb-4 rounded-lg bg-danger/10 border border-danger/20 flex items-start gap-3">
         <span className="text-xl mt-0.5">⚔️</span>
         <div>
           <p className="text-sm font-medium text-ash-100">
-            Biggest rival: <span className="text-red-400">{top.name}</span>
+            Biggest rival: <span className="text-danger">{top.name}</span>
           </p>
           <p className="text-xs text-ash-400 mt-0.5">
             Dominant at {top.top3Points}/{totalPoints} grid points in top 3
@@ -107,7 +107,7 @@ function TopCompetitorsCard({ scan }: { scan: GridScanResult }) {
                 </div>
                 <div className="relative h-1.5 bg-char-900 rounded-full overflow-hidden">
                   <div
-                    className="absolute inset-y-0 left-0 bg-red-500/60 rounded-full"
+                    className="absolute inset-y-0 left-0 bg-danger/60 rounded-full"
                     style={{ width: `${Math.min(100, pct)}%` }}
                   />
                 </div>
@@ -121,11 +121,11 @@ function TopCompetitorsCard({ scan }: { scan: GridScanResult }) {
 }
 
 function getRankStyle(rank: number | null | undefined): { bg: string; text: string } {
-  if (rank == null) return { bg: 'bg-red-900/60', text: 'text-red-400' };
-  if (rank <= 3) return { bg: 'bg-emerald-900/60', text: 'text-emerald-300' };
-  if (rank <= 10) return { bg: 'bg-yellow-900/60', text: 'text-yellow-300' };
-  if (rank <= 20) return { bg: 'bg-orange-900/60', text: 'text-orange-300' };
-  return { bg: 'bg-red-900/60', text: 'text-red-400' };
+  if (rank == null) return { bg: 'bg-danger/20', text: 'text-danger' };
+  if (rank <= 3) return { bg: 'bg-success/20', text: 'text-success' };
+  if (rank <= 10) return { bg: 'bg-ember-500/20', text: 'text-ember-500' };
+  if (rank <= 20) return { bg: 'bg-heat-400/20', text: 'text-heat-400' };
+  return { bg: 'bg-danger/20', text: 'text-danger' };
 }
 
 function CssHeatmapGrid({ gridPoints, gridSize, heatmapData }: {
@@ -243,9 +243,9 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan, businessId, onS
   }, [scan.business_info.name, selectedKeyword]);
 
   const visibilityColor = (score: number) => {
-    if (score >= 50) return 'text-green-400';
-    if (score >= 20) return 'text-yellow-400';
-    return 'text-red-400';
+    if (score >= 50) return 'text-success';
+    if (score >= 20) return 'text-ember-500';
+    return 'text-danger';
   };
 
   return (
@@ -304,7 +304,7 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan, businessId, onS
         </div>
 
         <div className="card p-6 text-center">
-          <div className="text-3xl font-display text-green-400 mb-1">
+          <div className="text-3xl font-display text-success mb-1">
             {overallStats.visibility.toFixed(0)}%
           </div>
           <div className="text-sm text-ash-400">Coverage</div>
@@ -319,9 +319,9 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan, businessId, onS
 
         <div className="card p-6 text-center">
           <div className="text-3xl font-display text-ash-100 mb-1">
-            ${scan.total_cost.toFixed(2)}
+            {scan.config.size}×{scan.config.size}
           </div>
-          <div className="text-sm text-ash-400">Scan Cost</div>
+          <div className="text-sm text-ash-400">Grid Size</div>
         </div>
       </div>
 
@@ -401,20 +401,20 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan, businessId, onS
                 {/* Legend */}
                 <div className="flex flex-wrap gap-4 text-xs mt-2">
                   <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded bg-emerald-900/60 border border-emerald-700/40" />
-                    <span className="text-emerald-300">Top 3</span>
+                    <div className="w-3 h-3 rounded bg-success/20" />
+                    <span className="text-success">Top 3</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded bg-yellow-900/60 border border-yellow-700/40" />
-                    <span className="text-yellow-300">4–10</span>
+                    <div className="w-3 h-3 rounded bg-ember-500/20" />
+                    <span className="text-ember-500">4–10</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded bg-orange-900/60 border border-orange-700/40" />
-                    <span className="text-orange-300">11–20</span>
+                    <div className="w-3 h-3 rounded bg-heat-400/20" />
+                    <span className="text-heat-400">11–20</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded bg-red-900/60 border border-red-700/40" />
-                    <span className="text-red-400">Not Ranking</span>
+                    <div className="w-3 h-3 rounded bg-danger/20" />
+                    <span className="text-danger">Not Ranking</span>
                   </div>
                 </div>
               </div>
@@ -457,7 +457,7 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan, businessId, onS
 
             <div className="p-4 bg-char-900/30 rounded-lg">
               <div className="text-xs text-ash-400 mb-1">Points Ranking</div>
-              <div className="text-2xl font-display text-green-400">
+              <div className="text-2xl font-display text-success">
                 {currentHeatmap.pointsRanking} / {totalPoints}
               </div>
               <div className="text-xs text-ash-400 mt-1">
@@ -502,24 +502,24 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan, businessId, onS
             if (notRanking === 0 && nearTop3 === 0) {
               gapTitle = 'Full coverage — nothing to fix';
               gapBody = `Every area in your grid can find you in the top 3 for "${selectedKeyword}". Maintain your Google Business Profile activity to keep this position.`;
-              gapColor = 'bg-green-500/10 border-green-500/20';
+              gapColor = 'bg-success/10 border-success/20';
             } else if (notRanking === 0) {
               gapTitle = `${nearTop3} areas just outside the top 3`;
               gapBody = `You're ranking 4–20 in ${nearTop3} neighborhoods — visible but not prominent. Improving your profile, reviews, and local citations could push these into top-3 territory.`;
-              gapColor = 'bg-amber-500/10 border-amber-500/20';
+              gapColor = 'bg-ember-500/10 border-ember-500/20';
             } else if (nearTop3 === 0) {
               gapTitle = `Invisible in ${notRanking} neighborhoods`;
               gapBody = `${notRanking} areas can't find you at all for "${selectedKeyword}" — competitors are getting 100% of those calls. Adding service-area content and building local citations can close these gaps.`;
-              gapColor = 'bg-red-500/10 border-red-500/20';
+              gapColor = 'bg-danger/10 border-danger/20';
             } else {
               gapTitle = `${notRanking + nearTop3} areas need attention`;
               gapBody = `${notRanking} neighborhoods can't find you at all, and ${nearTop3} more rank you outside the top 3. Focusing on reviews, Google Business posts, and local citations in those areas can shift customers your way.`;
-              gapColor = 'bg-red-500/10 border-red-500/20';
+              gapColor = 'bg-danger/10 border-danger/20';
             }
 
             return (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-lg">
+                <div className="p-4 bg-success/10 border border-success/20 rounded-lg">
                   <div className="text-sm font-display mb-1">{strengthTitle}</div>
                   <p className="text-xs text-ash-300 leading-relaxed">{strengthBody}</p>
                 </div>
@@ -575,7 +575,7 @@ export function ResultsDashboard({ scan, heatmapData, onNewScan, businessId, onS
 
                 <div className="relative h-2 bg-char-900 rounded-full overflow-hidden">
                   <div
-                    className="absolute inset-y-0 left-0 bg-gradient-to-r from-green-500 to-heat-500"
+                    className="absolute inset-y-0 left-0 bg-gradient-to-r from-success to-heat-400"
                     style={{ width: `${coverage}%` }}
                   />
                 </div>

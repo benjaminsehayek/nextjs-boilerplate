@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/context/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 import { DashboardStats } from '@/components/dashboard/DashboardStats';
+import { Target } from 'lucide-react';
 import { RecentActivity } from '@/components/dashboard/RecentActivity';
 import { ActionItems } from '@/components/dashboard/ActionItems';
 import { QuickStats } from '@/components/dashboard/QuickStats';
@@ -242,7 +243,11 @@ export default function DashboardPage() {
       </div>
 
       {/* Overview Stats */}
-      <DashboardStats business={business} />
+      <DashboardStats
+        business={business}
+        gscClicks={localSearchMetrics?.localClicks ?? null}
+        gscAvgPosition={localSearchMetrics?.avgLocalPosition ?? null}
+      />
 
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
@@ -258,7 +263,7 @@ export default function DashboardPage() {
       {/* Market prompt — shown when user has no markets yet */}
       {!loading && marketCount === 0 && (
         <div className="card p-4 mb-6 border-l-4 border-flame-500 flex items-start gap-3">
-          <span className="text-2xl">🎯</span>
+          <Target className="w-5 h-5 text-flame-500 flex-shrink-0 mt-0.5" />
           <div>
             <h3 className="font-display text-ash-100 text-sm font-semibold">Set Your Target Markets</h3>
             <p className="text-xs text-ash-400 mt-1">Add your service areas to get accurate local keyword rankings in Site Audit and Content Strategy.</p>

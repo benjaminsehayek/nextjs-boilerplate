@@ -54,7 +54,7 @@ function SeasonalityBadge({ peakMonth, multiplier }: { peakMonth?: number; multi
   return (
     <span
       title={scheduleNote}
-      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-400 border-amber-500/20"
+      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border bg-ember-500/15 text-ember-500 border-ember-500/20"
     >
       🌊 {scheduleNote}
     </span>
@@ -199,11 +199,6 @@ Format as clean structured text, no markdown beyond headers.`;
             <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${meta.bg} ${meta.color} font-medium`}>
               {meta.icon} {meta.label}
             </span>
-            {item.primaryKeyword && (
-              <span className="text-xs bg-char-700 text-ash-400 px-2 py-0.5 rounded-full truncate max-w-[200px]">
-                {item.primaryKeyword}
-              </span>
-            )}
             <SeasonalityBadge peakMonth={item.peakMonth} multiplier={item.seasonalMultiplier} />
             {item.roiValue > 0 && (
               <span className="text-xs text-success font-display ml-auto">${item.roiValue.toLocaleString()}/mo</span>
@@ -249,6 +244,12 @@ Format as clean structured text, no markdown beyond headers.`;
             <div>
               <span className="text-xs text-ash-500 uppercase tracking-wide">Platform</span>
               <p className="text-ash-300 mt-0.5 text-xs">{item.targetPlatform}</p>
+            </div>
+          )}
+          {item.primaryKeyword && (
+            <div>
+              <span className="text-xs text-ash-500 uppercase tracking-wide">SEO Details</span>
+              <p className="text-ash-400 mt-0.5 text-xs font-mono">{item.primaryKeyword}</p>
             </div>
           )}
         </div>

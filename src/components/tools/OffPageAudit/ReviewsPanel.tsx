@@ -107,8 +107,8 @@ export default function ReviewsPanel({
         ? 'slowing'
         : 'steady';
   const velocityBadge = {
-    accelerating: { label: '↑ Accelerating', className: 'text-green-400 bg-green-500/10 border-green-500/20' },
-    slowing:      { label: '↓ Slowing',       className: 'text-amber-400 bg-amber-500/10 border-amber-500/20' },
+    accelerating: { label: '↑ Accelerating', className: 'text-success bg-success/10 border-success/20' },
+    slowing:      { label: '↓ Slowing',       className: 'text-ember-500 bg-ember-500/10 border-ember-500/20' },
     steady:       { label: '→ Steady',         className: 'text-ash-400 bg-char-700 border-char-600' },
   }[velocityDirection];
 

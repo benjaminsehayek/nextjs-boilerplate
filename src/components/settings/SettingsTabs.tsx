@@ -4,12 +4,12 @@ interface SettingsTabsProps {
 }
 
 const tabs = [
-  { id: 'personal', label: 'Personal', icon: '👤' },
-  { id: 'business', label: 'Business', icon: '🏢' },
-  { id: 'services', label: 'Services & Markets', icon: '📋' },
-  { id: 'integrations', label: 'Integrations', icon: '🔌' },
-  { id: 'notifications', label: 'Notifications', icon: '🔔' },
-  { id: 'billing', label: 'Plan & Billing', icon: '💳' },
+  { id: 'personal', label: 'Personal' },
+  { id: 'business', label: 'Business' },
+  { id: 'services', label: 'Services & Markets' },
+  { id: 'integrations', label: 'Integrations' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'billing', label: 'Plan & Billing' },
 ];
 
 export function SettingsTabs({ activeTab, onTabChange }: SettingsTabsProps) {
@@ -26,7 +26,6 @@ export function SettingsTabs({ activeTab, onTabChange }: SettingsTabsProps) {
                 : 'border-transparent text-ash-400 hover:text-ash-200'
             }`}
           >
-            <span className="mr-2">{tab.icon}</span>
             {tab.label}
           </button>
         ))}

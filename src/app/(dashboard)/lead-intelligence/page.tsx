@@ -18,6 +18,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { Monitor } from 'lucide-react';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
 import { LocationSelector } from '@/components/ui/LocationSelector';
@@ -372,9 +373,9 @@ function OrganicMonthlyTrendCard({ trend }: { trend: MonthlyTrendRow[] }) {
 function LeadScoreBadge({ score }: { score: number }) {
   const colorClass =
     score >= 70
-      ? 'bg-emerald-900/30 text-emerald-400'
+      ? 'bg-success/20 text-success'
       : score >= 40
-      ? 'bg-amber-900/30 text-amber-400'
+      ? 'bg-ember-500/20 text-ember-500'
       : 'bg-danger/20 text-danger';
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${colorClass}`}>
@@ -394,7 +395,7 @@ function TrendBadge({ trend }: { trend: number }) {
     <span
       className={`inline-flex items-center gap-0.5 text-xs font-semibold px-2 py-0.5 rounded-full ${
         up
-          ? 'bg-emerald-500/15 text-emerald-400'
+          ? 'bg-success/15 text-success'
           : 'bg-danger/15 text-danger'
       }`}
     >
@@ -432,13 +433,13 @@ function ChannelCard({ stats, gscClicks }: { stats: ChannelStats; gscClicks?: nu
           <p className="text-xl font-bold text-ash-100">{stats.totalLeads}</p>
         </div>
         <div>
-          <p className="text-xs text-ash-500 mb-0.5">Total ELV</p>
+          <p className="text-xs text-ash-500 mb-0.5">Lead Value</p>
           <p className="text-xl font-bold text-ash-100">
             {formatCurrency(stats.totalElv)}
           </p>
         </div>
         <div>
-          <p className="text-xs text-ash-500 mb-0.5">Avg ELV</p>
+          <p className="text-xs text-ash-500 mb-0.5">Avg Value</p>
           <p className="text-xl font-bold text-flame-400">
             {formatCurrency(stats.avgElv)}
           </p>
@@ -450,7 +451,7 @@ function ChannelCard({ stats, gscClicks }: { stats: ChannelStats; gscClicks?: nu
           {stats.leadsLast30} leads last 30 days
         </p>
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-ash-500">Avg Score</span>
+          <span className="text-xs text-ash-500" title="0–100 score based on engagement and fit">Quality</span>
           <LeadScoreBadge score={stats.avgScore} />
         </div>
       </div>
@@ -501,10 +502,10 @@ function BudgetRecommendations({ channels }: { channels: ChannelStats[] }) {
       </h3>
 
       <div className="space-y-3">
-        <div className="flex items-start gap-3 p-3 rounded-btn bg-emerald-500/8 border border-emerald-500/20">
+        <div className="flex items-start gap-3 p-3 rounded-btn bg-success/8 border border-success/20">
           <span className="text-lg mt-0.5">🎯</span>
           <p className="text-sm text-ash-200">
-            <span className="font-semibold text-emerald-400">Top Channel: {topChannel.label}</span>
+            <span className="font-semibold text-success">Top Channel: {topChannel.label}</span>
             {' '}— {formatCurrency(topChannel.avgElv)} avg lead value. Consider increasing budget here.
           </p>
         </div>
@@ -662,6 +663,13 @@ export default function LeadIntelligencePage() {
   const loading = authLoading || dataLoading;
 
   return (
+    <>
+      <div className="md:hidden flex flex-col items-center justify-center py-32 gap-6 px-8 text-center">
+        <Monitor className="w-12 h-12 text-ash-400" />
+        <h2 className="text-xl font-display text-ash-100">Best on desktop</h2>
+        <p className="text-sm text-ash-400 max-w-xs">This tool is designed for larger screens. Visit on a desktop for the full experience.</p>
+      </div>
+      <div className="hidden md:block">
     <ToolGate tool="lead-intelligence">
       <ToolPageShell
         icon="📡"
@@ -732,17 +740,17 @@ export default function LeadIntelligencePage() {
                   <p className="text-2xl font-bold text-ash-100">{totalLeads}</p>
                 </div>
                 <div className="card p-4">
-                  <p className="text-xs text-ash-500 mb-1">Total ELV</p>
+                  <p className="text-xs text-ash-500 mb-1">Total Lead Value</p>
                   <p className="text-2xl font-bold text-ash-100">{formatCurrency(totalElv)}</p>
                 </div>
                 <div className="card p-4">
-                  <p className="text-xs text-ash-500 mb-1">Avg ELV / Lead</p>
+                  <p className="text-xs text-ash-500 mb-1">Avg Lead Value</p>
                   <p className="text-2xl font-bold text-flame-400">
                     {totalLeads > 0 ? formatCurrency(totalElv / totalLeads) : '—'}
                   </p>
                 </div>
                 <div className="card p-4">
-                  <p className="text-xs text-ash-500 mb-1">Avg Score</p>
+                  <p className="text-xs text-ash-500 mb-1" title="0–100 score based on engagement and fit">Lead Quality</p>
                   <div className="flex items-center gap-2 mt-1">
                     {totalLeads > 0 ? (
                       <LeadScoreBadge score={overallAvgScore} />
@@ -838,7 +846,7 @@ export default function LeadIntelligencePage() {
                       <tr className="border-b border-char-700">
                         <th className="text-left text-ash-500 font-medium py-2 pr-4">Market</th>
                         <th className="text-right text-ash-500 font-medium py-2">Leads</th>
-                        <th className="text-right text-ash-500 font-medium py-2 pl-4">Avg ELV</th>
+                        <th className="text-right text-ash-500 font-medium py-2 pl-4">Avg Value</th>
                         <th className="text-right text-ash-500 font-medium py-2 pl-4">Share</th>
                         <th className="text-right text-ash-500 font-medium py-2 pl-4">Avg Score</th>
                       </tr>
@@ -884,5 +892,7 @@ export default function LeadIntelligencePage() {
         )}
       </ToolPageShell>
     </ToolGate>
+      </div>
+    </>
   );
 }

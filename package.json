@@ -24,6 +24,7 @@
     "date-fns": "^4.1.0",
     "html2canvas": "^1.4.1",
     "leaflet": "^1.9.4",
+    "lucide-react": "^0.577.0",
     "next": "16.0.10",
     "p-limit": "^7.3.0",
     "react": "^19.1.0",

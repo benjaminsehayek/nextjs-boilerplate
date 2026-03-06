@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Monitor } from 'lucide-react';
 import { ToolGate } from '@/components/ui/ToolGate';
 import { ToolPageShell } from '@/components/ui/ToolPageShell';
 import { useUser } from '@/lib/hooks/useUser';
@@ -753,6 +754,13 @@ export default function SiteAuditPage() {
   }
 
   return (
+    <>
+      <div className="md:hidden flex flex-col items-center justify-center py-32 gap-6 px-8 text-center">
+        <Monitor className="w-12 h-12 text-ash-400" />
+        <h2 className="text-xl font-display text-ash-100">Best on desktop</h2>
+        <p className="text-sm text-ash-400 max-w-xs">This tool is designed for larger screens. Visit on a desktop for the full experience.</p>
+      </div>
+      <div className="hidden md:block">
     <ToolGate tool="site-audit">
       <ToolPageShell
         icon="🔍"
@@ -908,5 +916,7 @@ export default function SiteAuditPage() {
         )}
       </ToolPageShell>
     </ToolGate>
+      </div>
+    </>
   );
 }
