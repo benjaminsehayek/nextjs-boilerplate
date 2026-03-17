@@ -90,7 +90,12 @@ export async function GET(request: NextRequest) {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
-    if (sitesRes.ok) {
+    console.log('[GSC callback] Sites API status:', sitesRes.status);
+
+    if (!sitesRes.ok) {
+      const errText = await sitesRes.text();
+      console.error('[GSC callback] Sites API error:', errText);
+    } else {
       const sitesData = await sitesRes.json();
       const siteEntries: Array<{ siteUrl: string; permissionLevel: string }> = sitesData.siteEntry || [];
       console.log('[GSC callback] Properties found:', JSON.stringify(siteEntries.map(s => s.siteUrl)));
